@@ -1,0 +1,2 @@
+sku,name,division,department,section,category,unit,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,slabs
+AAP-BLK-01,Fly Ash Brick,Building Material,Masonry,Bricks,Construction,Piece,3,10,2,WH-NOI-01|WH-GZB-02,100-499:6;500+:5.5
