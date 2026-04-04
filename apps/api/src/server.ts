@@ -37,6 +37,10 @@ const port = Number(process.env.PORT || 8080);
 const uploadsDir = path.resolve(process.cwd(), "uploads");
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
 
 mkdirSync(csvDir, { recursive: true });
 mkdirSync(paymentDir, { recursive: true });
@@ -53,7 +57,16 @@ const upload = multer({
   })
 });
 
-app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed by CORS."));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: "2mb" }));
 app.use("/uploads", express.static(uploadsDir));
 

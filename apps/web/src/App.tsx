@@ -11,7 +11,7 @@ import type {
 } from "@aapoorti-b2b/domain";
 import { userRoles } from "@aapoorti-b2b/domain";
 
-const API_BASE = "http://localhost:8080";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || "http://localhost:8080";
 const SESSION_KEY = "aapoorti-b2b-user";
 const TOKEN_KEY = "aapoorti-b2b-token";
 
