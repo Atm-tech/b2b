@@ -3,9 +3,14 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@aapoorti-b2b/domain": ["../../packages/domain/src/index.ts"]
+    }
   },
   "include": [
-    "src"
+    "src",
+    "../../packages/domain/src"
   ]
 }
