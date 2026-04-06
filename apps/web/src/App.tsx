@@ -1,3 +1,4 @@
+import axios from "axios";
 import { useEffect, useState } from "react";
 import type {
   AppSnapshot,
@@ -15,6 +16,9 @@ import { userRoles } from "@aapoorti-b2b/domain";
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || "http://localhost:8080";
 const SESSION_KEY = "aapoorti-b2b-user";
 const TOKEN_KEY = "aapoorti-b2b-token";
+const api = axios.create({
+  baseURL: API_BASE
+});
 
 type ViewKey =
   | "Overview"
@@ -140,17 +144,11 @@ function App() {
     const token = window.localStorage.getItem(TOKEN_KEY) || sessionToken;
     if (!user || !token) return;
     try {
-      const response = await fetch(`${API_BASE}/snapshot`, { headers: { authorization: `Bearer ${token}` } });
-      const data = await response.json();
-      if (!response.ok) {
-        clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
-        setError(typeof data?.message === "string" ? data.message : "Session expired. Login again.");
-        return;
-      }
-      setSnapshot(data as AppSnapshot);
-    } catch {
+      const { data } = await api.get<AppSnapshot>("/snapshot", { headers: { authorization: `Bearer ${token}` } });
+      setSnapshot(data);
+    } catch (submitError) {
       clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
-      setError("Unable to restore session.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Unable to restore session.") : "Unable to restore session.");
     }
   }
 
@@ -159,9 +157,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(login) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Login failed.");
+      const { data } = await api.post<{ user: AppUser; token: string; snapshot: AppSnapshot }>("/auth/login", login);
       setCurrentUser(data.user as AppUser);
       setSessionToken(String(data.token || ""));
       setSnapshot(data.snapshot as AppSnapshot);
@@ -182,20 +178,13 @@ function App() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          authorization: `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify(body)
+      const { data } = await api.post<AppSnapshot>(path, body, {
+        headers: { authorization: `Bearer ${sessionToken}` }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Action failed.");
-      setSnapshot(data as AppSnapshot);
+      setSnapshot(data);
       setMessage(success);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Action failed.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Action failed.") : "Action failed.");
     } finally {
       setLoading(false);
     }
@@ -207,20 +196,13 @@ function App() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          authorization: `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify(body)
+      const { data } = await api.patch<AppSnapshot>(path, body, {
+        headers: { authorization: `Bearer ${sessionToken}` }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Update failed.");
-      setSnapshot(data as AppSnapshot);
+      setSnapshot(data);
       setMessage(success);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Update failed.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Update failed.") : "Update failed.");
     } finally {
       setLoading(false);
     }
@@ -234,19 +216,13 @@ function App() {
     try {
       const formData = new FormData();
       formData.append(fieldName, file);
-      const response = await fetch(`${API_BASE}${path}`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${sessionToken}`
-        },
-        body: formData
+      const { data } = await api.post(path, formData, {
+        headers: { authorization: `Bearer ${sessionToken}` }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Upload failed.");
       setMessage(successMessage);
       return data;
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Upload failed.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Upload failed.") : "Upload failed.");
       return null;
     } finally {
       setLoading(false);
@@ -259,22 +235,15 @@ function App() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(`${API_BASE}/counterparties`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          authorization: `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify(body)
+      const { data } = await api.post<AppSnapshot>("/counterparties", body, {
+        headers: { authorization: `Bearer ${sessionToken}` }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Party creation failed.");
       const nextSnapshot = data as AppSnapshot;
       setSnapshot(nextSnapshot);
       setMessage(`${body.type} created.`);
       return nextSnapshot.counterparties.find((item) => item.type === body.type && item.name === body.name && item.mobileNumber === body.mobileNumber) || null;
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Party creation failed.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Party creation failed.") : "Party creation failed.");
       return null;
     } finally {
       setLoading(false);
@@ -284,7 +253,7 @@ function App() {
   async function doLogout() {
     if (sessionToken) {
       try {
-        await fetch(`${API_BASE}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}` } });
+        await api.post("/auth/logout", null, { headers: { authorization: `Bearer ${sessionToken}` } });
       } catch {}
     }
     window.localStorage.removeItem(SESSION_KEY);
