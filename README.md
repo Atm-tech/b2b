@@ -88,3 +88,44 @@ NODE_ENV=production
 
 - for Vercel frontend set `Root Directory` to `apps/web`
 - set `VITE_API_BASE_URL` to the deployed backend URL
+
+## Local Postgres
+
+This repo now includes a local PostgreSQL server definition and schema mirror for the current app.
+
+Start Postgres:
+
+```powershell
+npm run postgres:up
+```
+
+Stop Postgres:
+
+```powershell
+npm run postgres:down
+```
+
+View logs:
+
+```powershell
+npm run postgres:logs
+```
+
+Default local connection:
+
+- host: `localhost`
+- port: `5432`
+- database: `aapoorti_b2b`
+- user: `postgres`
+- password: `postgres`
+
+Schema files:
+
+- [postgres/init/001-schema.sql](d:/AAPOORTI/Managment%20system/Sales%20managment/postgres/init/001-schema.sql)
+- [postgres/init/002-indexes.sql](d:/AAPOORTI/Managment%20system/Sales%20managment/postgres/init/002-indexes.sql)
+
+Important:
+
+- the running API still uses SQLite today
+- this Postgres setup is the local server and schema foundation for migration
+- next step would be adding a Postgres-backed repository layer or a data migration script from SQLite to Postgres

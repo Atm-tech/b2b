@@ -10,8 +10,9 @@ if (!workbookPath) {
 }
 
 const resolvedPath = path.resolve(workbookPath);
-const rows = parseWorkbookRows(resolvedPath, getSnapshot().warehouses.map((item) => item.id));
-const snapshot = bulkCreateProducts(rows, {
+const snapshotBeforeImport = await getSnapshot();
+const rows = parseWorkbookRows(resolvedPath, snapshotBeforeImport.warehouses.map((item) => item.id));
+const snapshot = await bulkCreateProducts(rows, {
   id: 1,
   username: "admin",
   fullName: "Administrator",

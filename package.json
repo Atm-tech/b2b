@@ -10,6 +10,9 @@
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
+    "postgres:up": "docker compose -f docker-compose.postgres.yml up -d",
+    "postgres:down": "docker compose -f docker-compose.postgres.yml down",
+    "postgres:logs": "docker compose -f docker-compose.postgres.yml logs -f postgres",
     "vercel:install": "npm install --workspace @aapoorti-b2b/domain --workspace @aapoorti-b2b/web",
     "vercel-build": "npm run build -w packages/domain && npm run build -w apps/web"
   },

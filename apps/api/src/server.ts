@@ -112,36 +112,36 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.post("/auth/login", (req, res) => {
-  const user = authenticate(requiredString(req.body?.username, "Username"), requiredString(req.body?.password, "Password"));
+app.post("/auth/login", async (req, res) => {
+  const user = await authenticate(requiredString(req.body?.username, "Username"), requiredString(req.body?.password, "Password"));
   if (!user) {
     res.status(401).json({ message: "Invalid credentials." });
     return;
   }
-  const token = createSessionForUser(user.id);
-  res.json({ user, token, snapshot: getSnapshot() });
+  const token = await createSessionForUser(user.id);
+  res.json({ user, token, snapshot: await getSnapshot() });
 });
 
-app.post("/auth/logout", (req, res) => wrap(res, () => {
+app.post("/auth/logout", async (req, res) => wrap(res, async () => {
   const token = getBearerToken(req);
   if (token) {
-    deleteSession(token);
+    await deleteSession(token);
   }
   return { ok: true };
 }));
 
-app.get("/snapshot", (req, res) => {
+app.get("/snapshot", async (req, res) => {
   try {
-    getCurrentUser(req);
-    res.json(getSnapshot());
+    await getCurrentUser(req);
+    res.json(await getSnapshot());
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unauthorized.";
     res.status(401).json({ message });
   }
 });
 
-app.post("/users", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin"]);
+app.post("/users", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
   const roles = Array.isArray(req.body?.roles) ? req.body.roles.map((item: unknown) => String(item) as UserRole) : [];
   return createUser({
     username: requiredString(req.body?.username, "Username"),
@@ -153,8 +153,8 @@ app.post("/users", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/warehouses", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin"]);
+app.post("/warehouses", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
   return createWarehouse({
     id: requiredString(req.body?.id, "Warehouse code"),
     name: requiredString(req.body?.name, "Warehouse name"),
@@ -164,8 +164,8 @@ app.post("/warehouses", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/products", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin"]);
+app.post("/products", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin"]);
   return createProduct(
     {
       sku: requiredString(req.body?.sku, "SKU"),
@@ -185,8 +185,8 @@ app.post("/products", (req, res) => wrap(res, () => {
   );
 }));
 
-app.post("/products/bulk", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin"]);
+app.post("/products/bulk", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin"]);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   if (rows.length === 0) {
     throw new Error("At least one product row is required.");
@@ -210,20 +210,20 @@ app.post("/products/bulk", (req, res) => wrap(res, () => {
   );
 }));
 
-app.post("/products/bulk-upload", upload.single("csv"), (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin"]);
+app.post("/products/bulk-upload", upload.single("csv"), async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin"]);
   if (!req.file) {
     throw new Error("CSV file is required.");
   }
-  const defaultWarehouseIds = getSnapshot().warehouses.map((item) => item.id);
+  const defaultWarehouseIds = (await getSnapshot()).warehouses.map((item) => item.id);
   const rows = isWorkbookFile(req.file.originalname)
     ? parseWorkbookRows(req.file.path, defaultWarehouseIds)
     : parseCsvRows(readFileSync(req.file.path, "utf8"), defaultWarehouseIds);
   return bulkCreateProducts(rows, currentUser);
 }));
 
-app.post("/counterparties", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Purchaser", "Sales"]);
+app.post("/counterparties", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Purchaser", "Sales"]);
   return createCounterparty(
     {
       type: requiredString(req.body?.type, "Type") as CounterpartyType,
@@ -238,8 +238,8 @@ app.post("/counterparties", (req, res) => wrap(res, () => {
   );
 }));
 
-app.patch("/counterparties/:id", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Purchaser", "Sales"]);
+app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Purchaser", "Sales"]);
   return updateCounterparty(req.params.id, {
     name: requiredString(req.body?.name, "Name"),
     gstNumber: optionalString(req.body?.gstNumber) || "",
@@ -250,8 +250,8 @@ app.patch("/counterparties/:id", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/settings", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin"]);
+app.post("/settings", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
   const paymentMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : [];
   return updateSettings({
     paymentMethods: paymentMethods.map((item: any) => ({
@@ -267,8 +267,8 @@ app.post("/settings", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/purchase-orders", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Purchaser"]);
+app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Purchaser"]);
   return createPurchaseOrder(
     {
       supplierId: requiredString(req.body?.supplierId, "Supplier"),
@@ -286,8 +286,8 @@ app.post("/purchase-orders", (req, res) => wrap(res, () => {
   );
 }));
 
-app.patch("/purchase-orders/:id", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Purchaser", "Accounts"]);
+app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Purchaser", "Accounts"]);
   return updatePurchaseOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -298,8 +298,8 @@ app.patch("/purchase-orders/:id", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/sales-orders", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Sales"]);
+app.post("/sales-orders", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales"]);
   return createSalesOrder(
     {
       shopId: requiredString(req.body?.shopId, "Shop"),
@@ -318,8 +318,8 @@ app.post("/sales-orders", (req, res) => wrap(res, () => {
   );
 }));
 
-app.patch("/sales-orders/:id", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Sales", "Accounts"]);
+app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Sales", "Accounts"]);
   return updateSalesOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -330,8 +330,8 @@ app.patch("/sales-orders/:id", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/payments", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+app.post("/payments", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -353,8 +353,8 @@ app.post("/payments", (req, res) => wrap(res, () => {
   );
 }));
 
-app.patch("/payments/:id", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -369,8 +369,8 @@ app.patch("/payments/:id", (req, res) => wrap(res, () => {
   }, currentUser);
 }));
 
-app.post("/payments/upload-proof", upload.single("proof"), (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
   if (!req.file) {
     throw new Error("Proof file is required.");
   }
@@ -381,8 +381,8 @@ app.post("/payments/upload-proof", upload.single("proof"), (req, res) => wrap(re
   };
 }));
 
-app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Warehouse Manager", "Delivery"]);
+app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Warehouse Manager", "Delivery"]);
   if (!req.file) {
     throw new Error("Delivery proof file is required.");
   }
@@ -393,8 +393,8 @@ app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), (req, r
   };
 }));
 
-app.post("/payments/verify", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Accounts"]);
+app.post("/payments/verify", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Accounts"]);
   return verifyPayment(
     requiredString(req.body?.paymentId, "Payment id"),
     requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected",
@@ -403,8 +403,8 @@ app.post("/payments/verify", (req, res) => wrap(res, () => {
   );
 }));
 
-app.post("/receipt-checks", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Warehouse Manager"]);
+app.post("/receipt-checks", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Warehouse Manager"]);
   return createReceiptCheck(
     {
       purchaseOrderId: requiredString(req.body?.purchaseOrderId, "Purchase order"),
@@ -418,16 +418,16 @@ app.post("/receipt-checks", (req, res) => wrap(res, () => {
   );
 }));
 
-app.patch("/receipt-checks/:id", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Warehouse Manager", "Accounts"]);
+app.patch("/receipt-checks/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Warehouse Manager", "Accounts"]);
   return updateReceiptCheck(req.params.id, {
     note: optionalString(req.body?.note) || "",
     flagged: Boolean(req.body?.flagged)
   });
 }));
 
-app.post("/delivery-tasks", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return createDeliveryTask({
     side: requiredString(req.body?.side, "Side") as DeliveryTask["side"],
@@ -450,8 +450,8 @@ app.post("/delivery-tasks", (req, res) => wrap(res, () => {
   });
 }));
 
-app.patch("/delivery-tasks/:id", (req, res) => wrap(res, () => {
-  requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return updateDeliveryTask(req.params.id, {
     linkedOrderIds,
@@ -469,8 +469,8 @@ app.patch("/delivery-tasks/:id", (req, res) => wrap(res, () => {
   });
 }));
 
-app.post("/notes", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
+app.post("/notes", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
   return createNote(
     {
       entityType: requiredString(req.body?.entityType, "Entity type") as NoteRecord["entityType"],
@@ -486,29 +486,29 @@ app.listen(port, () => {
   console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"})`);
 });
 
-function wrap(res: express.Response, run: () => unknown) {
+async function wrap(res: express.Response, run: () => Promise<unknown>) {
   try {
-    res.status(201).json(run());
+    res.status(201).json(await run());
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(400).json({ message });
   }
 }
 
-function requireRole(req: express.Request, allowedRoles: UserRole[]) {
-  const user = getCurrentUser(req);
+async function requireRole(req: express.Request, allowedRoles: UserRole[]) {
+  const user = await getCurrentUser(req);
   if (!user || !user.roles.some((role) => allowedRoles.includes(role))) {
     throw new Error("You are not allowed to perform this action.");
   }
   return user;
 }
 
-function getCurrentUser(req: express.Request) {
+async function getCurrentUser(req: express.Request) {
   const token = getBearerToken(req);
   if (!token) {
     throw new Error("Session token missing.");
   }
-  const user = getUserBySessionToken(token);
+  const user = await getUserBySessionToken(token);
   if (!user) {
     throw new Error("Session expired. Login again.");
   }
