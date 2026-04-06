@@ -52,6 +52,8 @@ Copy `.env.example` and set:
 
 - `NODE_ENV`
 - `PORT`
+- `DATABASE_PATH`
+- `UPLOADS_DIR`
 - `ALLOWED_ORIGINS`
 - `REQUEST_BODY_LIMIT`
 - `MAX_UPLOAD_BYTES`
@@ -60,7 +62,8 @@ Copy `.env.example` and set:
 ## Deployment Notes
 
 - SQLite runs from `apps/api/data/aapoorti-b2b-v2.sqlite`
-- uploads are stored under `uploads/`
+- in production set `DATABASE_PATH` to a persistent disk path
+- in production set `UPLOADS_DIR` to a persistent disk path
 - backend serves uploaded payment and delivery proof files from `/uploads/...`
 - for Render backend use:
 
@@ -72,6 +75,15 @@ start command:
 
 ```bash
 npm run start -w apps/api
+```
+
+- recommended Render env for persistent local database:
+
+```bash
+DATABASE_PATH=/var/data/aapoorti-b2b.sqlite
+UPLOADS_DIR=/var/data/uploads
+ALLOWED_ORIGINS=https://your-frontend.example.com
+NODE_ENV=production
 ```
 
 - for Vercel frontend set `Root Directory` to `apps/web`

@@ -36,7 +36,7 @@ import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-impor
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 8080);
-const uploadsDir = path.resolve(process.cwd(), "uploads");
+const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.resolve(process.cwd(), "uploads"));
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");

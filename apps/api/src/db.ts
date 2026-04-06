@@ -34,10 +34,16 @@ type CurrentUser = {
 };
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(sourceDir, "../data");
+const defaultDataDir = path.resolve(sourceDir, "../data");
+const configuredDatabasePath = process.env.DATABASE_PATH?.trim();
+const dataDir = configuredDatabasePath
+  ? path.dirname(path.resolve(configuredDatabasePath))
+  : defaultDataDir;
 mkdirSync(dataDir, { recursive: true });
 
-export const databasePath = path.join(dataDir, "aapoorti-b2b-v2.sqlite");
+export const databasePath = configuredDatabasePath
+  ? path.resolve(configuredDatabasePath)
+  : path.join(dataDir, "aapoorti-b2b-v2.sqlite");
 const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
