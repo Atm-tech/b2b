@@ -223,7 +223,7 @@ app.post("/products/bulk-upload", upload.single("csv"), async (req, res) => wrap
 }));
 
 app.post("/counterparties", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Purchaser", "Sales"]);
   return createCounterparty(
     {
       type: requiredString(req.body?.type, "Type") as CounterpartyType,
@@ -239,7 +239,7 @@ app.post("/counterparties", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Purchaser", "Sales"]);
+  await requireRole(req, ["Purchaser", "Sales"]);
   return updateCounterparty(req.params.id, {
     name: requiredString(req.body?.name, "Name"),
     gstNumber: optionalString(req.body?.gstNumber) || "",
@@ -268,7 +268,7 @@ app.post("/settings", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Purchaser"]);
+  const currentUser = await requireRole(req, ["Purchaser"]);
   return createPurchaseOrder(
     {
       supplierId: requiredString(req.body?.supplierId, "Supplier"),
@@ -287,7 +287,7 @@ app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Purchaser", "Accounts"]);
+  await requireRole(req, ["Purchaser", "Accounts"]);
   return updatePurchaseOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -299,7 +299,7 @@ app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/sales-orders", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const currentUser = await requireRole(req, ["Sales"]);
   return createSalesOrder(
     {
       shopId: requiredString(req.body?.shopId, "Shop"),
@@ -319,7 +319,7 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Sales", "Accounts"]);
+  await requireRole(req, ["Sales", "Accounts"]);
   return updateSalesOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -331,7 +331,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/payments", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -354,7 +354,7 @@ app.post("/payments", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -370,7 +370,7 @@ app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+  await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   if (!req.file) {
     throw new Error("Proof file is required.");
   }
@@ -382,7 +382,7 @@ app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => w
 }));
 
 app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Warehouse Manager", "Delivery"]);
+  await requireRole(req, ["Warehouse Manager", "Delivery"]);
   if (!req.file) {
     throw new Error("Delivery proof file is required.");
   }
@@ -394,7 +394,7 @@ app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (
 }));
 
 app.post("/payments/verify", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Accounts"]);
+  const currentUser = await requireRole(req, ["Accounts"]);
   return verifyPayment(
     requiredString(req.body?.paymentId, "Payment id"),
     requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected",
@@ -404,7 +404,7 @@ app.post("/payments/verify", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/receipt-checks", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Warehouse Manager"]);
+  const currentUser = await requireRole(req, ["Warehouse Manager"]);
   return createReceiptCheck(
     {
       purchaseOrderId: requiredString(req.body?.purchaseOrderId, "Purchase order"),
@@ -419,7 +419,7 @@ app.post("/receipt-checks", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/receipt-checks/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Warehouse Manager", "Accounts"]);
+  await requireRole(req, ["Warehouse Manager", "Accounts"]);
   return updateReceiptCheck(req.params.id, {
     note: optionalString(req.body?.note) || "",
     flagged: Boolean(req.body?.flagged)
@@ -427,7 +427,7 @@ app.patch("/receipt-checks/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+  await requireRole(req, ["Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return createDeliveryTask({
     side: requiredString(req.body?.side, "Side") as DeliveryTask["side"],
@@ -451,7 +451,7 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+  await requireRole(req, ["Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return updateDeliveryTask(req.params.id, {
     linkedOrderIds,
@@ -470,7 +470,7 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/notes", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
+  const currentUser = await requireRole(req, ["Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
   return createNote(
     {
       entityType: requiredString(req.body?.entityType, "Entity type") as NoteRecord["entityType"],
