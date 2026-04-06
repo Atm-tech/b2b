@@ -256,27 +256,10 @@ db.exec(`
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL
   );
-
-  CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
-  CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
-  CREATE INDEX IF NOT EXISTS idx_purchase_orders_created_at ON purchase_orders(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_sales_orders_shop ON sales_orders(shop_id);
-  CREATE INDEX IF NOT EXISTS idx_sales_orders_status ON sales_orders(status);
-  CREATE INDEX IF NOT EXISTS idx_sales_orders_created_at ON sales_orders(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(linked_order_id, side);
-  CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(verification_status);
-  CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_receipt_checks_order ON receipt_checks(purchase_order_id);
-  CREATE INDEX IF NOT EXISTS idx_receipt_checks_warehouse ON receipt_checks(warehouse_id);
-  CREATE INDEX IF NOT EXISTS idx_inventory_lots_lookup ON inventory_lots(warehouse_id, product_sku, status);
-  CREATE INDEX IF NOT EXISTS idx_ledger_entries_lookup ON ledger_entries(linked_order_id, side);
-  CREATE INDEX IF NOT EXISTS idx_delivery_tasks_status ON delivery_tasks(status);
-  CREATE INDEX IF NOT EXISTS idx_delivery_tasks_assigned_to ON delivery_tasks(assigned_to);
-  CREATE INDEX IF NOT EXISTS idx_notes_entity ON note_records(entity_type, entity_id, created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
 
 ensureLegacyColumns();
+ensureIndexes();
 seedDatabase();
 
 function ensureLegacyColumns() {
@@ -331,6 +314,37 @@ function ensureLegacyColumns() {
     db.exec("ALTER TABLE payments ADD COLUMN submitted_at TEXT");
   }
   db.exec("UPDATE delivery_tasks SET linked_order_ids_json = json_array(linked_order_id) WHERE linked_order_ids_json = '[]' OR linked_order_ids_json = '' OR linked_order_ids_json IS NULL");
+}
+
+function getColumnNames(tableName: string) {
+  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((item) => item.name);
+}
+
+function ensureIndex(indexName: string, tableName: string, expression: string, requiredColumns: string[]) {
+  const columns = getColumnNames(tableName);
+  if (requiredColumns.every((column) => columns.includes(column))) {
+    db.exec(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${tableName}(${expression})`);
+  }
+}
+
+function ensureIndexes() {
+  ensureIndex("idx_purchase_orders_supplier", "purchase_orders", "supplier_id", ["supplier_id"]);
+  ensureIndex("idx_purchase_orders_status", "purchase_orders", "status", ["status"]);
+  ensureIndex("idx_purchase_orders_created_at", "purchase_orders", "created_at DESC", ["created_at"]);
+  ensureIndex("idx_sales_orders_shop", "sales_orders", "shop_id", ["shop_id"]);
+  ensureIndex("idx_sales_orders_status", "sales_orders", "status", ["status"]);
+  ensureIndex("idx_sales_orders_created_at", "sales_orders", "created_at DESC", ["created_at"]);
+  ensureIndex("idx_payments_order", "payments", "linked_order_id, side", ["linked_order_id", "side"]);
+  ensureIndex("idx_payments_status", "payments", "verification_status", ["verification_status"]);
+  ensureIndex("idx_payments_created_at", "payments", "created_at DESC", ["created_at"]);
+  ensureIndex("idx_receipt_checks_order", "receipt_checks", "purchase_order_id", ["purchase_order_id"]);
+  ensureIndex("idx_receipt_checks_warehouse", "receipt_checks", "warehouse_id", ["warehouse_id"]);
+  ensureIndex("idx_inventory_lots_lookup", "inventory_lots", "warehouse_id, product_sku, status", ["warehouse_id", "product_sku", "status"]);
+  ensureIndex("idx_ledger_entries_lookup", "ledger_entries", "linked_order_id, side", ["linked_order_id", "side"]);
+  ensureIndex("idx_delivery_tasks_status", "delivery_tasks", "status", ["status"]);
+  ensureIndex("idx_delivery_tasks_assigned_to", "delivery_tasks", "assigned_to", ["assigned_to"]);
+  ensureIndex("idx_notes_entity", "note_records", "entity_type, entity_id, created_at DESC", ["entity_type", "entity_id", "created_at"]);
+  ensureIndex("idx_sessions_user", "sessions", "user_id", ["user_id"]);
 }
 
 function now() {
