@@ -7,6 +7,7 @@ import type {
   NoteRecord,
   PaymentMode,
   ProductSlab,
+  SalesStatus,
   UserRole
 } from "@aapoorti-b2b/domain";
 import { userRoles } from "@aapoorti-b2b/domain";
@@ -94,6 +95,7 @@ function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [simpleMode, setSimpleMode] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [login, setLogin] = useState({ username: "admin", password: "1234" });
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], password: "1234" });
@@ -102,17 +104,17 @@ function App() {
   const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,unit,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,slabs");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
-  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", paymentMode: "Cash" as PaymentMode, cashTiming: "In Hand", note: "" });
+  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "" });
   const [purchaseEditForm, setPurchaseEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", note: "", status: "Pending Payment" });
-  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "In Hand", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "" });
+  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0" });
   const [salesEditForm, setSalesEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "", status: "Booked" });
   const [paymentForm, setPaymentForm] = useState({ side: "Purchase" as "Purchase" | "Sales", linkedOrderId: "", amount: "0", mode: "NEFT" as PaymentMode, cashTiming: "", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected", verificationNote: "" });
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentEditForm, setPaymentEditForm] = useState({ id: "", amount: "0", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected", verificationNote: "" });
   const [receiptForm, setReceiptForm] = useState({ purchaseOrderId: "", warehouseId: "", receivedQuantity: "0", actualWeightKg: "0", note: "", confirmPartial: false });
   const [receiptEditForm, setReceiptEditForm] = useState({ grcNumber: "", note: "", flagged: false });
-  const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, status: "Planned" as DeliveryTask["status"] });
-  const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, status: "Planned" as DeliveryTask["status"] });
+  const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
+  const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
   const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
 
@@ -279,6 +281,20 @@ function App() {
     }
   }
 
+  async function doLogout() {
+    if (sessionToken) {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}` } });
+      } catch {}
+    }
+    window.localStorage.removeItem(SESSION_KEY);
+    window.localStorage.removeItem(TOKEN_KEY);
+    setCurrentUser(null);
+    setSessionToken("");
+    setSnapshot(null);
+    setProfileOpen(false);
+  }
+
   if (!currentUser || !snapshot) {
     return (
       <main className="login-shell">
@@ -307,6 +323,12 @@ function App() {
     );
   }
 
+  const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
+  const isAccountsUser = currentRoles.includes("Accounts");
+  const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
+  const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
+  const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");
+  const isDeliveryOnly = currentRoles.length === 1 && currentRoles[0] === "Delivery";
   const visibleViews = getVisibleViewsForMode(currentUser, simpleMode);
   const safeVisibleViews: ViewKey[] = visibleViews.length > 0 ? visibleViews : ["Overview"];
   const counterparties = Array.isArray(snapshot.counterparties) ? snapshot.counterparties : [];
@@ -316,26 +338,50 @@ function App() {
   const paymentMethods = settings.paymentMethods.filter((item) => item.active);
 
   return (
-    <main className="app-shell">
-      <section className="hero panel">
+    <main className={simpleMode ? "app-shell simple-shell" : "app-shell"}>
+      <header className="app-topbar">
+        <div className="app-topbar-copy">
+          <span className="small-label">Aapoorti B2B</span>
+          <strong>{labels[activeView]}</strong>
+          <p>{simpleMode ? "Simple flow for quick work." : "Advanced workflow visible."}</p>
+        </div>
+        <div className="hero-side hero-top-actions">
+          <div className="profile-menu">
+            <button className="profile-button" type="button" onClick={() => setProfileOpen((current) => !current)} aria-label="Open profile">
+              <span className="profile-avatar">{(currentUser.fullName || currentUser.username).slice(0, 1).toUpperCase()}</span>
+            </button>
+            {profileOpen ? <div className="profile-popover">
+              <div className="profile-popover-head">
+                <span className="small-label">Profile</span>
+                <strong>{currentUser.fullName}</strong>
+                <span>{currentUser.username}</span>
+              </div>
+              <div className="profile-detail-list">
+                <div><span className="small-label">Roles</span><strong>{(currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role]).join(" / ")}</strong></div>
+                <div><span className="small-label">Mobile</span><strong>{currentUser.mobileNumber || "Pending"}</strong></div>
+              </div>
+              <div className="profile-action-list">
+                <button className="ghost-button" type="button" onClick={() => { const nextMode = !simpleMode; setSimpleMode(nextMode); setActiveView(getVisibleViewsForMode(currentUser, nextMode)[0]); setProfileOpen(false); }}>{simpleMode ? "Show Advanced" : "Show Simple"}</button>
+                <button className="ghost-button" type="button" onClick={() => void doLogout()}>Logout</button>
+              </div>
+            </div> : null}
+          </div>
+        </div>
+      </header>
+
+      {!simpleMode ? <section className="hero panel hero-compact">
         <div>
           <span className="eyebrow">{(currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role]).join(" / ")}</span>
           <h1>Aapoorti B2B</h1>
           <p>{simpleMode ? "Simple mode is on. Only the main steps are shown so a beginner can work without confusion." : "Advanced mode is on. All screens are visible."}</p>
         </div>
-        <div className="hero-side">
-          <div className="hero-stat"><span className="small-label">User</span><strong>{currentUser.username}</strong></div>
-          <div className="hero-stat"><span className="small-label">Mobile</span><strong>{currentUser.mobileNumber || "Pending"}</strong></div>
-          <button className="ghost-button" type="button" onClick={() => { const nextMode = !simpleMode; setSimpleMode(nextMode); setActiveView(getVisibleViewsForMode(currentUser, nextMode)[0]); }}>{simpleMode ? "Show Advanced" : "Show Simple"}</button>
-          <button className="ghost-button" type="button" onClick={async () => { if (sessionToken) { try { await fetch(`${API_BASE}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}` } }); } catch {} } window.localStorage.removeItem(SESSION_KEY); window.localStorage.removeItem(TOKEN_KEY); setCurrentUser(null); setSessionToken(""); setSnapshot(null); }}>Logout</button>
-        </div>
-      </section>
+      </section> : null}
 
       {message ? <p className="message success">{message}</p> : null}
       {error ? <p className="message error">{error}</p> : null}
 
-      <section className="workspace-shell">
-        <aside className="sidebar panel">
+      <section className={simpleMode ? "workspace-shell simple-workspace" : "workspace-shell"}>
+        {!simpleMode ? <aside className="sidebar panel">
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
             {safeVisibleViews.map((view) => (
@@ -344,7 +390,7 @@ function App() {
               </button>
             ))}
           </nav>
-        </aside>
+        </aside> : null}
         <div className="content-shell">
           {!simpleMode ? <section className="metric-grid">
             <MetricCard label="Products" value={String(snapshot.metrics.productCount)} />
@@ -358,7 +404,7 @@ function App() {
           {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={simpleMode} onOpen={setActiveView} /> : null}
           {activeView === "Users" ? <TwoCol left={<Panel title="Create User" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/users", { ...userForm, role: userForm.roles[0], roles: userForm.roles }, "User created."); }}><label>Username<input value={userForm.username} onChange={(e) => setUserForm((c) => ({ ...c, username: e.target.value }))} /></label><label>Name<input value={userForm.fullName} onChange={(e) => setUserForm((c) => ({ ...c, fullName: e.target.value }))} /></label><label>Mobile<input value={userForm.mobileNumber} onChange={(e) => setUserForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Roles<select multiple value={userForm.roles} onChange={(e) => setUserForm((c) => ({ ...c, roles: Array.from(e.target.selectedOptions).map((option) => option.value as UserRole) }))}>{userRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Password<input value={userForm.password} onChange={(e) => setUserForm((c) => ({ ...c, password: e.target.value }))} /></label><button className="primary-button" type="submit">Create user</button></form></Panel>} right={<Panel title="Users" eyebrow="Directory"><DataTable headers={["Username","Name","Roles","Mobile"]} rows={snapshot.users.map((u) => [u.username, u.fullName, (u.roles && u.roles.length > 0 ? u.roles : [u.role]).join(", "), u.mobileNumber])} /></Panel>} /> : null}
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created."); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
-          {activeView === "Products" ? <TwoCol left={<Panel title="Product Master" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/products", { ...productForm, defaultWeightKg: Number(productForm.defaultWeightKg), toleranceKg: Number(productForm.toleranceKg), tolerancePercent: Number(productForm.tolerancePercent), slabs: parseSlabs(productForm.slabsText) }, "Product created."); }}><label>SKU<input value={productForm.sku} onChange={(e) => setProductForm((c) => ({ ...c, sku: e.target.value }))} /></label><label>Name<input value={productForm.name} onChange={(e) => setProductForm((c) => ({ ...c, name: e.target.value }))} /></label><label>Division<input value={productForm.division} onChange={(e) => setProductForm((c) => ({ ...c, division: e.target.value }))} /></label><label>Department<input value={productForm.department} onChange={(e) => setProductForm((c) => ({ ...c, department: e.target.value }))} /></label><label>Section<input value={productForm.section} onChange={(e) => setProductForm((c) => ({ ...c, section: e.target.value }))} /></label><label>Category<input value={productForm.category} onChange={(e) => setProductForm((c) => ({ ...c, category: e.target.value }))} /></label><label>Unit<input value={productForm.unit} onChange={(e) => setProductForm((c) => ({ ...c, unit: e.target.value }))} /></label><label>Weight<input type="number" value={productForm.defaultWeightKg} onChange={(e) => setProductForm((c) => ({ ...c, defaultWeightKg: e.target.value }))} /></label><label>Tol. Kg<input type="number" value={productForm.toleranceKg} onChange={(e) => setProductForm((c) => ({ ...c, toleranceKg: e.target.value }))} /></label><label>Tol. %<input type="number" value={productForm.tolerancePercent} onChange={(e) => setProductForm((c) => ({ ...c, tolerancePercent: e.target.value }))} /></label><label>Warehouses<select multiple value={productForm.allowedWarehouseIds} onChange={(e) => setProductForm((c) => ({ ...c, allowedWarehouseIds: Array.from(e.target.selectedOptions).map((o) => o.value) }))}>{snapshot.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label><label className="wide-field">Slabs<input value={productForm.slabsText} onChange={(e) => setProductForm((c) => ({ ...c, slabsText: e.target.value }))} /></label><button className="primary-button" type="submit">Create product</button></form></Panel>} right={<><Panel title="Bulk CSV Upload" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/products/bulk", { rows: parseCsvRows(bulkCsv) }, "CSV products imported."); }}><label className="wide-field">Paste CSV<textarea value={bulkCsv} onChange={(e) => setBulkCsv(e.target.value)} /></label><button className="primary-button" type="submit">Import pasted CSV</button></form><form className="form-grid top-gap" onSubmit={async (e) => { e.preventDefault(); if (!bulkCsvFile) { setError("Select a CSV file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "CSV file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }}><label className="wide-field">CSV file<input accept=".csv,text/csv" type="file" onChange={(e) => setBulkCsvFile(e.target.files?.[0] || null)} /></label><button className="primary-button" type="submit">Upload CSV file</button></form></Panel><Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section"]} rows={snapshot.products.map((p) => [p.sku, p.name, p.division, p.department, p.section])} /></Panel></>} /> : null}
+          {activeView === "Products" ? <TwoCol left={<Panel title="Product Master" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/products", { ...productForm, defaultWeightKg: Number(productForm.defaultWeightKg), toleranceKg: Number(productForm.toleranceKg), tolerancePercent: Number(productForm.tolerancePercent), slabs: parseSlabs(productForm.slabsText) }, "Product created."); }}><label>SKU<input value={productForm.sku} onChange={(e) => setProductForm((c) => ({ ...c, sku: e.target.value }))} /></label><label>Name<input value={productForm.name} onChange={(e) => setProductForm((c) => ({ ...c, name: e.target.value }))} /></label><label>Division<input value={productForm.division} onChange={(e) => setProductForm((c) => ({ ...c, division: e.target.value }))} /></label><label>Department<input value={productForm.department} onChange={(e) => setProductForm((c) => ({ ...c, department: e.target.value }))} /></label><label>Section<input value={productForm.section} onChange={(e) => setProductForm((c) => ({ ...c, section: e.target.value }))} /></label><label>Category<input value={productForm.category} onChange={(e) => setProductForm((c) => ({ ...c, category: e.target.value }))} /></label><label>Unit<input value={productForm.unit} onChange={(e) => setProductForm((c) => ({ ...c, unit: e.target.value }))} /></label><label>Weight<input type="number" value={productForm.defaultWeightKg} onChange={(e) => setProductForm((c) => ({ ...c, defaultWeightKg: e.target.value }))} /></label><label>Tol. Kg<input type="number" value={productForm.toleranceKg} onChange={(e) => setProductForm((c) => ({ ...c, toleranceKg: e.target.value }))} /></label><label>Tol. %<input type="number" value={productForm.tolerancePercent} onChange={(e) => setProductForm((c) => ({ ...c, tolerancePercent: e.target.value }))} /></label><label>Warehouses<select multiple value={productForm.allowedWarehouseIds} onChange={(e) => setProductForm((c) => ({ ...c, allowedWarehouseIds: Array.from(e.target.selectedOptions).map((o) => o.value) }))}>{snapshot.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label><label className="wide-field">Slabs<input value={productForm.slabsText} onChange={(e) => setProductForm((c) => ({ ...c, slabsText: e.target.value }))} /></label><button className="primary-button" type="submit">Create product</button></form></Panel>} right={<><Panel title="Bulk Product Upload" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/products/bulk", { rows: parseCsvRows(bulkCsv) }, "CSV products imported."); }}><label className="wide-field">Paste CSV<textarea value={bulkCsv} onChange={(e) => setBulkCsv(e.target.value)} /></label><button className="primary-button" type="submit">Import pasted CSV</button></form><form className="form-grid top-gap" onSubmit={async (e) => { e.preventDefault(); if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }}><label className="wide-field">CSV or Excel file<input accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" type="file" onChange={(e) => setBulkCsvFile(e.target.files?.[0] || null)} /></label><button className="primary-button" type="submit">Upload product file</button></form></Panel><Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section"]} rows={snapshot.products.map((p) => [p.sku, p.name, p.division, p.department, p.section])} /></Panel></>} /> : null}
           {activeView === "Parties" ? <TwoCol left={<Panel title={currentUser.role === "Sales" ? "Register Customer" : "Register Supplier"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><form className="form-grid" onSubmit={async (e) => { e.preventDefault(); const forcedType = currentUser.role === "Sales" ? "Shop" : "Supplier"; await createPartyRecord({ ...partyForm, type: forcedType }); }}><label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label><label>Name<input value={partyForm.name} onChange={(e) => setPartyForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyForm.gstNumber} onChange={(e) => setPartyForm((c) => ({ ...c, gstNumber: e.target.value }))} /></label><label>Mobile<input value={partyForm.mobileNumber} onChange={(e) => setPartyForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">{currentUser.role === "Sales" ? "Save customer" : "Save supplier"}</button></form></Panel>} right={<><Panel title={currentUser.role === "Sales" ? "Update Customer" : "Update Supplier"} eyebrow="Edit details"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated."); }}><label>Party<select value={partyEditForm.id} onChange={(e) => { const sourceItems = currentUser.role === "Sales" ? shops : suppliers; const item = sourceItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : { id: "", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" }); }}>{renderOptions(currentUser.role === "Sales" ? shops : suppliers)}</select></label><label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} /></label><label>Mobile<input value={partyEditForm.mobileNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyEditForm.contactPerson} onChange={(e) => setPartyEditForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Update</button></form></Panel><Panel title={currentUser.role === "Sales" ? "Customer Database" : "Supplier Database"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><DataTable headers={["Name","GST","Mobile","City"]} rows={(currentUser.role === "Sales" ? shops : suppliers).map((p) => [p.name, p.gstNumber, p.mobileNumber, p.city])} /></Panel></>} /> : null}
           {activeView === "Purchase" ? <CatalogOrderView
             mode="purchase"
@@ -369,11 +415,12 @@ function App() {
             warehouses={snapshot.warehouses}
             paymentMethods={paymentMethods}
             stockSummary={snapshot.stockSummary}
+            purchaseOrders={snapshot.purchaseOrders}
             orderForm={purchaseForm}
             setOrderForm={setPurchaseForm}
             onCreateParty={createPartyRecord}
-            onSubmit={() => post("/purchase-orders", { ...purchaseForm, quantityOrdered: Number(purchaseForm.quantityOrdered), rate: Number(purchaseForm.rate), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined }, "Purchase order created.")}
-            rightPanel={<><Panel title="Update Purchase" eyebrow="Rate and status"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/purchase-orders/${purchaseEditForm.id}`, { ...purchaseEditForm, rate: Number(purchaseEditForm.rate), cashTiming: purchaseEditForm.paymentMode === "Cash" ? purchaseEditForm.cashTiming || undefined : undefined }, "Purchase updated."); }}><label>Order<select value={purchaseEditForm.id} onChange={(e) => { const item = snapshot.purchaseOrders.find((p) => p.id === e.target.value); setPurchaseEditForm(item ? { id: item.id, rate: String(item.rate), paymentMode: item.paymentMode, cashTiming: item.cashTiming || "", deliveryMode: item.deliveryMode, note: item.note, status: item.status } : { id: "", rate: "0", paymentMode: "Cash", cashTiming: "", deliveryMode: "Dealer Delivery", note: "", status: "Pending Payment" }); }}>{snapshot.purchaseOrders.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}</select></label><label>Rate<input type="number" value={purchaseEditForm.rate} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, rate: e.target.value }))} /></label><label>Pay mode<select value={purchaseEditForm.paymentMode} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{paymentMethods.map((m) => <option key={m.code}>{m.code}</option>)}</select></label><label>Delivery<select value={purchaseEditForm.deliveryMode} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, deliveryMode: e.target.value as "Dealer Delivery" | "Self Collection" }))}><option>Dealer Delivery</option><option>Self Collection</option></select></label>{purchaseEditForm.paymentMode === "Cash" ? <label>Cash timing<select value={purchaseEditForm.cashTiming} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}<label>Status<select value={purchaseEditForm.status} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, status: e.target.value }))}><option>Pending Payment</option><option>Ready for Dispatch</option><option>In Transit</option><option>Partially Received</option><option>Received</option><option>Closed</option></select></label><label className="wide-field">Note<input value={purchaseEditForm.note} onChange={(e) => setPurchaseEditForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Update purchase</button></form></Panel><Panel title="Purchase Queue" eyebrow="Pending and received"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel></>}
+            onSubmit={() => post("/purchase-orders", { ...purchaseForm, quantityOrdered: Number(purchaseForm.quantityOrdered), rate: Number(purchaseForm.rate), previousRate: Number(purchaseForm.previousRate || 0), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined }, "Purchase order created.")}
+            rightPanel={null}
           /> : null}
           {activeView === "Sales" ? <CatalogOrderView
             mode="sales"
@@ -387,19 +434,58 @@ function App() {
             orderForm={salesForm}
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
-            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, "Sales order created.")}
-            rightPanel={<><Panel title="Update Sales Order" eyebrow="Rate and status"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/sales-orders/${salesEditForm.id}`, { ...salesEditForm, rate: Number(salesEditForm.rate), cashTiming: salesEditForm.paymentMode === "Cash" ? salesEditForm.cashTiming || undefined : undefined }, "Sales order updated."); }}><label>Order<select value={salesEditForm.id} onChange={(e) => { const item = snapshot.salesOrders.find((s) => s.id === e.target.value); setSalesEditForm(item ? { id: item.id, rate: String(item.rate), paymentMode: item.paymentMode, cashTiming: item.cashTiming || "", deliveryMode: item.deliveryMode, note: item.note, status: item.status } : { id: "", rate: "0", paymentMode: "Cash", cashTiming: "", deliveryMode: "Delivery", note: "", status: "Booked" }); }}>{snapshot.salesOrders.map((s) => <option key={s.id} value={s.id}>{s.id}</option>)}</select></label><label>Rate<input type="number" value={salesEditForm.rate} onChange={(e) => setSalesEditForm((c) => ({ ...c, rate: e.target.value }))} /></label><label>Pay mode<select value={salesEditForm.paymentMode} onChange={(e) => setSalesEditForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{paymentMethods.map((m) => <option key={m.code}>{m.code}</option>)}</select></label><label>Delivery<select value={salesEditForm.deliveryMode} onChange={(e) => setSalesEditForm((c) => ({ ...c, deliveryMode: e.target.value as "Self Collection" | "Delivery" }))}><option>Delivery</option><option>Self Collection</option></select></label>{salesEditForm.paymentMode === "Cash" ? <label>Cash timing<select value={salesEditForm.cashTiming} onChange={(e) => setSalesEditForm((c) => ({ ...c, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}<label>Status<select value={salesEditForm.status} onChange={(e) => setSalesEditForm((c) => ({ ...c, status: e.target.value }))}><option>Draft</option><option>Booked</option><option>Ready for Dispatch</option><option>Self Pickup</option><option>Delivered</option><option>Closed</option></select></label><label className="wide-field">Note<input value={salesEditForm.note} onChange={(e) => setSalesEditForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Update sales order</button></form></Panel><Panel title="Sales Orders" eyebrow="Booked from stock"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel></>}
+            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), minimumAllowedRate: Number(salesForm.minimumAllowedRate || 0), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, salesForm.priceApprovalRequested ? "Sales order sent for admin approval." : "Sales order created.")}
+            rightPanel={null}
           /> : null}
-          {activeView === "Payments" ? <TwoCol left={<><Panel title="Add Payment" eyebrow="Submit proof"><form className="form-grid" onSubmit={async (e) => { e.preventDefault(); let proofName = paymentForm.proofName; if (paymentProofFile) { const uploaded = await uploadFile("/payments/upload-proof", "proof", paymentProofFile, "Payment proof uploaded."); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) proofName = String((uploaded as { fileName: string }).fileName); else return; } await post("/payments", { ...paymentForm, proofName, amount: Number(paymentForm.amount), cashTiming: paymentForm.mode === "Cash" ? paymentForm.cashTiming || undefined : undefined }, "Payment submitted."); }}><label>Side<select value={paymentForm.side} onChange={(e) => setPaymentForm((c) => ({ ...c, side: e.target.value as "Purchase" | "Sales" }))}><option>Purchase</option><option>Sales</option></select></label><label>Order<input value={paymentForm.linkedOrderId} onChange={(e) => setPaymentForm((c) => ({ ...c, linkedOrderId: e.target.value }))} /></label><label>Amount<input type="number" value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} /></label><label>Mode<select value={paymentForm.mode} onChange={(e) => setPaymentForm((c) => ({ ...c, mode: e.target.value as PaymentMode }))}>{paymentMethods.map((m) => <option key={m.code}>{m.code}</option>)}</select></label>{paymentForm.mode === "Cash" ? <label>Cash timing<select value={paymentForm.cashTiming} onChange={(e) => setPaymentForm((c) => ({ ...c, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}<label>Ref<input value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} /></label><label>Voucher<input value={paymentForm.voucherNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, voucherNumber: e.target.value }))} /></label><label>UTR<input value={paymentForm.utrNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, utrNumber: e.target.value }))} /></label><label>Proof name<input value={paymentForm.proofName} onChange={(e) => setPaymentForm((c) => ({ ...c, proofName: e.target.value }))} /></label><label>Proof file<input type="file" accept="image/*,.pdf" onChange={(e) => setPaymentProofFile(e.target.files?.[0] || null)} /></label><label>Status<select value={paymentForm.verificationStatus} onChange={(e) => setPaymentForm((c) => ({ ...c, verificationStatus: e.target.value as "Pending" | "Submitted" | "Verified" | "Rejected" }))}><option>Pending</option><option>Submitted</option><option>Verified</option><option>Rejected</option></select></label><label className="wide-field">Note<input value={paymentForm.verificationNote} onChange={(e) => setPaymentForm((c) => ({ ...c, verificationNote: e.target.value }))} /></label><button className="primary-button" type="submit">Save payment</button></form></Panel><Panel title="Quick Verify" eyebrow="Accounts / Admin">{snapshot.payments.slice(0, 6).map((pay) => <div className="list-card" key={pay.id}><div><strong>{pay.id}</strong><p>{pay.side} · {pay.linkedOrderId} · {pay.mode}</p></div><button className="primary-button" type="button" onClick={() => void post("/payments/verify", { paymentId: pay.id, verificationStatus: "Verified", verificationNote: "Verified in panel" }, "Payment verified.")}>Verify</button></div>)}</Panel></>} right={<><Panel title="Update Payment" eyebrow="Edit payment record"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/payments/${paymentEditForm.id}`, { ...paymentEditForm, amount: Number(paymentEditForm.amount) }, "Payment updated."); }}><label>Payment<select value={paymentEditForm.id} onChange={(e) => { const item = snapshot.payments.find((p) => p.id === e.target.value); setPaymentEditForm(item ? { id: item.id, amount: String(item.amount), referenceNumber: item.referenceNumber, voucherNumber: item.voucherNumber || "", utrNumber: item.utrNumber || "", proofName: item.proofName || "", verificationStatus: item.verificationStatus, verificationNote: item.verificationNote } : { id: "", amount: "0", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted", verificationNote: "" }); }}>{snapshot.payments.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}</select></label><label>Amount<input type="number" value={paymentEditForm.amount} onChange={(e) => setPaymentEditForm((c) => ({ ...c, amount: e.target.value }))} /></label><label>Ref<input value={paymentEditForm.referenceNumber} onChange={(e) => setPaymentEditForm((c) => ({ ...c, referenceNumber: e.target.value }))} /></label><label>Voucher<input value={paymentEditForm.voucherNumber} onChange={(e) => setPaymentEditForm((c) => ({ ...c, voucherNumber: e.target.value }))} /></label><label>UTR<input value={paymentEditForm.utrNumber} onChange={(e) => setPaymentEditForm((c) => ({ ...c, utrNumber: e.target.value }))} /></label><label>Proof<input value={paymentEditForm.proofName} onChange={(e) => setPaymentEditForm((c) => ({ ...c, proofName: e.target.value }))} /></label><label>Status<select value={paymentEditForm.verificationStatus} onChange={(e) => setPaymentEditForm((c) => ({ ...c, verificationStatus: e.target.value as "Pending" | "Submitted" | "Verified" | "Rejected" }))}><option>Pending</option><option>Submitted</option><option>Verified</option><option>Rejected</option></select></label><label className="wide-field">Note<input value={paymentEditForm.verificationNote} onChange={(e) => setPaymentEditForm((c) => ({ ...c, verificationNote: e.target.value }))} /></label><button className="primary-button" type="submit">Update payment</button></form></Panel><Panel title="Payments" eyebrow="Verification trail"><DataTable headers={["ID","Side","Order","Amount","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.amount, p.mode, p.verificationStatus])} /></Panel></>} /> : null}
-          {activeView === "Receipts" ? <TwoCol left={<Panel title="Warehouse Receipt" eyebrow="Partial or full"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/receipt-checks", { ...receiptForm, receivedQuantity: Number(receiptForm.receivedQuantity), actualWeightKg: Number(receiptForm.actualWeightKg) }, "Receipt saved."); }}><label>Purchase order<select value={receiptForm.purchaseOrderId} onChange={(e) => setReceiptForm((c) => ({ ...c, purchaseOrderId: e.target.value }))}>{snapshot.purchaseOrders.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}</select></label><label>Warehouse<select value={receiptForm.warehouseId} onChange={(e) => setReceiptForm((c) => ({ ...c, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Qty received<input type="number" value={receiptForm.receivedQuantity} onChange={(e) => setReceiptForm((c) => ({ ...c, receivedQuantity: e.target.value }))} /></label><label>Actual weight<input type="number" value={receiptForm.actualWeightKg} onChange={(e) => setReceiptForm((c) => ({ ...c, actualWeightKg: e.target.value }))} /></label><label className="checkbox-line"><input type="checkbox" checked={receiptForm.confirmPartial} onChange={(e) => setReceiptForm((c) => ({ ...c, confirmPartial: e.target.checked }))} />Confirm partial receipt if mismatch</label><label className="wide-field">Note<input value={receiptForm.note} onChange={(e) => setReceiptForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Finalize receipt</button></form></Panel>} right={<><Panel title="Update Receipt" eyebrow="Adjust note and flag"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/receipt-checks/${receiptEditForm.grcNumber}`, { note: receiptEditForm.note, flagged: receiptEditForm.flagged }, "Receipt updated."); }}><label>Receipt<select value={receiptEditForm.grcNumber} onChange={(e) => { const item = snapshot.receiptChecks.find((r) => r.grcNumber === e.target.value); setReceiptEditForm(item ? { grcNumber: item.grcNumber, note: item.notes.join(" | "), flagged: item.flagged } : { grcNumber: "", note: "", flagged: false }); }}>{snapshot.receiptChecks.map((r) => <option key={r.grcNumber} value={r.grcNumber}>{r.grcNumber}</option>)}</select></label><label className="wide-field">Note<input value={receiptEditForm.note} onChange={(e) => setReceiptEditForm((c) => ({ ...c, note: e.target.value }))} /></label><label className="checkbox-line"><input type="checkbox" checked={receiptEditForm.flagged} onChange={(e) => setReceiptEditForm((c) => ({ ...c, flagged: e.target.checked }))} />Flag receipt for review</label><button className="primary-button" type="submit">Update receipt</button></form></Panel><Panel title="Receipt Checks" eyebrow="Flags and pending"><DataTable headers={["GRC","PO","Received","Pending","Variance","Flag"]} rows={snapshot.receiptChecks.map((r) => [r.grcNumber, r.purchaseOrderId, r.receivedQuantity, r.pendingQuantity, `${r.weightVarianceKg} kg`, r.flagged ? "Yes" : "No"])}/></Panel></>} /> : null}
+          {activeView === "Payments" ? (
+            isPurchaserOnly ? (
+              <PurchaserPaymentsView
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")}
+                onUpdatePayment={(id, body) => patch(`/payments/${id}`, body, "Payment updated.")}
+              />
+            ) : isSalesOnly ? (
+              <SalesPaymentsView
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")}
+                onUpdatePayment={(id, body) => patch(`/payments/${id}`, body, "Payment updated.")}
+              />
+            ) : (isAccountsUser || currentRoles.includes("Admin")) ? (
+              <AccountsPaymentsView
+                snapshot={snapshot}
+                onVerify={(paymentId, verificationStatus, verificationNote) => post("/payments/verify", { paymentId, verificationStatus, verificationNote }, `Payment ${verificationStatus.toLowerCase()}.`)}
+              />
+            ) : null
+          ) : null}
+          {activeView === "Receipts" ? (
+            isWarehouseOnly || currentRoles.includes("Warehouse Manager") || currentRoles.includes("Admin") ? (
+              <WarehouseOperationsView
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
+                onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
+              />
+            ) : null
+          ) : null}
           {activeView === "Ledger" ? <TwoCol left={<Panel title="Ledger" eyebrow="Accounts visibility"><DataTable headers={["ID","Side","Order","Party","Goods","Paid","Pending"]} rows={snapshot.ledgerEntries.map((l) => [l.id, l.side, l.linkedOrderId, l.partyName, l.goodsValue, l.paidAmount, l.pendingAmount])} /></Panel>} right={<Panel title="Order Financial State" eyebrow="Pending vs settled"><DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...snapshot.purchaseOrders.map((p) => ["Purchase", p.id, p.status]), ...snapshot.salesOrders.map((s) => ["Sales", s.id, s.status])]} /></Panel>} /> : null}
           {activeView === "Stock" ? <TwoCol left={<Panel title="Closing Stock" eyebrow="Warehouse and admin"><DataTable headers={["Warehouse","SKU","Product","Avail","Reserved","Blocked"]} rows={snapshot.stockSummary.map((s) => [s.warehouseName, s.productSku, s.productName, s.availableQuantity, s.reservedQuantity, s.blockedQuantity])} /></Panel>} right={<Panel title="Inventory Lots" eyebrow="Traceability"><DataTable headers={["Lot","Order","Warehouse","SKU","Avail","Blocked"]} rows={snapshot.inventoryLots.map((i) => [i.lotId, i.sourceOrderId, i.warehouseId, i.productSku, i.quantityAvailable, i.quantityBlocked])} /></Panel>} /> : null}
-          {activeView === "Delivery" ? <TwoCol left={<Panel title="Delivery Task" eyebrow="Pickup and drop"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/delivery-tasks", { ...deliveryForm, linkedOrderIds: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "" }, "Delivery task created."); }}><label>Side<select value={deliveryForm.side} onChange={(e) => setDeliveryForm((c) => ({ ...c, side: e.target.value as DeliveryTask["side"] }))}><option>Purchase</option><option>Sales</option></select></label><label className="wide-field">Orders<input value={deliveryForm.linkedOrderIdsText} onChange={(e) => setDeliveryForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} placeholder="PO-1, SO-2" /></label><label>Mode<select value={deliveryForm.mode} onChange={(e) => setDeliveryForm((c) => ({ ...c, mode: e.target.value as DeliveryTask["mode"] }))}><option>Dealer Delivery</option><option>Self Collection</option><option>Delivery</option></select></label><label>Status<select value={deliveryForm.status} onChange={(e) => setDeliveryForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label>From<input value={deliveryForm.from} onChange={(e) => setDeliveryForm((c) => ({ ...c, from: e.target.value }))} /></label><label>To<input value={deliveryForm.to} onChange={(e) => setDeliveryForm((c) => ({ ...c, to: e.target.value }))} /></label><label>Assigned<input value={deliveryForm.assignedTo} onChange={(e) => setDeliveryForm((c) => ({ ...c, assignedTo: e.target.value }))} placeholder="delivery" /></label><label>Pickup time<input value={deliveryForm.pickupAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, pickupAt: e.target.value }))} placeholder="2026-04-04 10:30" /></label><label>Drop time<input value={deliveryForm.dropAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, dropAt: e.target.value }))} placeholder="2026-04-04 13:00" /></label><label>Payment action<select value={deliveryForm.paymentAction} onChange={(e) => setDeliveryForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryForm.cashCollectionRequired} onChange={(e) => setDeliveryForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Create task</button></form></Panel>} right={<><Panel title="Update Delivery" eyebrow="Assignment and completion"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/delivery-tasks/${deliveryEditForm.id}`, { linkedOrderIds: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "", assignedTo: deliveryEditForm.assignedTo, pickupAt: deliveryEditForm.pickupAt, dropAt: deliveryEditForm.dropAt, paymentAction: deliveryEditForm.paymentAction, cashCollectionRequired: deliveryEditForm.cashCollectionRequired, status: deliveryEditForm.status }, "Delivery task updated."); }}><label>Task<select value={deliveryEditForm.id} onChange={(e) => { const item = snapshot.deliveryTasks.find((d) => d.id === e.target.value); setDeliveryEditForm(item ? { id: item.id, linkedOrderIdsText: item.linkedOrderIds.join(", "), assignedTo: item.assignedTo, pickupAt: item.pickupAt || "", dropAt: item.dropAt || "", paymentAction: item.paymentAction, cashCollectionRequired: item.cashCollectionRequired, status: item.status } : { id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", paymentAction: "None", cashCollectionRequired: false, status: "Planned" }); }}>{snapshot.deliveryTasks.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}</select></label><label className="wide-field">Orders<input value={deliveryEditForm.linkedOrderIdsText} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} /></label><label>Assigned<input value={deliveryEditForm.assignedTo} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, assignedTo: e.target.value }))} /></label><label>Pickup time<input value={deliveryEditForm.pickupAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, pickupAt: e.target.value }))} /></label><label>Drop time<input value={deliveryEditForm.dropAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, dropAt: e.target.value }))} /></label><label>Payment action<select value={deliveryEditForm.paymentAction} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label>Status<select value={deliveryEditForm.status} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashCollectionRequired} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Update task</button></form></Panel><Panel title="Delivery Tasks" eyebrow="Transport flow"><DataTable headers={["ID","Side","Orders","Mode","Assigned","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.mode, d.assignedTo, d.status])} /></Panel></>} /> : null}
+          {activeView === "Delivery" ? (
+            isDeliveryOnly ? (
+              <DeliveryJobsView
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onUploadProof={async (file) => uploadFile("/delivery-tasks/upload-proof", "deliveryProof", file, "Delivery proof uploaded.")}
+                onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
+              />
+            ) : <TwoCol left={<Panel title="Delivery Task" eyebrow="Pickup and drop"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/delivery-tasks", { ...deliveryForm, linkedOrderIds: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "" }, "Delivery task created."); }}><label>Side<select value={deliveryForm.side} onChange={(e) => setDeliveryForm((c) => ({ ...c, side: e.target.value as DeliveryTask["side"] }))}><option>Purchase</option><option>Sales</option></select></label><label className="wide-field">Orders<input value={deliveryForm.linkedOrderIdsText} onChange={(e) => setDeliveryForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} placeholder="PO-1, SO-2" /></label><label>Mode<select value={deliveryForm.mode} onChange={(e) => setDeliveryForm((c) => ({ ...c, mode: e.target.value as DeliveryTask["mode"] }))}><option>Dealer Delivery</option><option>Self Collection</option><option>Delivery</option></select></label><label>Status<select value={deliveryForm.status} onChange={(e) => setDeliveryForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label>From<input value={deliveryForm.from} onChange={(e) => setDeliveryForm((c) => ({ ...c, from: e.target.value }))} /></label><label>To<input value={deliveryForm.to} onChange={(e) => setDeliveryForm((c) => ({ ...c, to: e.target.value }))} /></label><label>Assigned<input value={deliveryForm.assignedTo} onChange={(e) => setDeliveryForm((c) => ({ ...c, assignedTo: e.target.value }))} placeholder="delivery" /></label><label>Pickup time<input value={deliveryForm.pickupAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, pickupAt: e.target.value }))} placeholder="2026-04-04 10:30" /></label><label>Drop time<input value={deliveryForm.dropAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, dropAt: e.target.value }))} placeholder="2026-04-04 13:00" /></label><label>Route hint<input value={deliveryForm.routeHint} onChange={(e) => setDeliveryForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryForm.paymentAction} onChange={(e) => setDeliveryForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryForm.cashCollectionRequired} onChange={(e) => setDeliveryForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Create task</button></form></Panel>} right={<><Panel title="Update Delivery" eyebrow="Assignment and completion"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/delivery-tasks/${deliveryEditForm.id}`, { linkedOrderIds: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "", assignedTo: deliveryEditForm.assignedTo, pickupAt: deliveryEditForm.pickupAt, dropAt: deliveryEditForm.dropAt, routeHint: deliveryEditForm.routeHint, paymentAction: deliveryEditForm.paymentAction, cashCollectionRequired: deliveryEditForm.cashCollectionRequired, cashHandoverMarked: deliveryEditForm.cashHandoverMarked, weightProofName: deliveryEditForm.weightProofName, cashProofName: deliveryEditForm.cashProofName, status: deliveryEditForm.status }, "Delivery task updated."); }}><label>Task<select value={deliveryEditForm.id} onChange={(e) => { const item = snapshot.deliveryTasks.find((d) => d.id === e.target.value); setDeliveryEditForm(item ? { id: item.id, linkedOrderIdsText: item.linkedOrderIds.join(", "), assignedTo: item.assignedTo, pickupAt: item.pickupAt || "", dropAt: item.dropAt || "", routeHint: item.routeHint || "", paymentAction: item.paymentAction, cashCollectionRequired: item.cashCollectionRequired, cashHandoverMarked: item.cashHandoverMarked, weightProofName: item.weightProofName || "", cashProofName: item.cashProofName || "", status: item.status } : { id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None", cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" }); }}>{snapshot.deliveryTasks.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}</select></label><label className="wide-field">Orders<input value={deliveryEditForm.linkedOrderIdsText} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} /></label><label>Assigned<input value={deliveryEditForm.assignedTo} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, assignedTo: e.target.value }))} /></label><label>Pickup time<input value={deliveryEditForm.pickupAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, pickupAt: e.target.value }))} /></label><label>Drop time<input value={deliveryEditForm.dropAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, dropAt: e.target.value }))} /></label><label>Route hint<input value={deliveryEditForm.routeHint} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryEditForm.paymentAction} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label>Status<select value={deliveryEditForm.status} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashCollectionRequired} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashHandoverMarked} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashHandoverMarked: e.target.checked }))} />Cash handover marked</label><button className="primary-button" type="submit">Update task</button></form></Panel><Panel title="Delivery Tasks" eyebrow="Transport flow"><DataTable headers={["ID","Side","Orders","Mode","Assigned","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.mode, d.assignedTo, d.status])} /></Panel></>} />
+          ) : null}
           {activeView === "Settings" ? <Panel title="Admin Settings" eyebrow="Payment methods and delivery"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/settings", snapshot.settings, "Settings updated."); }}>{snapshot.settings.paymentMethods.map((item, index) => <label key={item.code}>{item.code}<div className="settings-line"><input type="checkbox" checked={item.active} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, active: e.target.checked } : method) } }) : current)} />Active<input type="checkbox" checked={item.allowsCashTiming} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, allowsCashTiming: e.target.checked } : method) } }) : current)} />Cash timing</div></label>)}<label>Delivery model<select value={snapshot.settings.deliveryCharge.model} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, model: e.target.value as "Fixed" | "Per Km" } } }) : current)}><option>Fixed</option><option>Per Km</option></select></label><label>Delivery amount<input type="number" value={snapshot.settings.deliveryCharge.amount} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, amount: Number(e.target.value) } } }) : current)} /></label><button className="primary-button" type="submit">Save settings</button></form></Panel> : null}
           {activeView === "Notes" ? <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added."); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} /> : null}
         </div>
       </section>
-      <nav className="mobile-tab-bar">{safeVisibleViews.map((view) => <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => setActiveView(view)}>{labels[view]}</button>)}</nav>
+      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => setActiveView(view)}>{labels[view]}</button>)}</nav>
     </main>
   );
 }
@@ -413,35 +499,57 @@ type CatalogOrderViewProps = {
   warehouses: AppSnapshot["warehouses"];
   paymentMethods: AppSnapshot["settings"]["paymentMethods"];
   stockSummary: AppSnapshot["stockSummary"];
+  purchaseOrders?: AppSnapshot["purchaseOrders"];
   orderForm: any;
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
-  onSubmit: () => void;
+  onSubmit: () => Promise<void> | void;
   rightPanel: React.ReactNode;
 };
 
 function CatalogOrderView(props: CatalogOrderViewProps) {
-  const { mode, title, eyebrow, products, parties, warehouses, paymentMethods, stockSummary, orderForm, setOrderForm, onCreateParty, onSubmit, rightPanel } = props;
+  const { mode, title, eyebrow, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onSubmit, rightPanel } = props;
   const [search, setSearch] = useState("");
-  const [activeDivision, setActiveDivision] = useState("All");
+  const [activeDivision, setActiveDivision] = useState("");
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">("landing");
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">("catalog");
+  const [cartOpen, setCartOpen] = useState(false);
+  const [cartStep, setCartStep] = useState<"cart" | "payment">("cart");
+  const [cartToast, setCartToast] = useState("");
+  const [cartErrors, setCartErrors] = useState<Record<string, boolean>>({});
+  const [ratePopup, setRatePopup] = useState<{ product: AppSnapshot["products"][number]; rate: string; lastRate: number; confirmHighRate: boolean } | null>(null);
   const [partyDraft, setPartyDraft] = useState({ name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const isPurchase = mode === "purchase";
   const partyType = isPurchase ? "Supplier" : "Shop";
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
-  const divisions = ["All", ...Array.from(new Set(products.map((item) => item.division).filter(Boolean)))];
+  const divisions = Array.from(new Set(products.map((item) => item.division).filter(Boolean)));
+  const showingCategoryLanding = activeDivision === "";
   const filteredProducts = products.filter((product) => {
-    const matchesDivision = activeDivision === "All" || product.division === activeDivision;
+    const matchesDivision = activeDivision === "" || product.division === activeDivision;
     const haystack = [product.name, product.division, product.department, product.section, product.brand, product.shortName, product.articleName, product.itemName, product.barcode, product.size].join(" ").toLowerCase();
     const matchesSearch = search.trim() === "" || haystack.includes(search.trim().toLowerCase());
     return matchesDivision && matchesSearch;
   });
+  const searchSuggestions = search.trim() === ""
+    ? []
+    : products
+        .filter((product) => [product.name, product.brand, product.shortName, product.barcode, product.division, product.department, product.section].join(" ").toLowerCase().includes(search.trim().toLowerCase()))
+        .slice(0, 6);
+
+  function applySearchSuggestion(product: AppSnapshot["products"][number]) {
+    setSearch(product.name);
+    setActiveDivision(product.division || "");
+    setSuggestionOpen(false);
+  }
 
   function setVoiceSearch() {
     const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
     const SpeechRecognitionCtor = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor || voiceBusy) {
+      if (!SpeechRecognitionCtor) {
+        showCartToast("Voice search is not supported in this browser");
+      }
       return;
     }
     const recognition = new SpeechRecognitionCtor();
@@ -451,19 +559,210 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     setVoiceBusy(true);
     recognition.onresult = (event: any) => {
       const transcript = String(event?.results?.[0]?.[0]?.transcript || "").trim();
-      if (transcript) setSearch(transcript);
+      if (transcript) {
+        setSearch(transcript);
+        setSuggestionOpen(true);
+        const matchedProduct = products.find((product) => [product.name, product.brand, product.shortName, product.barcode].join(" ").toLowerCase().includes(transcript.toLowerCase()));
+        if (matchedProduct) {
+          setActiveDivision(matchedProduct.division || "");
+        }
+      }
     };
-    recognition.onerror = () => setVoiceBusy(false);
+    recognition.onerror = () => {
+      setVoiceBusy(false);
+      showCartToast("Voice search could not capture your input");
+    };
     recognition.onend = () => setVoiceBusy(false);
     recognition.start();
   }
 
+  function getLastPurchaseRate(product: AppSnapshot["products"][number]) {
+    return purchaseOrders
+      .filter((item) => item.productSku === product.sku)
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]?.rate
+      || product.rsp
+      || product.slabs[0]?.purchaseRate
+      || 0;
+  }
+
   function selectProduct(product: AppSnapshot["products"][number]) {
-    setOrderForm((current: any) => ({ ...current, productSku: product.sku, rate: String(getSuggestedRate(product)), warehouseId: current.warehouseId || product.allowedWarehouseIds[0] || "" }));
+      const lastRate = getLastPurchaseRate(product);
+      setRatePopup({
+        product,
+        rate: String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : (product.mrp ?? lastRate ?? 0)),
+        lastRate,
+        confirmHighRate: false
+      });
+  }
+
+  function getOrderQuantity() {
+    return Math.max(1, Number(isPurchase ? orderForm.quantityOrdered : orderForm.quantity || 1));
+  }
+
+  function setOrderQuantity(quantity: number) {
+    const safeQuantity = String(Math.max(1, quantity));
+    setOrderForm((current: any) => isPurchase ? ({ ...current, quantityOrdered: safeQuantity }) : ({ ...current, quantity: safeQuantity }));
+  }
+
+  function adjustProductQuantity(product: AppSnapshot["products"][number], delta: number) {
+    if (orderForm.productSku !== product.sku) {
+      selectProduct(product);
+      setOrderQuantity(Math.max(1, 1 + delta));
+      return;
+    }
+    setOrderQuantity(getOrderQuantity() + delta);
+  }
+
+  function addProductToOrder(product: AppSnapshot["products"][number]) {
+    selectProduct(product);
+    if ((isPurchase ? orderForm.quantityOrdered : orderForm.quantity) === "0") {
+      setOrderQuantity(1);
+    }
+  }
+
+  function confirmProductRate() {
+    if (!ratePopup) return;
+    const nextRate = Number(ratePopup.rate || 0);
+    if (nextRate <= 0) {
+      showCartToast("Enter product rate");
+      return;
+    }
+    if (isPurchase) {
+      if (ratePopup.lastRate > 0 && nextRate > ratePopup.lastRate && !ratePopup.confirmHighRate) {
+        setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
+        showCartToast("Rate is higher than last purchase rate. Tap sure and continue.");
+        return;
+      }
+    } else if (ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate && !ratePopup.confirmHighRate) {
+      setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
+      showCartToast("Cannot sell below last purchase price. Request admin approval.");
+      return;
+    }
+    setOrderForm((current: any) => ({
+      ...current,
+      productSku: ratePopup.product.sku,
+      rate: String(nextRate),
+      previousRate: String(ratePopup.lastRate || 0),
+      warehouseId: current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "",
+      ...(isPurchase ? {} : {
+        priceApprovalRequested: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate,
+        minimumAllowedRate: String(ratePopup.lastRate || 0),
+        note: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate
+          ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${ratePopup.lastRate} for ${ratePopup.product.sku}.`
+          : current.note
+      })
+    }));
+    if ((isPurchase ? orderForm.quantityOrdered : orderForm.quantity) === "0") {
+      setOrderQuantity(1);
+    }
+    setRatePopup(null);
   }
 
   function getSuggestedRate(product: AppSnapshot["products"][number]) {
-    return product.slabs[0]?.purchaseRate ?? product.rsp ?? 0;
+    return product.rsp ?? product.slabs[0]?.purchaseRate ?? 0;
+  }
+
+  function resetCurrentOrder() {
+    setOrderForm((current: any) => isPurchase
+      ? {
+          ...current,
+          supplierId: "",
+          productSku: "",
+          warehouseId: "",
+          quantityOrdered: "0",
+          rate: "0",
+          previousRate: "0",
+          deliveryMode: "",
+          paymentMode: "",
+          cashTiming: "",
+          note: ""
+        }
+      : {
+          ...current,
+          shopId: "",
+          productSku: "",
+          warehouseId: "",
+          quantity: "0",
+          rate: "0",
+          deliveryMode: "",
+          paymentMode: "",
+          cashTiming: "",
+          note: "",
+          priceApprovalRequested: false,
+          minimumAllowedRate: "0"
+        });
+    setActiveDivision("");
+    setSearch("");
+    setCartOpen(false);
+    setCartStep("cart");
+    setCartErrors({});
+    setCartToast("");
+    setRatePopup(null);
+  }
+
+  function showCartToast(message: string) {
+    setCartToast(message);
+    window.setTimeout(() => {
+      setCartToast((current) => current === message ? "" : current);
+    }, 2200);
+  }
+
+  function validateCartStep() {
+    const minSaleRate = selectedProduct ? getLastPurchaseRate(selectedProduct) : 0;
+    const nextErrors = {
+      supplierId: isPurchase ? !orderForm.supplierId : !orderForm.shopId,
+      warehouseId: !orderForm.warehouseId,
+      quantityOrdered: getOrderQuantity() <= 0,
+      rate: Number(orderForm.rate || 0) <= 0 || (!isPurchase && minSaleRate > 0 && Number(orderForm.rate || 0) < minSaleRate && !orderForm.priceApprovalRequested)
+    };
+    setCartErrors((current) => ({ ...current, ...nextErrors }));
+    if (nextErrors.supplierId) {
+      showCartToast(isPurchase ? "Select supplier" : "Select customer");
+      return false;
+    }
+    if (nextErrors.warehouseId) {
+      showCartToast(isPurchase ? "Select delivery warehouse" : "Select dispatch warehouse");
+      return false;
+    }
+    if (nextErrors.quantityOrdered) {
+      showCartToast("Enter quantity");
+      return false;
+    }
+    if (nextErrors.rate) {
+      if (!isPurchase && minSaleRate > 0 && Number(orderForm.rate || 0) < minSaleRate && !orderForm.priceApprovalRequested) {
+        showCartToast(`Sales rate cannot be below purchase price ${minSaleRate}`);
+        return false;
+      }
+      showCartToast("Enter rate");
+      return false;
+    }
+    return true;
+  }
+
+  function validatePaymentStep() {
+    const nextErrors = {
+      paymentMode: !orderForm.paymentMode,
+      cashTiming: orderForm.paymentMode === "Cash" && !orderForm.cashTiming,
+      deliveryMode: !orderForm.deliveryMode
+    };
+    setCartErrors((current) => ({ ...current, ...nextErrors }));
+    if (nextErrors.paymentMode) {
+      showCartToast("Select payment method");
+      return false;
+    }
+    if (nextErrors.cashTiming) {
+      showCartToast("Select cash timing");
+      return false;
+    }
+    if (nextErrors.deliveryMode) {
+      showCartToast("Select delivery mode");
+      return false;
+    }
+    return true;
+  }
+
+  function getSelectedProduct() {
+    return products.find((item) => item.sku === orderForm.productSku) || null;
   }
 
   function getAvailableStock(sku: string) {
@@ -478,17 +777,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   const selectedPartyId = isPurchase ? orderForm.supplierId : orderForm.shopId;
+  const selectedProduct = getSelectedProduct();
+  const cartTotal = Number(orderForm.rate || 0) * getOrderQuantity();
 
-  return (
-    <TwoCol
-      left={
+  const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
           <div className="catalog-shell">
             {flowStep !== "catalog" ? <div className="flow-card">
               {flowStep === "landing" ? <>
                 <span className="eyebrow">Landing</span>
-                <h3>{isPurchase ? "Start Purchase" : "Start Sale"}</h3>
-                <p>Select an existing {partyLabel} or create a new one before continuing to the product page.</p>
+                <h3>{isPurchase ? "Choose supplier first" : "Start Sale"}</h3>
+                <p>{isPurchase ? "Ask the purchaser to select an existing supplier or create a new supplier before opening categories." : `Select an existing ${partyLabel} or create a new one before continuing to the product page.`}</p>
                 <div className="flow-action-row">
                   <button className="primary-button" type="button" onClick={() => setFlowStep("existing")}>Existing {isPurchase ? "Supplier" : "Customer"}</button>
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("new")}>New {isPurchase ? "Supplier" : "Customer"}</button>
@@ -528,16 +827,65 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               <label className="catalog-search">
                 <span className="small-label">Search product</span>
                 <div className="catalog-search-row">
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isPurchase ? "Search item, barcode, brand, division" : "Search item, barcode, brand, stock item"} />
+                  <div className="search-box">
+                    <input
+                      value={search}
+                      onChange={(e) => { setSearch(e.target.value); setSuggestionOpen(true); }}
+                      onFocus={() => setSuggestionOpen(true)}
+                      onBlur={() => window.setTimeout(() => setSuggestionOpen(false), 120)}
+                      placeholder={isPurchase ? "Search item, barcode, brand, division" : "Search item, barcode, brand, stock item"}
+                    />
+                    {suggestionOpen && searchSuggestions.length > 0 ? <div className="search-suggestion-list">
+                      {searchSuggestions.map((product) => <button key={product.sku} type="button" className="search-suggestion-item" onMouseDown={() => applySearchSuggestion(product)}>
+                        <strong>{product.name}</strong>
+                        <span>{product.division} / {product.section} / {product.brand || product.sku}</span>
+                      </button>)}
+                    </div> : null}
+                  </div>
                   <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
                 </div>
               </label>
-              <div className="selected-party-bar">
+              {!isPurchase ? <div className="selected-party-bar">
                 <span className="small-label">{isPurchase ? "Selected supplier" : "Selected customer"}</span>
                 <strong>{parties.find((item) => item.id === selectedPartyId)?.name || "Not selected"}</strong>
-                <button className="ghost-button" type="button" onClick={() => setFlowStep("landing")}>Change</button>
+                <button className="ghost-button" type="button" onClick={() => setCartOpen(true)}>Choose in cart</button>
+              </div> : null}
+            </div>
+
+            {showingCategoryLanding ? <div className="category-section">
+              <div className="category-section-head">
+                <div>
+                  <span className="small-label">Categories</span>
+                  <h3>Choose a category</h3>
+                </div>
               </div>
-              <div className="chip-row">
+              <div className="category-grid">
+                {divisions.map((division) => {
+                  const divisionProducts = products.filter((item) => item.division === division);
+                  const sample = divisionProducts[0];
+                  const initials = division
+                    .split(" ")
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((item) => item[0]?.toUpperCase() || "")
+                    .join("") || "CT";
+                  return (
+                    <button key={division} type="button" className="category-card" onClick={() => setActiveDivision(division)}>
+                      <div className="category-card-thumb">{initials}</div>
+                      <div className="category-card-copy">
+                        <strong>{division}</strong>
+                        <span>{divisionProducts.length} product{divisionProducts.length === 1 ? "" : "s"}</span>
+                        <p>{sample?.department || "Browse this category"}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div> : <>
+            <div className="catalog-subhead">
+              <button className="ghost-button" type="button" onClick={() => { setActiveDivision(""); setSearch(""); }}>Back to categories</button>
+              <div className="chip-row chip-row-scroll">
+                <button type="button" className={activeDivision === "" ? "chip-button active" : "chip-button"} onClick={() => setActiveDivision("")}>All</button>
                 {divisions.map((division) => (
                   <button key={division} type="button" className={division === activeDivision ? "chip-button active" : "chip-button"} onClick={() => setActiveDivision(division)}>
                     {division}
@@ -550,8 +898,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               {filteredProducts.map((product) => {
                 const selected = orderForm.productSku === product.sku;
                 const availableStock = getAvailableStock(product.sku);
+                const cardQuantity = selected ? getOrderQuantity() : 1;
+                const initials = product.name
+                  .split(" ")
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((item) => item[0]?.toUpperCase() || "")
+                  .join("") || "PR";
                 return (
-                  <button key={product.sku} type="button" className={selected ? "product-card selected" : "product-card"} onClick={() => selectProduct(product)}>
+                  <div key={product.sku} className={selected ? "product-card selected" : "product-card"} onClick={() => selectProduct(product)}>
+                    <div className="product-card-main">
+                    <div className="product-thumb">{initials}</div>
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
                       <strong>{product.name}</strong>
@@ -562,47 +919,729 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <span>{product.size || product.unit}</span>
                     </div>
                     <div className="product-pricing">
-                      <strong>{isPurchase ? `Base rate ${getSuggestedRate(product)}` : `Sell ref ${product.mrp ?? product.rsp ?? getSuggestedRate(product)}`}</strong>
+                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Min sell ${getLastPurchaseRate(product)}`}</strong>
                       <span>{product.slabs.length > 0 ? `${product.slabs.length} slab${product.slabs.length > 1 ? "s" : ""}` : "Direct item"}</span>
                     </div>
                     <div className="product-footer">
                       <span>{product.allowedWarehouseIds.join(", ")}</span>
-                      <span>{isPurchase ? `RSP ${product.rsp ?? 0}` : `Stock ${availableStock}`}</span>
+                      <span>{isPurchase ? `MRP ${product.mrp ?? 0}` : `Stock ${availableStock} · MRP ${product.mrp ?? 0}`}</span>
                     </div>
-                  </button>
+                    </div>
+                    <div className="product-action-row">
+                      <button type="button" className="qty-button" onClick={(e) => { e.stopPropagation(); adjustProductQuantity(product, -1); }}>-</button>
+                      <div className="qty-pill">{cardQuantity}</div>
+                      <button type="button" className="qty-button" onClick={(e) => { e.stopPropagation(); adjustProductQuantity(product, 1); }}>+</button>
+                      <button type="button" className="add-button" onClick={(e) => { e.stopPropagation(); addProductToOrder(product); }}>
+                        {selected ? "Added" : "Add"}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
               {filteredProducts.length === 0 ? <div className="empty-card">No products matched the search.</div> : null}
             </div>
+            </>}
 
-            <div className="checkout-sheet">
-              <div className="checkout-head">
-                <span className="eyebrow">{isPurchase ? "Quick checkout" : "Quick booking"}</span>
-                <h3>{orderForm.productSku || "Select a product card"}</h3>
+            {orderForm.productSku ? <button type="button" className="floating-checkout-button" onClick={() => setCartOpen(true)}>
+              <strong>Checkout</strong>
+              <span>{getOrderQuantity()} item · Total {cartTotal}</span>
+            </button> : null}
+            {ratePopup ? <div className="cart-overlay" onClick={() => setRatePopup(null)}>
+              <div className="cart-sheet rate-popup-sheet" onClick={(e) => e.stopPropagation()}>
+                <div className="cart-head">
+                  <div>
+                    <span className="eyebrow">Rate Entry</span>
+                    <h3>{ratePopup.product.name}</h3>
+                  </div>
+                  <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Close</button>
+                </div>
+                <div className="cart-line">
+                  <div>
+                    <span className="small-label">{isPurchase ? "Last Purchase Rate" : "Minimum Sell Rate"}</span>
+                    <strong>{ratePopup.lastRate > 0 ? ratePopup.lastRate : "No history"}</strong>
+                  </div>
+                  <div>
+                    <span className="small-label">Division</span>
+                    <strong>{ratePopup.product.division || "General"}</strong>
+                  </div>
+                </div>
+                <div className="cart-edit-grid">
+                  <label className={Number(ratePopup.rate || 0) <= 0 ? "field-error" : ""}>
+                    Enter Rate
+                    <input type="number" value={ratePopup.rate} onChange={(e) => setRatePopup((current) => current ? { ...current, rate: e.target.value, confirmHighRate: false } : current)} />
+                  </label>
+                </div>
+                {isPurchase && ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate ? <div className="rate-warning-box">
+                  Entered rate is higher than the last purchase rate. This will be reported to admin and added to the purchase-order notes for warehouse and accounts.
+                </div> : null}
+                {!isPurchase && ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate ? <div className="rate-warning-box">
+                  Entered sales rate is below the last purchase price. You can request admin approval. Until admin approves, this product in this order will remain pending.
+                </div> : null}
+                <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Cancel</button>
+                  <button type="button" className="primary-button" onClick={confirmProductRate}>
+                    {isPurchase
+                      ? (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate && ratePopup.confirmHighRate ? "Sure and continue" : "Continue")
+                      : (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate && ratePopup.confirmHighRate ? "Request admin" : "Continue")}
+                  </button>
+                </div>
               </div>
-              <form className="form-grid" onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
-                <label>{isPurchase ? "Supplier" : "Shop"}<select value={isPurchase ? orderForm.supplierId : orderForm.shopId} onChange={(e) => setOrderForm((c: any) => isPurchase ? ({ ...c, supplierId: e.target.value }) : ({ ...c, shopId: e.target.value }))}>{renderOptions(parties)}</select></label>
-                <label>Warehouse<select value={orderForm.warehouseId} onChange={(e) => setOrderForm((c: any) => ({ ...c, warehouseId: e.target.value }))}>{renderWarehouseOptions(warehouses)}</select></label>
-                <label>{isPurchase ? "Qty" : "Qty"}<input type="number" value={isPurchase ? orderForm.quantityOrdered : orderForm.quantity} onChange={(e) => setOrderForm((c: any) => isPurchase ? ({ ...c, quantityOrdered: e.target.value }) : ({ ...c, quantity: e.target.value }))} /></label>
-                <label>Rate<input type="number" value={orderForm.rate} onChange={(e) => setOrderForm((c: any) => ({ ...c, rate: e.target.value }))} /></label>
-                <label>Delivery<select value={orderForm.deliveryMode} onChange={(e) => setOrderForm((c: any) => ({ ...c, deliveryMode: e.target.value }))}>{isPurchase ? <><option>Dealer Delivery</option><option>Self Collection</option></> : <><option>Delivery</option><option>Self Collection</option></>}</select></label>
-                <label>Pay mode<select value={orderForm.paymentMode} onChange={(e) => setOrderForm((c: any) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{paymentMethods.map((m) => <option key={m.code}>{m.code}</option>)}</select></label>
-                {orderForm.paymentMode === "Cash" ? <label>Cash timing<select value={orderForm.cashTiming} onChange={(e) => setOrderForm((c: any) => ({ ...c, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
-                <label className="wide-field">Notes<input value={orderForm.note} onChange={(e) => setOrderForm((c: any) => ({ ...c, note: e.target.value }))} /></label>
-                <button className="primary-button" type="submit">{isPurchase ? "Finalize purchase" : "Book sales order"}</button>
-              </form>
-            </div>
+            </div> : null}
+            {cartOpen && selectedProduct ? <div className="cart-overlay" onClick={() => setCartOpen(false)}>
+              <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
+                {cartToast ? <div className="cart-toast">{cartToast}</div> : null}
+                <div className="cart-head">
+                  <div>
+                    <span className="eyebrow">{cartStep === "cart" ? "Cart" : "Payment"}</span>
+                    <h3>{selectedProduct.name}</h3>
+                  </div>
+                  <button type="button" className="ghost-button" onClick={() => setCartOpen(false)}>Close</button>
+                </div>
+                {cartStep === "cart" ? <>
+                <div className="cart-line">
+                  <div>
+                    <strong>{selectedProduct.division || "General"}</strong>
+                    <p>{selectedProduct.department} / {selectedProduct.section}</p>
+                  </div>
+                  <strong>{getOrderQuantity()} x {Number(orderForm.rate || 0)}</strong>
+                </div>
+                <div className="cart-edit-grid">
+                  <label className={cartErrors.supplierId ? "field-error" : ""}>
+                    {isPurchase ? "Supplier" : "Customer"}
+                    <select value={isPurchase ? orderForm.supplierId : orderForm.shopId} onChange={(e) => { setCartErrors((current) => ({ ...current, supplierId: false })); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value }) : ({ ...current, shopId: e.target.value })); }}>
+                      {renderOptions(parties)}
+                    </select>
+                  </label>
+                  <label className={cartErrors.warehouseId ? "field-error" : ""}>
+                    {isPurchase ? "Delivery To" : "Dispatch From"}
+                    <select value={orderForm.warehouseId} onChange={(e) => { setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => ({ ...current, warehouseId: e.target.value })); }}>
+                      {renderWarehouseOptions(warehouses)}
+                    </select>
+                  </label>
+                  <label className={cartErrors.quantityOrdered ? "field-error" : ""}>
+                    Qty
+                    <div className="cart-qty-row">
+                      <button type="button" className="qty-button" onClick={() => { setCartErrors((current) => ({ ...current, quantityOrdered: false })); setOrderQuantity(getOrderQuantity() - 1); }}>-</button>
+                      <input type="number" value={getOrderQuantity()} onChange={(e) => { setCartErrors((current) => ({ ...current, quantityOrdered: false })); setOrderQuantity(Number(e.target.value || 1)); }} />
+                      <button type="button" className="qty-button" onClick={() => { setCartErrors((current) => ({ ...current, quantityOrdered: false })); setOrderQuantity(getOrderQuantity() + 1); }}>+</button>
+                    </div>
+                  </label>
+                  <label className={cartErrors.rate ? "field-error" : ""}>
+                    Rate
+                    <input type="number" value={orderForm.rate} onChange={(e) => { setCartErrors((current) => ({ ...current, rate: false })); setOrderForm((current: any) => ({ ...current, rate: e.target.value })); }} />
+                  </label>
+                  <label className="wide-field">
+                    Notes
+                    <input value={orderForm.note} onChange={(e) => setOrderForm((current: any) => ({ ...current, note: e.target.value }))} placeholder={isPurchase ? "Delivery or supplier note" : "Delivery or customer note"} />
+                  </label>
+                </div>
+                <div className="cart-line">
+                  <div>
+                    <span className="small-label">{isPurchase ? "Warehouse" : "Customer"}</span>
+                    <strong>{isPurchase ? (warehouses.find((item) => item.id === orderForm.warehouseId)?.name || "Select destination") : (parties.find((item) => item.id === orderForm.shopId)?.name || "Select customer")}</strong>
+                  </div>
+                  <div>
+                    <span className="small-label">Total</span>
+                    <strong>{cartTotal}</strong>
+                  </div>
+                </div>
+                <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={() => setCartOpen(false)}>Continue shopping</button>
+                  <button type="button" className="primary-button" onClick={() => { if (validateCartStep()) setCartStep("payment"); }}>Proceed</button>
+                </div>
+                </> : <>
+                <div className="cart-edit-grid">
+                  <label className={cartErrors.paymentMode ? "field-error" : ""}>
+                    Payment Method
+                    <select value={orderForm.paymentMode} onChange={(e) => { setCartErrors((current) => ({ ...current, paymentMode: false })); setOrderForm((current: any) => ({ ...current, paymentMode: e.target.value as PaymentMode | "" })); }}>
+                      <option value="">Select</option>
+                      {paymentMethods.map((method) => <option key={method.code} value={method.code}>{method.code}</option>)}
+                    </select>
+                  </label>
+                  {orderForm.paymentMode === "Cash" ? <label className={cartErrors.cashTiming ? "field-error" : ""}>
+                    Cash Timing
+                    <select value={orderForm.cashTiming} onChange={(e) => { setCartErrors((current) => ({ ...current, cashTiming: false })); setOrderForm((current: any) => ({ ...current, cashTiming: e.target.value })); }}>
+                      <option value="">Select</option>
+                      <option>In Hand</option>
+                      <option>At Delivery</option>
+                    </select>
+                  </label> : null}
+                  <label className={cartErrors.deliveryMode ? "field-error" : ""}>
+                    Delivery Mode
+                    <select value={orderForm.deliveryMode} onChange={(e) => { setCartErrors((current) => ({ ...current, deliveryMode: false })); setOrderForm((current: any) => ({ ...current, deliveryMode: e.target.value })); }}>
+                      <option value="">Select</option>
+                      {isPurchase ? <><option>Dealer Delivery</option><option>Self Collection</option></> : <><option>Delivery</option><option>Self Collection</option></>}
+                    </select>
+                  </label>
+                </div>
+                <div className="cart-line">
+                  <div>
+                    <span className="small-label">{isPurchase ? "Supplier" : "Customer"}</span>
+                    <strong>{parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.name || `Select ${isPurchase ? "supplier" : "customer"}`}</strong>
+                  </div>
+                  <div>
+                    <span className="small-label">Total</span>
+                    <strong>{cartTotal}</strong>
+                  </div>
+                </div>
+                <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={() => setCartStep("cart")}>Back</button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={async () => {
+                      if (!validatePaymentStep()) return;
+                      await onSubmit();
+                      resetCurrentOrder();
+                    }}
+                  >
+                    Finalize
+                  </button>
+                </div>
+                </>}
+              </div>
+            </div> : null}
             </> : null}
           </div>
         </Panel>
-      }
-      right={rightPanel}
-    />
+  );
+
+  return rightPanel ? <TwoCol left={mainPanel} right={rightPanel} /> : <section>{mainPanel}</section>;
+}
+
+function PurchaserPaymentsView({
+  snapshot,
+  currentUser,
+  onUploadProof,
+  onUpdatePayment
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  onUploadProof: (file: File) => Promise<unknown>;
+  onUpdatePayment: (id: string, body: {
+    amount: number;
+    referenceNumber: string;
+    voucherNumber?: string;
+    utrNumber?: string;
+    proofName?: string;
+    verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected";
+    verificationNote: string;
+  }) => Promise<void>;
+}) {
+  const myOrderIds = new Set(
+    snapshot.purchaseOrders
+      .filter((item) => item.purchaserId === currentUser.id || item.purchaserName === currentUser.fullName)
+      .map((item) => item.id)
+  );
+  const payments = snapshot.payments
+    .filter((item) => item.side === "Purchase" && myOrderIds.has(item.linkedOrderId))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const [uploadingId, setUploadingId] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, {
+    amount: string;
+    referenceNumber: string;
+    voucherNumber: string;
+    utrNumber: string;
+    proofName: string;
+    verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected";
+    verificationNote: string;
+  }>>({});
+
+  function getDraft(payment: AppSnapshot["payments"][number]) {
+    return drafts[payment.id] || {
+      amount: String(payment.amount),
+      referenceNumber: payment.referenceNumber || "",
+      voucherNumber: payment.voucherNumber || "",
+      utrNumber: payment.utrNumber || "",
+      proofName: payment.proofName || "",
+      verificationStatus: payment.verificationStatus,
+      verificationNote: payment.verificationNote || ""
+    };
+  }
+
+  function setDraftValue(paymentId: string, field: string, value: string) {
+    setDrafts((current) => {
+      const base = current[paymentId] || {
+        amount: "0",
+        referenceNumber: "",
+        voucherNumber: "",
+        utrNumber: "",
+        proofName: "",
+        verificationStatus: "Submitted" as const,
+        verificationNote: ""
+      };
+      return { ...current, [paymentId]: { ...base, [field]: value } };
+    });
+  }
+
+  async function uploadProof(paymentId: string, file: File | null) {
+    if (!file) return;
+    setUploadingId(paymentId);
+    const uploaded = await onUploadProof(file);
+    if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) {
+      setDraftValue(paymentId, "proofName", String((uploaded as { fileName: string }).fileName));
+    }
+    setUploadingId("");
+  }
+
+  const pendingCount = payments.filter((item) => item.verificationStatus !== "Verified").length;
+  const completedCount = payments.filter((item) => item.verificationStatus === "Verified").length;
+  const flaggedCount = payments.filter((item) => item.verificationStatus === "Rejected").length;
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Payment Summary" eyebrow="Purchase payments only">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{pendingCount}</strong><p>Pending till accounts completes</p></div></div>
+          <div className="list-card"><div><strong>{completedCount}</strong><p>Completed by accounts</p></div></div>
+          <div className="list-card"><div><strong>{flaggedCount}</strong><p>Flagged by accounts</p></div></div>
+        </div>
+      </Panel>
+      <Panel title="My Payment Updates" eyebrow="Pending and flagged payments">
+        <div className="stack-list payment-update-list">
+          {payments.length === 0 ? <div className="empty-card">No purchase payments found yet.</div> : payments.map((payment) => {
+            const draft = getDraft(payment);
+            const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : draft.proofName ? `${API_BASE}/uploads/payment-proofs/${draft.proofName}` : "";
+            const order = snapshot.purchaseOrders.find((item) => item.id === payment.linkedOrderId);
+            const canUpdate = payment.verificationStatus !== "Verified";
+            const displayStatus = payment.verificationStatus === "Verified"
+              ? { label: "Completed", className: "status-completed" }
+              : payment.verificationStatus === "Rejected"
+                ? { label: "Flagged", className: "status-rejected" }
+                : { label: "Pending", className: "status-pending" };
+            const whatsappText = encodeURIComponent(
+              `Aapoorti payment proof\nPayment: ${payment.id}\nOrder: ${payment.linkedOrderId}\nSupplier: ${order?.supplierName || ""}\nAmount: ${draft.amount}\nProof: ${proofUrl || "Pending"}`
+            );
+            return (
+              <article className="list-card payment-update-card" key={payment.id}>
+                <div className="payment-update-head">
+                  <div>
+                    <strong>{payment.id}</strong>
+                    <p>{payment.linkedOrderId} · {order?.supplierName || "Supplier pending"} · {payment.mode}</p>
+                  </div>
+                  <span className={`status-pill ${displayStatus.className}`}>{displayStatus.label}</span>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Amount</span><strong>{payment.amount}</strong></div>
+                  <div><span className="small-label">Created</span><strong>{new Date(payment.createdAt).toLocaleDateString("en-IN")}</strong></div>
+                  <div><span className="small-label">Reference</span><strong>{payment.referenceNumber || "Pending"}</strong></div>
+                  <div><span className="small-label">Accounts note</span><strong>{payment.verificationNote || "No note"}</strong></div>
+                </div>
+                {canUpdate ? <form className="form-grid top-gap" onSubmit={async (event) => {
+                  event.preventDefault();
+                  await onUpdatePayment(payment.id, {
+                    amount: Number(draft.amount || payment.amount),
+                    referenceNumber: draft.referenceNumber,
+                    voucherNumber: draft.voucherNumber || undefined,
+                    utrNumber: draft.utrNumber || undefined,
+                    proofName: draft.proofName || undefined,
+                    verificationStatus: draft.verificationStatus === "Rejected" ? "Submitted" : draft.verificationStatus === "Verified" ? "Submitted" : draft.verificationStatus,
+                    verificationNote: draft.verificationNote
+                  });
+                }}>
+                  <label>Amount<input type="number" value={draft.amount} onChange={(e) => setDraftValue(payment.id, "amount", e.target.value)} /></label>
+                  <label>Reference<input value={draft.referenceNumber} onChange={(e) => setDraftValue(payment.id, "referenceNumber", e.target.value)} /></label>
+                  <label>Voucher<input value={draft.voucherNumber} onChange={(e) => setDraftValue(payment.id, "voucherNumber", e.target.value)} /></label>
+                  <label>UTR<input value={draft.utrNumber} onChange={(e) => setDraftValue(payment.id, "utrNumber", e.target.value)} /></label>
+                  <label>Proof name<input value={draft.proofName} onChange={(e) => setDraftValue(payment.id, "proofName", e.target.value)} /></label>
+                  <label>Status<select value={draft.verificationStatus} onChange={(e) => setDraftValue(payment.id, "verificationStatus", e.target.value)}>
+                    <option>Pending</option>
+                    <option>Submitted</option>
+                  </select></label>
+                  <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={(e) => void uploadProof(payment.id, e.target.files?.[0] || null)} /></label>
+                  <label className="wide-field">Note<input value={draft.verificationNote} onChange={(e) => setDraftValue(payment.id, "verificationNote", e.target.value)} placeholder="Update for accounts or supplier" /></label>
+                  <div className="payment-card-actions wide-field">
+                    <button className="primary-button" type="submit">Update payment</button>
+                    {uploadingId === payment.id ? <span className="small-label">Uploading proof...</span> : null}
+                    {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                    {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                  </div>
+                </form> : <div className="payment-card-actions top-gap">
+                  {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                  {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                </div>}
+              </article>
+            );
+          })}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function SalesPaymentsView({
+  snapshot,
+  currentUser,
+  onUploadProof,
+  onUpdatePayment
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  onUploadProof: (file: File) => Promise<unknown>;
+  onUpdatePayment: (id: string, body: {
+    amount: number;
+    referenceNumber: string;
+    voucherNumber?: string;
+    utrNumber?: string;
+    proofName?: string;
+    verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected";
+    verificationNote: string;
+  }) => Promise<void>;
+}) {
+  const myOrders = snapshot.salesOrders.filter((item) => item.salesmanId === currentUser.id || item.salesmanName === currentUser.fullName);
+  const myOrderIds = new Set(myOrders.map((item) => item.id));
+  const underPriceOrders = myOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("approval requested"));
+  const undeliveredOrders = myOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed");
+  const pendingCollections = snapshot.ledgerEntries.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId) && item.pendingAmount > 0);
+  const payments = snapshot.payments.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const [drafts, setDrafts] = useState<Record<string, { amount: string; referenceNumber: string; voucherNumber: string; utrNumber: string; proofName: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected"; verificationNote: string }>>({});
+
+  function getDraft(payment: AppSnapshot["payments"][number]) {
+    return drafts[payment.id] || {
+      amount: String(payment.amount),
+      referenceNumber: payment.referenceNumber || "",
+      voucherNumber: payment.voucherNumber || "",
+      utrNumber: payment.utrNumber || "",
+      proofName: payment.proofName || "",
+      verificationStatus: payment.verificationStatus,
+      verificationNote: payment.verificationNote || ""
+    };
+  }
+
+  function setDraftValue(paymentId: string, field: string, value: string) {
+    setDrafts((current) => ({ ...current, [paymentId]: { ...getDraft(payments.find((item) => item.id === paymentId)!), [field]: value } }));
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Sales Pending Summary" eyebrow="Follow-up reminders">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{undeliveredOrders.length}</strong><p>Undelivered orders</p></div></div>
+          <div className="list-card"><div><strong>{underPriceOrders.length}</strong><p>Under-price approval pending</p></div></div>
+          <div className="list-card"><div><strong>{pendingCollections.length}</strong><p>Payment not approved by accounts</p></div></div>
+        </div>
+      </Panel>
+      <Panel title="Pending Orders" eyebrow="Undelivered and under-price">
+        <div className="stack-list payment-update-list">
+          {[...undeliveredOrders, ...underPriceOrders.filter((order) => !undeliveredOrders.some((item) => item.id === order.id))].slice(0, 12).map((order) => {
+            const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === order.id);
+            return <article className="list-card payment-update-card" key={order.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{order.id}</strong>
+                  <p>{order.shopName} · {order.productSku} · {order.deliveryMode}</p>
+                </div>
+                <span className={`status-pill ${order.status === "Draft" ? "status-rejected" : "status-pending"}`}>{order.status === "Draft" ? "Admin approval" : order.status}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Amount</span><strong>{order.totalAmount}</strong></div>
+                <div><span className="small-label">Payment pending</span><strong>{ledger?.pendingAmount ?? order.totalAmount}</strong></div>
+                <div><span className="small-label">Accounts check</span><strong>{(ledger?.pendingAmount || 0) > 0 ? "Pending" : "Settled"}</strong></div>
+                <div><span className="small-label">Note</span><strong>{order.note || "No note"}</strong></div>
+              </div>
+            </article>;
+          })}
+          {undeliveredOrders.length === 0 && underPriceOrders.length === 0 ? <div className="empty-card">No pending sales orders.</div> : null}
+        </div>
+      </Panel>
+      <Panel title="Payment Proof Updates" eyebrow="Show to shopkeeper or share">
+        <div className="stack-list payment-update-list">
+          {payments.length === 0 ? <div className="empty-card">No sales payments found yet.</div> : payments.map((payment) => {
+            const draft = getDraft(payment);
+            const proofUrl = draft.proofName ? `${API_BASE}/uploads/payment-proofs/${draft.proofName}` : "";
+            const order = snapshot.salesOrders.find((item) => item.id === payment.linkedOrderId);
+            const whatsappText = encodeURIComponent(`Aapoorti sales payment proof\nPayment: ${payment.id}\nOrder: ${payment.linkedOrderId}\nShop: ${order?.shopName || ""}\nAmount: ${draft.amount}\nProof: ${proofUrl || "Pending"}`);
+            return <article className="list-card payment-update-card" key={payment.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{payment.id}</strong>
+                  <p>{payment.linkedOrderId} · {order?.shopName || "Shop"} · {payment.mode}</p>
+                </div>
+                <span className={`status-pill ${payment.verificationStatus === "Verified" ? "status-verified" : payment.verificationStatus === "Rejected" ? "status-rejected" : "status-pending"}`}>{payment.verificationStatus === "Verified" ? "Completed" : payment.verificationStatus === "Rejected" ? "Flagged" : "Pending"}</span>
+              </div>
+              <form className="form-grid top-gap" onSubmit={async (event) => {
+                event.preventDefault();
+                await onUpdatePayment(payment.id, {
+                  amount: Number(draft.amount || payment.amount),
+                  referenceNumber: draft.referenceNumber,
+                  voucherNumber: draft.voucherNumber || undefined,
+                  utrNumber: draft.utrNumber || undefined,
+                  proofName: draft.proofName || undefined,
+                  verificationStatus: payment.verificationStatus === "Verified" ? "Verified" : "Submitted",
+                  verificationNote: draft.verificationNote
+                });
+              }}>
+                <label>Amount<input type="number" value={draft.amount} onChange={(e) => setDraftValue(payment.id, "amount", e.target.value)} /></label>
+                <label>Reference<input value={draft.referenceNumber} onChange={(e) => setDraftValue(payment.id, "referenceNumber", e.target.value)} /></label>
+                <label>Voucher<input value={draft.voucherNumber} onChange={(e) => setDraftValue(payment.id, "voucherNumber", e.target.value)} /></label>
+                <label>UTR<input value={draft.utrNumber} onChange={(e) => setDraftValue(payment.id, "utrNumber", e.target.value)} /></label>
+                <label className="wide-field">Proof name<input value={draft.proofName} onChange={(e) => setDraftValue(payment.id, "proofName", e.target.value)} /></label>
+                <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setDraftValue(payment.id, "proofName", String((uploaded as { fileName: string }).fileName)); }} /></label>
+                <label className="wide-field">Note<input value={draft.verificationNote} onChange={(e) => setDraftValue(payment.id, "verificationNote", e.target.value)} placeholder="Update for accounts" /></label>
+                <div className="payment-card-actions wide-field">
+                  <button className="primary-button" type="submit">Submit to accounts</button>
+                  {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                  {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                </div>
+              </form>
+            </article>;
+          })}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function AccountsPaymentsView({
+  snapshot,
+  onVerify
+}: {
+  snapshot: AppSnapshot;
+  onVerify: (paymentId: string, verificationStatus: "Verified" | "Rejected", verificationNote: string) => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified");
+  const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified");
+  const dayCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Accounts Summary" eyebrow="Pending and completed">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{pending.length}</strong><p>Pending payments</p></div></div>
+          <div className="list-card"><div><strong>{completed.length}</strong><p>Completed payments</p></div></div>
+          <div className="list-card"><div><strong>{dayCash}</strong><p>Cash reported today</p></div></div>
+        </div>
+      </Panel>
+      <Panel title="Pending Verification" eyebrow="Accounts must complete payment">
+        <div className="stack-list payment-update-list">
+          {pending.length === 0 ? <div className="empty-card">No pending payments.</div> : pending.map((payment) => {
+            const orderName = payment.side === "Purchase"
+              ? snapshot.purchaseOrders.find((item) => item.id === payment.linkedOrderId)?.supplierName
+              : snapshot.salesOrders.find((item) => item.id === payment.linkedOrderId)?.shopName;
+            const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : "";
+            return <article className="list-card payment-update-card" key={payment.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{payment.id}</strong>
+                  <p>{payment.side} · {payment.linkedOrderId} · {orderName || "Party"}</p>
+                </div>
+                <span className={`status-pill ${payment.verificationStatus === "Rejected" ? "status-rejected" : "status-pending"}`}>{payment.verificationStatus}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Amount</span><strong>{payment.amount}</strong></div>
+                <div><span className="small-label">Mode</span><strong>{payment.mode}</strong></div>
+                <div><span className="small-label">Ref</span><strong>{payment.referenceNumber || "Required"}</strong></div>
+                <div><span className="small-label">Submitted</span><strong>{payment.submittedAt ? new Date(payment.submittedAt).toLocaleString("en-IN") : "Pending"}</strong></div>
+              </div>
+              <div className="payment-card-actions">
+                {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                <button className="primary-button" type="button" onClick={() => void onVerify(payment.id, "Verified", "Completed by accounts")}>Mark completed</button>
+                <button className="ghost-button" type="button" onClick={() => void onVerify(payment.id, "Rejected", "Flagged by accounts for review")}>Flag</button>
+              </div>
+            </article>;
+          })}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function WarehouseOperationsView({
+  snapshot,
+  currentUser,
+  onReceive,
+  onUpdateSalesOrder
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  onReceive: (body: { purchaseOrderId: string; warehouseId: string; receivedQuantity: number; actualWeightKg: number; note: string; confirmPartial: boolean }) => Promise<void>;
+  onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus }) => Promise<void>;
+}) {
+  const incomingOrders = snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const outgoingOrders = snapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; note: string }>>({});
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Warehouse Summary" eyebrow="Incoming and outgoing">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{incomingOrders.length}</strong><p>Orders to receive</p></div></div>
+          <div className="list-card"><div><strong>{outgoingOrders.length}</strong><p>Orders to send</p></div></div>
+          <div className="list-card"><div><strong>{snapshot.stockSummary.reduce((sum, item) => sum + item.availableQuantity, 0)}</strong><p>Available stock</p></div></div>
+        </div>
+      </Panel>
+      <Panel title="Incoming Orders" eyebrow="Sorted by date and time">
+        <div className="stack-list payment-update-list">
+          {incomingOrders.length === 0 ? <div className="empty-card">No incoming orders pending.</div> : incomingOrders.map((order) => {
+            const pendingQty = Math.max(order.quantityOrdered - order.quantityReceived, 0);
+            const draft = incomingDrafts[order.id] || { receivedQuantity: String(pendingQty || order.quantityOrdered), actualWeightKg: String(order.expectedWeightKg || 0), note: "" };
+            return <article className="list-card payment-update-card" key={order.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{order.id}</strong>
+                  <p>{order.supplierName} · {order.productSku} · {order.warehouseId}</p>
+                </div>
+                <span className="status-pill status-pending">{order.status}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Ordered</span><strong>{order.quantityOrdered}</strong></div>
+                <div><span className="small-label">Pending</span><strong>{pendingQty}</strong></div>
+                <div><span className="small-label">Amount</span><strong>{order.totalAmount}</strong></div>
+                <div><span className="small-label">Expected weight</span><strong>{order.expectedWeightKg}</strong></div>
+              </div>
+              <form className="form-grid top-gap" onSubmit={async (event) => {
+                event.preventDefault();
+                const receivedQuantity = Number(draft.receivedQuantity || 0);
+                const partial = receivedQuantity < pendingQty;
+                await onReceive({
+                  purchaseOrderId: order.id,
+                  warehouseId: order.warehouseId,
+                  receivedQuantity,
+                  actualWeightKg: Number(draft.actualWeightKg || 0),
+                  note: draft.note || `Received by ${currentUser.fullName}`,
+                  confirmPartial: partial
+                });
+              }}>
+                <label>Receive quantity<input type="number" value={draft.receivedQuantity} onChange={(e) => setIncomingDrafts((current) => ({ ...current, [order.id]: { ...draft, receivedQuantity: e.target.value } }))} /></label>
+                <label>Actual weight<input type="number" value={draft.actualWeightKg} onChange={(e) => setIncomingDrafts((current) => ({ ...current, [order.id]: { ...draft, actualWeightKg: e.target.value } }))} /></label>
+                <label className="wide-field">Note<input value={draft.note} onChange={(e) => setIncomingDrafts((current) => ({ ...current, [order.id]: { ...draft, note: e.target.value } }))} placeholder="Complete or partial receiving note" /></label>
+                <div className="payment-card-actions wide-field">
+                  <span className="small-label">{Number(draft.receivedQuantity || 0) < pendingQty ? `Partial receive: ${pendingQty - Number(draft.receivedQuantity || 0)} pending` : "Complete receive"}</span>
+                  <button className="primary-button" type="submit">{Number(draft.receivedQuantity || 0) < pendingQty ? "Receive partial" : "Receive complete"}</button>
+                </div>
+              </form>
+            </article>;
+          })}
+        </div>
+      </Panel>
+      <Panel title="Outgoing Orders" eyebrow="Payment check before release">
+        <div className="stack-list payment-update-list">
+          {outgoingOrders.length === 0 ? <div className="empty-card">No outgoing orders pending.</div> : outgoingOrders.map((order) => {
+            const paymentPending = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === order.id)?.pendingAmount ?? order.totalAmount;
+            const hasVerifiedPayment = snapshot.payments.some((item) => item.side === "Sales" && item.linkedOrderId === order.id && item.verificationStatus === "Verified");
+            return <article className="list-card payment-update-card" key={order.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{order.id}</strong>
+                  <p>{order.shopName} · {order.productSku} · {order.deliveryMode}</p>
+                </div>
+                <span className={`status-pill ${hasVerifiedPayment ? "status-verified" : "status-pending"}`}>{hasVerifiedPayment ? "Payment ok" : "Check with admin"}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Qty</span><strong>{order.quantity}</strong></div>
+                <div><span className="small-label">Pending payment</span><strong>{paymentPending}</strong></div>
+                <div><span className="small-label">Warehouse status</span><strong>{order.status}</strong></div>
+                <div><span className="small-label">Delivery</span><strong>{order.deliveryMode}</strong></div>
+              </div>
+              <div className="payment-card-actions">
+                <button className="ghost-button" type="button" onClick={() => void onUpdateSalesOrder(order.id, { rate: order.rate, paymentMode: order.paymentMode, cashTiming: order.cashTiming, deliveryMode: order.deliveryMode, note: order.note || "Packed by warehouse", status: "Ready for Dispatch" })}>Ready for dispatch</button>
+                <button className="primary-button" type="button" onClick={() => void onUpdateSalesOrder(order.id, { rate: order.rate, paymentMode: order.paymentMode, cashTiming: order.cashTiming, deliveryMode: order.deliveryMode, note: `${order.note || ""} Handed over by warehouse.`.trim(), status: "Out for Delivery" })}>Hand over to delivery</button>
+              </div>
+            </article>;
+          })}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function DeliveryJobsView({
+  snapshot,
+  currentUser,
+  onUploadProof,
+  onUpdateTask
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  onUploadProof: (file: File) => Promise<unknown>;
+  onUpdateTask: (id: string, body: {
+    linkedOrderIds?: string[];
+    assignedTo: string;
+    pickupAt?: string;
+    dropAt?: string;
+    routeHint?: string;
+    paymentAction?: DeliveryTask["paymentAction"];
+    status: DeliveryTask["status"];
+    cashCollectionRequired: boolean;
+    cashHandoverMarked?: boolean;
+    weightProofName?: string;
+    cashProofName?: string;
+    lastActionAt?: string;
+  }) => Promise<void>;
+}) {
+  const myTasks = snapshot.deliveryTasks.filter((item) => item.assignedTo === currentUser.username || item.assignedTo === currentUser.fullName);
+  const [drafts, setDrafts] = useState<Record<string, { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"] }>>({});
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Delivery Summary" eyebrow="Pickup and drop">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{myTasks.filter((item) => item.side === "Purchase").length}</strong><p>Inbound pickups</p></div></div>
+          <div className="list-card"><div><strong>{myTasks.filter((item) => item.side === "Sales").length}</strong><p>Outbound deliveries</p></div></div>
+          <div className="list-card"><div><strong>{myTasks.filter((item) => item.cashCollectionRequired).length}</strong><p>Cash actions</p></div></div>
+        </div>
+      </Panel>
+      <Panel title="My Delivery Jobs" eyebrow="Proof and timestamps">
+        <div className="stack-list payment-update-list">
+          {myTasks.length === 0 ? <div className="empty-card">No delivery tasks assigned.</div> : myTasks.map((task) => {
+            const draft = drafts[task.id] || { routeHint: task.routeHint || "", weightProofName: task.weightProofName || "", cashProofName: task.cashProofName || "", cashHandoverMarked: task.cashHandoverMarked, status: task.status };
+            const weightUrl = draft.weightProofName ? `${API_BASE}/uploads/delivery-proofs/${draft.weightProofName}` : "";
+            const cashUrl = draft.cashProofName ? `${API_BASE}/uploads/delivery-proofs/${draft.cashProofName}` : "";
+            return <article className="list-card payment-update-card" key={task.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{task.id}</strong>
+                  <p>{task.side} · {task.linkedOrderIds.join(", ")} · {task.mode}</p>
+                </div>
+                <span className="status-pill status-pending">{draft.status}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">From</span><strong>{task.from}</strong></div>
+                <div><span className="small-label">To</span><strong>{task.to}</strong></div>
+                <div><span className="small-label">Payment action</span><strong>{task.paymentAction}</strong></div>
+                <div><span className="small-label">Last action</span><strong>{task.lastActionAt ? new Date(task.lastActionAt).toLocaleString("en-IN") : "Pending"}</strong></div>
+              </div>
+              <form className="form-grid top-gap" onSubmit={async (event) => {
+                event.preventDefault();
+                await onUpdateTask(task.id, {
+                  linkedOrderIds: task.linkedOrderIds,
+                  assignedTo: task.assignedTo,
+                  pickupAt: task.pickupAt,
+                  dropAt: task.dropAt,
+                  routeHint: draft.routeHint,
+                  paymentAction: task.paymentAction,
+                  status: draft.status,
+                  cashCollectionRequired: task.cashCollectionRequired,
+                  cashHandoverMarked: draft.cashHandoverMarked,
+                  weightProofName: draft.weightProofName || undefined,
+                  cashProofName: draft.cashProofName || undefined,
+                  lastActionAt: new Date().toISOString()
+                });
+              }}>
+                <label className="wide-field">Route hint<input value={draft.routeHint} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, routeHint: e.target.value } }))} placeholder="Best route / sequence" /></label>
+                <label>Status<select value={draft.status} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, status: e.target.value as DeliveryTask["status"] } }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label>
+                <label className="checkbox-line"><input type="checkbox" checked={draft.cashHandoverMarked} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashHandoverMarked: e.target.checked } }))} />Cash handover marked</label>
+                <label>Weight proof<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setDrafts((current) => ({ ...current, [task.id]: { ...draft, weightProofName: String((uploaded as { fileName: string }).fileName) } })); }} /></label>
+                <label>Cash proof<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashProofName: String((uploaded as { fileName: string }).fileName) } })); }} /></label>
+                <div className="payment-card-actions wide-field">
+                  <button className="primary-button" type="submit">Update task</button>
+                  {weightUrl ? <a className="ghost-button" href={weightUrl} target="_blank" rel="noreferrer">Weight proof</a> : null}
+                  {cashUrl ? <a className="ghost-button" href={cashUrl} target="_blank" rel="noreferrer">Cash proof</a> : null}
+                </div>
+              </form>
+            </article>;
+          })}
+        </div>
+      </Panel>
+    </section>
   );
 }
 
 function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: AppSnapshot; currentUser: AppUser; simpleMode: boolean; onOpen: (view: ViewKey) => void }) {
   const roles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
+  const isPurchaserOnly = roles.includes("Purchaser") && !roles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
+  const today = new Date().toISOString().slice(0, 10);
+  const dailyCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
   const quickActions: Array<{ title: string; text: string; view: ViewKey }> = [];
   if (roles.includes("Admin")) {
     quickActions.push({ title: "Add Product", text: "Create product and price slabs.", view: "Products" });
@@ -647,7 +1686,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
             <div className="list-card"><div><strong>{snapshot.metrics.partyCount}</strong><p>Parties ready</p></div></div>
             <div className="list-card"><div><strong>{snapshot.metrics.productCount}</strong><p>Products ready</p></div></div>
             <div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Purchase payments pending</p></div></div>
-            <div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Sales payments pending</p></div></div>
+            {!isPurchaserOnly ? <div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Sales payments pending</p></div></div> : null}
+            {roles.includes("Admin") ? <div className="list-card"><div><strong>{snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").length}</strong><p>Incoming warehouse orders</p></div></div> : null}
+            {roles.includes("Admin") ? <div className="list-card"><div><strong>{snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed").length}</strong><p>Open sales orders</p></div></div> : null}
+            {roles.includes("Admin") || roles.includes("Accounts") ? <div className="list-card"><div><strong>{dailyCash}</strong><p>Cash of the day</p></div></div> : null}
           </div>
         </Panel>
       </section>
@@ -656,6 +1698,15 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
 
   return (
     <section className="dashboard-grid">
+      {roles.includes("Admin") ? <Panel title="MIS Today" eyebrow="All modules">
+        <DataTable headers={["Module","Open / Pending","Key signal"]} rows={[
+          ["Purchase", snapshot.purchaseOrders.filter((p) => p.status !== "Received" && p.status !== "Closed").length, `${snapshot.metrics.pendingPurchasePayments} payment pending`],
+          ["Sales", snapshot.salesOrders.filter((s) => s.status !== "Delivered" && s.status !== "Closed").length, `${snapshot.metrics.pendingSalesPayments} payment pending`],
+          ["Warehouse", snapshot.receiptChecks.filter((r) => r.partialReceipt || r.flagged).length, `${snapshot.metrics.availableInventoryUnits} units live`],
+          ["Delivery", snapshot.deliveryTasks.filter((d) => d.status !== "Delivered").length, `${snapshot.deliveryTasks.filter((d) => d.cashCollectionRequired).length} cash actions`],
+          ["Accounts", snapshot.payments.filter((p) => p.verificationStatus !== "Verified").length, `${dailyCash} cash today`]
+        ]} />
+      </Panel> : null}
       <Panel title="Purchase Orders" eyebrow="Inbound"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel>
       <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
       <Panel title="Payment Verification" eyebrow="Accounts"><DataTable headers={["Payment","Side","Order","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.verificationStatus])} /></Panel>

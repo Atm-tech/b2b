@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
@@ -32,12 +33,17 @@ type CurrentUser = {
   roles: UserRole[];
 };
 
-const dataDir = path.resolve(process.cwd(), "data");
+const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+const dataDir = path.resolve(sourceDir, "../data");
 mkdirSync(dataDir, { recursive: true });
 
 export const databasePath = path.join(dataDir, "aapoorti-b2b-v2.sqlite");
 const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+db.pragma("synchronous = NORMAL");
+db.pragma("temp_store = MEMORY");
+db.pragma("busy_timeout = 5000");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -161,7 +167,8 @@ db.exec(`
     verification_note TEXT NOT NULL DEFAULT '',
     created_by TEXT NOT NULL,
     verified_by TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    submitted_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS receipt_checks (
@@ -217,8 +224,13 @@ db.exec(`
     assigned_to TEXT NOT NULL,
     pickup_at TEXT,
     drop_at TEXT,
+    route_hint TEXT,
     payment_action TEXT NOT NULL DEFAULT 'None',
     cash_collection_required INTEGER NOT NULL,
+    cash_handover_marked INTEGER NOT NULL DEFAULT 0,
+    weight_proof_name TEXT,
+    cash_proof_name TEXT,
+    last_action_at TEXT,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
@@ -238,6 +250,24 @@ db.exec(`
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
+  CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status);
+  CREATE INDEX IF NOT EXISTS idx_purchase_orders_created_at ON purchase_orders(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_sales_orders_shop ON sales_orders(shop_id);
+  CREATE INDEX IF NOT EXISTS idx_sales_orders_status ON sales_orders(status);
+  CREATE INDEX IF NOT EXISTS idx_sales_orders_created_at ON sales_orders(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(linked_order_id, side);
+  CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(verification_status);
+  CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_receipt_checks_order ON receipt_checks(purchase_order_id);
+  CREATE INDEX IF NOT EXISTS idx_receipt_checks_warehouse ON receipt_checks(warehouse_id);
+  CREATE INDEX IF NOT EXISTS idx_inventory_lots_lookup ON inventory_lots(warehouse_id, product_sku, status);
+  CREATE INDEX IF NOT EXISTS idx_ledger_entries_lookup ON ledger_entries(linked_order_id, side);
+  CREATE INDEX IF NOT EXISTS idx_delivery_tasks_status ON delivery_tasks(status);
+  CREATE INDEX IF NOT EXISTS idx_delivery_tasks_assigned_to ON delivery_tasks(assigned_to);
+  CREATE INDEX IF NOT EXISTS idx_notes_entity ON note_records(entity_type, entity_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
 
 ensureLegacyColumns();
@@ -278,13 +308,22 @@ function ensureLegacyColumns() {
     ["linked_order_ids_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["pickup_at", "TEXT"],
     ["drop_at", "TEXT"],
-    ["payment_action", "TEXT NOT NULL DEFAULT 'None'"]
+    ["payment_action", "TEXT NOT NULL DEFAULT 'None'"],
+    ["route_hint", "TEXT"],
+    ["cash_handover_marked", "INTEGER NOT NULL DEFAULT 0"],
+    ["weight_proof_name", "TEXT"],
+    ["cash_proof_name", "TEXT"],
+    ["last_action_at", "TEXT"]
   ] as const;
   deliveryAlterations.forEach(([name, sqlType]) => {
     if (!deliveryColumns.includes(name)) {
       db.exec(`ALTER TABLE delivery_tasks ADD COLUMN ${name} ${sqlType}`);
     }
   });
+  const paymentColumns = (db.prepare("PRAGMA table_info(payments)").all() as Array<{ name: string }>).map((item) => item.name);
+  if (!paymentColumns.includes("submitted_at")) {
+    db.exec("ALTER TABLE payments ADD COLUMN submitted_at TEXT");
+  }
   db.exec("UPDATE delivery_tasks SET linked_order_ids_json = json_array(linked_order_id) WHERE linked_order_ids_json = '[]' OR linked_order_ids_json = '' OR linked_order_ids_json IS NULL");
 }
 
@@ -637,7 +676,8 @@ function mapPayments(): PaymentRecord[] {
     verificationNote: String(row.verification_note),
     createdBy: String(row.created_by),
     verifiedBy: row.verified_by ? String(row.verified_by) : undefined,
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    submittedAt: row.submitted_at ? String(row.submitted_at) : undefined
   }));
 }
 
@@ -711,8 +751,13 @@ function mapDeliveryTasks(): DeliveryTask[] {
     assignedTo: String(row.assigned_to),
     pickupAt: row.pickup_at ? String(row.pickup_at) : undefined,
     dropAt: row.drop_at ? String(row.drop_at) : undefined,
+    routeHint: row.route_hint ? String(row.route_hint) : undefined,
     paymentAction: String(row.payment_action || "None") as DeliveryTask["paymentAction"],
     cashCollectionRequired: Boolean(row.cash_collection_required),
+    cashHandoverMarked: Boolean(row.cash_handover_marked),
+    weightProofName: row.weight_proof_name ? String(row.weight_proof_name) : undefined,
+    cashProofName: row.cash_proof_name ? String(row.cash_proof_name) : undefined,
+    lastActionAt: row.last_action_at ? String(row.last_action_at) : undefined,
     status: String(row.status) as DeliveryTask["status"],
     createdAt: String(row.created_at)
   }));
@@ -1034,6 +1079,7 @@ export function createPurchaseOrder(payload: {
   warehouseId: string;
   quantityOrdered: number;
   rate: number;
+  previousRate?: number;
   deliveryMode: PurchaseOrder["deliveryMode"];
   paymentMode: PaymentMode;
   cashTiming?: PurchaseOrder["cashTiming"];
@@ -1046,13 +1092,23 @@ export function createPurchaseOrder(payload: {
   const totalAmount = payload.quantityOrdered * payload.rate;
   const expectedWeightKg = payload.quantityOrdered * Number(product.default_weight_kg);
   const id = makeId("PO");
+  const rateAlertNote = typeof payload.previousRate === "number" && payload.previousRate > 0 && payload.rate > payload.previousRate
+    ? `Rate alert: entered purchase rate ${payload.rate} is higher than last purchase rate ${payload.previousRate} for ${payload.productSku}. Confirmed by ${currentUser.fullName}.`
+    : "";
+  const combinedNote = [payload.note.trim(), rateAlertNote].filter(Boolean).join(" | ");
   db.prepare(`
     INSERT INTO purchase_orders (
       id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, total_amount,
       expected_weight_kg, delivery_mode, payment_mode, cash_timing, note, status, created_at
     )
     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, payload.note.trim(), "Pending Payment", now());
+  `).run(id, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, combinedNote, "Pending Payment", now());
+  if (rateAlertNote) {
+    db.prepare(`
+      INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(makeId("NOTE"), "Purchase Order", id, rateAlertNote, currentUser.fullName, "Operational", now());
+  }
   recalculateLedger("Purchase", id);
   return getSnapshot();
 }
@@ -1063,6 +1119,8 @@ export function createSalesOrder(payload: {
   warehouseId: string;
   quantity: number;
   rate: number;
+  minimumAllowedRate?: number;
+  priceApprovalRequested?: boolean;
   paymentMode: PaymentMode;
   cashTiming?: SalesOrder["cashTiming"];
   deliveryMode: SalesOrder["deliveryMode"];
@@ -1077,15 +1135,26 @@ export function createSalesOrder(payload: {
   const settings = mapSettings();
   const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
   const id = makeId("SO");
+  const needsPriceApproval = Boolean(payload.priceApprovalRequested) && typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
+  const approvalNote = needsPriceApproval
+    ? `Admin approval requested: sales rate ${payload.rate} is below last purchase price ${payload.minimumAllowedRate} for ${payload.productSku}. Requested by ${currentUser.fullName}.`
+    : "";
   db.prepare(`
     INSERT INTO sales_orders (
       id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, total_amount, payment_mode, cash_timing,
       delivery_mode, delivery_charge, note, status, created_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, payload.quantity * payload.rate, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", now());
-  reserveInventory(payload.warehouseId, payload.productSku, payload.quantity);
-  recalculateLedger("Sales", id);
+  `).run(id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, payload.quantity * payload.rate, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), approvalNote].filter(Boolean).join(" | "), needsPriceApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now());
+  if (needsPriceApproval) {
+    db.prepare(`
+      INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
+      VALUES (?, 'Sales Order', ?, ?, ?, 'Management', ?)
+    `).run(makeId("NOTE"), id, approvalNote, currentUser.fullName, now());
+  } else {
+    reserveInventory(payload.warehouseId, payload.productSku, payload.quantity);
+    recalculateLedger("Sales", id);
+  }
   return getSnapshot();
 }
 
@@ -1121,13 +1190,14 @@ export function createPayment(payload: {
   verificationStatus: PaymentRecord["verificationStatus"];
   verificationNote?: string;
 }, currentUser: CurrentUser) {
+  const submittedAt = payload.verificationStatus === "Submitted" ? now() : null;
   db.prepare(`
     INSERT INTO payments (
       id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
-      proof_name, verification_status, verification_note, created_by, verified_by, created_at
+      proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(makeId("PAY"), payload.side, payload.linkedOrderId, payload.amount, payload.mode, payload.cashTiming || null, payload.referenceNumber.trim(), payload.voucherNumber?.trim() || null, payload.utrNumber?.trim() || null, payload.proofName?.trim() || null, payload.verificationStatus, payload.verificationNote?.trim() || "", currentUser.fullName, payload.verificationStatus === "Verified" ? currentUser.fullName : null, now());
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(makeId("PAY"), payload.side, payload.linkedOrderId, payload.amount, payload.mode, payload.cashTiming || null, payload.referenceNumber.trim(), payload.voucherNumber?.trim() || null, payload.utrNumber?.trim() || null, payload.proofName?.trim() || null, payload.verificationStatus, payload.verificationNote?.trim() || "", currentUser.fullName, payload.verificationStatus === "Verified" ? currentUser.fullName : null, now(), submittedAt);
   if (payload.verificationStatus === "Verified") {
     recalculateLedger(payload.side, payload.linkedOrderId);
   }
@@ -1138,6 +1208,9 @@ export function verifyPayment(paymentId: string, status: PaymentRecord["verifica
   const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId) as Record<string, unknown> | undefined;
   if (!payment) {
     throw new Error("Payment not found.");
+  }
+  if (status === "Verified" && currentUser.roles.includes("Accounts") && !String(payment.reference_number || "").trim()) {
+    throw new Error("Reference number is required before accounts can complete a payment.");
   }
   db.prepare("UPDATE payments SET verification_status = ?, verification_note = ?, verified_by = ? WHERE id = ?").run(status, note.trim(), currentUser.fullName, paymentId);
   if (status === "Verified") {
@@ -1205,16 +1278,22 @@ export function createDeliveryTask(payload: {
   assignedTo: string;
   pickupAt?: string;
   dropAt?: string;
+  routeHint?: string;
   paymentAction?: DeliveryTask["paymentAction"];
   cashCollectionRequired: boolean;
+  cashHandoverMarked?: boolean;
+  weightProofName?: string;
+  cashProofName?: string;
+  lastActionAt?: string;
   status: DeliveryTask["status"];
 }) {
   db.prepare(`
     INSERT INTO delivery_tasks (
       id, side, linked_order_id, linked_order_ids_json, mode, source_location, destination_location, assigned_to,
-      pickup_at, drop_at, payment_action, cash_collection_required, status, created_at
+      pickup_at, drop_at, route_hint, payment_action, cash_collection_required, cash_handover_marked,
+      weight_proof_name, cash_proof_name, last_action_at, status, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     makeId("DL"),
     payload.side,
@@ -1226,8 +1305,13 @@ export function createDeliveryTask(payload: {
     payload.assignedTo.trim(),
     payload.pickupAt || null,
     payload.dropAt || null,
+    payload.routeHint?.trim() || null,
     payload.paymentAction || "None",
     payload.cashCollectionRequired ? 1 : 0,
+    payload.cashHandoverMarked ? 1 : 0,
+    payload.weightProofName?.trim() || null,
+    payload.cashProofName?.trim() || null,
+    payload.lastActionAt || null,
     payload.status,
     now()
   );
@@ -1326,9 +1410,9 @@ export function updatePayment(paymentId: string, payload: {
   }
   db.prepare(`
     UPDATE payments
-    SET amount = ?, reference_number = ?, voucher_number = ?, utr_number = ?, proof_name = ?, verification_status = ?, verification_note = ?, verified_by = ?
+    SET amount = ?, reference_number = ?, voucher_number = ?, utr_number = ?, proof_name = ?, verification_status = ?, verification_note = ?, verified_by = ?, submitted_at = ?
     WHERE id = ?
-  `).run(payload.amount, payload.referenceNumber.trim(), payload.voucherNumber?.trim() || null, payload.utrNumber?.trim() || null, payload.proofName?.trim() || null, payload.verificationStatus, payload.verificationNote.trim(), payload.verificationStatus === "Verified" ? currentUser.fullName : null, paymentId);
+  `).run(payload.amount, payload.referenceNumber.trim(), payload.voucherNumber?.trim() || null, payload.utrNumber?.trim() || null, payload.proofName?.trim() || null, payload.verificationStatus, payload.verificationNote.trim(), payload.verificationStatus === "Verified" ? currentUser.fullName : null, payload.verificationStatus === "Submitted" ? now() : null, paymentId);
   recalculateLedger(String(payment.side) as "Purchase" | "Sales", String(payment.linked_order_id));
   return getSnapshot();
 }
@@ -1351,22 +1435,32 @@ export function updateDeliveryTask(taskId: string, payload: {
   assignedTo: string;
   pickupAt?: string;
   dropAt?: string;
+  routeHint?: string;
   paymentAction?: DeliveryTask["paymentAction"];
   status: DeliveryTask["status"];
   cashCollectionRequired: boolean;
+  cashHandoverMarked?: boolean;
+  weightProofName?: string;
+  cashProofName?: string;
+  lastActionAt?: string;
 }) {
   db.prepare(`
     UPDATE delivery_tasks
-    SET linked_order_ids_json = ?, assigned_to = ?, pickup_at = ?, drop_at = ?, payment_action = ?, status = ?, cash_collection_required = ?
+    SET linked_order_ids_json = ?, assigned_to = ?, pickup_at = ?, drop_at = ?, route_hint = ?, payment_action = ?, status = ?, cash_collection_required = ?, cash_handover_marked = ?, weight_proof_name = ?, cash_proof_name = ?, last_action_at = ?
     WHERE id = ?
   `).run(
     stringify(payload.linkedOrderIds || []),
     payload.assignedTo.trim(),
     payload.pickupAt || null,
     payload.dropAt || null,
+    payload.routeHint?.trim() || null,
     payload.paymentAction || "None",
     payload.status,
     payload.cashCollectionRequired ? 1 : 0,
+    payload.cashHandoverMarked ? 1 : 0,
+    payload.weightProofName?.trim() || null,
+    payload.cashProofName?.trim() || null,
+    payload.lastActionAt || now(),
     taskId
   );
   return getSnapshot();

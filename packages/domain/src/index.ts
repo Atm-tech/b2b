@@ -123,7 +123,7 @@ export type PurchaseOrder = {
   createdAt: string;
 };
 
-export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Self Pickup" | "Delivered" | "Closed";
+export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed";
 
 export type SalesOrder = {
   id: string;
@@ -161,6 +161,7 @@ export type PaymentRecord = {
   createdBy: string;
   verifiedBy?: string;
   createdAt: string;
+  submittedAt?: string;
 };
 
 export type ReceiptCheck = {
@@ -217,8 +218,13 @@ export type DeliveryTask = {
   assignedTo: string;
   pickupAt?: string;
   dropAt?: string;
+  routeHint?: string;
   paymentAction: "None" | "Collect Payment" | "Deliver Payment";
   cashCollectionRequired: boolean;
+  cashHandoverMarked: boolean;
+  weightProofName?: string;
+  cashProofName?: string;
+  lastActionAt?: string;
   status: "Planned" | "Picked" | "Handed Over" | "Delivered";
   createdAt: string;
 };

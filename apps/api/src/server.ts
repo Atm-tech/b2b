@@ -3,7 +3,7 @@ import express from "express";
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import multer from "multer";
-import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, ProductMaster, ProductSlab, UserRole, Warehouse } from "@aapoorti-b2b/domain";
+import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, UserRole, Warehouse } from "@aapoorti-b2b/domain";
 import {
   authenticate,
   bulkCreateProducts,
@@ -31,12 +31,16 @@ import {
   updateSettings,
   verifyPayment
 } from "./db.js";
+import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
 
 const app = express();
+const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 8080);
 const uploadsDir = path.resolve(process.cwd(), "uploads");
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
+const deliveryDir = path.join(uploadsDir, "delivery-proofs");
+const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "2mb";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
   .map((item) => item.trim())
@@ -44,22 +48,38 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
 
 mkdirSync(csvDir, { recursive: true });
 mkdirSync(paymentDir, { recursive: true });
+mkdirSync(deliveryDir, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, file, cb) => {
-      cb(null, file.fieldname === "csv" ? csvDir : paymentDir);
+      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : paymentDir);
     },
     filename: (_req, file, cb) => {
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
       cb(null, `${Date.now()}-${safeName}`);
     }
-  })
+  }),
+  limits: {
+    fileSize: Number(process.env.MAX_UPLOAD_BYTES || 8 * 1024 * 1024)
+  }
 });
 
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (isProduction) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
       callback(null, true);
       return;
     }
@@ -67,15 +87,29 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json({ limit: "2mb" }));
-app.use("/uploads", express.static(uploadsDir));
+app.use(express.json({ limit: requestBodyLimit }));
+app.use("/uploads", express.static(uploadsDir, {
+  fallthrough: false,
+  maxAge: isProduction ? "7d" : 0
+}));
 
 app.get("/", (_req, res) => {
-  res.json({ name: "Aapoorti B2B Platform API", version: "0.3.0", databasePath });
+  res.json({
+    name: "Aapoorti B2B Platform API",
+    version: "0.4.0",
+    environment: process.env.NODE_ENV || "development",
+    databasePath: isProduction ? undefined : databasePath
+  });
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "api", timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    service: "api",
+    environment: process.env.NODE_ENV || "development",
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime())
+  });
 });
 
 app.post("/auth/login", (req, res) => {
@@ -181,8 +215,11 @@ app.post("/products/bulk-upload", upload.single("csv"), (req, res) => wrap(res, 
   if (!req.file) {
     throw new Error("CSV file is required.");
   }
-  const csvText = readFileSync(req.file.path, "utf8");
-  return bulkCreateProducts(parseCsvRows(csvText), currentUser);
+  const defaultWarehouseIds = getSnapshot().warehouses.map((item) => item.id);
+  const rows = isWorkbookFile(req.file.originalname)
+    ? parseWorkbookRows(req.file.path, defaultWarehouseIds)
+    : parseCsvRows(readFileSync(req.file.path, "utf8"), defaultWarehouseIds);
+  return bulkCreateProducts(rows, currentUser);
 }));
 
 app.post("/counterparties", (req, res) => wrap(res, () => {
@@ -239,6 +276,7 @@ app.post("/purchase-orders", (req, res) => wrap(res, () => {
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       quantityOrdered: requiredNumber(req.body?.quantityOrdered, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
+      previousRate: typeof req.body?.previousRate === "number" ? req.body.previousRate : undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
@@ -269,6 +307,8 @@ app.post("/sales-orders", (req, res) => wrap(res, () => {
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       quantity: requiredNumber(req.body?.quantity, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
+      minimumAllowedRate: typeof req.body?.minimumAllowedRate === "number" ? req.body.minimumAllowedRate : undefined,
+      priceApprovalRequested: Boolean(req.body?.priceApprovalRequested),
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
@@ -292,6 +332,9 @@ app.patch("/sales-orders/:id", (req, res) => wrap(res, () => {
 
 app.post("/payments", (req, res) => wrap(res, () => {
   const currentUser = requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+  const referenceNumber = currentUser.roles.includes("Accounts")
+    ? requiredString(req.body?.referenceNumber, "Reference number")
+    : optionalString(req.body?.referenceNumber) || "";
   return createPayment(
     {
       side: requiredString(req.body?.side, "Side") as "Purchase" | "Sales",
@@ -299,7 +342,7 @@ app.post("/payments", (req, res) => wrap(res, () => {
       amount: requiredNumber(req.body?.amount, "Amount"),
       mode: requiredString(req.body?.mode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
-      referenceNumber: optionalString(req.body?.referenceNumber) || "",
+      referenceNumber,
       voucherNumber: optionalString(req.body?.voucherNumber),
       utrNumber: optionalString(req.body?.utrNumber),
       proofName: optionalString(req.body?.proofName),
@@ -311,10 +354,13 @@ app.post("/payments", (req, res) => wrap(res, () => {
 }));
 
 app.patch("/payments/:id", (req, res) => wrap(res, () => {
-  const currentUser = requireRole(req, ["Admin", "Accounts"]);
+  const currentUser = requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
+  const referenceNumber = currentUser.roles.includes("Accounts")
+    ? requiredString(req.body?.referenceNumber, "Reference number")
+    : optionalString(req.body?.referenceNumber) || "";
   return updatePayment(req.params.id, {
     amount: requiredNumber(req.body?.amount, "Amount"),
-    referenceNumber: optionalString(req.body?.referenceNumber) || "",
+    referenceNumber,
     voucherNumber: optionalString(req.body?.voucherNumber),
     utrNumber: optionalString(req.body?.utrNumber),
     proofName: optionalString(req.body?.proofName),
@@ -332,6 +378,18 @@ app.post("/payments/upload-proof", upload.single("proof"), (req, res) => wrap(re
     fileName: req.file.filename,
     originalName: req.file.originalname,
     fileUrl: `/uploads/payment-proofs/${req.file.filename}`
+  };
+}));
+
+app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), (req, res) => wrap(res, () => {
+  requireRole(req, ["Admin", "Warehouse Manager", "Delivery"]);
+  if (!req.file) {
+    throw new Error("Delivery proof file is required.");
+  }
+  return {
+    fileName: req.file.filename,
+    originalName: req.file.originalname,
+    fileUrl: `/uploads/delivery-proofs/${req.file.filename}`
   };
 }));
 
@@ -381,8 +439,13 @@ app.post("/delivery-tasks", (req, res) => wrap(res, () => {
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
     pickupAt: optionalString(req.body?.pickupAt),
     dropAt: optionalString(req.body?.dropAt),
+    routeHint: optionalString(req.body?.routeHint),
     paymentAction: (optionalString(req.body?.paymentAction) || "None") as DeliveryTask["paymentAction"],
     cashCollectionRequired: Boolean(req.body?.cashCollectionRequired),
+    cashHandoverMarked: Boolean(req.body?.cashHandoverMarked),
+    weightProofName: optionalString(req.body?.weightProofName),
+    cashProofName: optionalString(req.body?.cashProofName),
+    lastActionAt: optionalString(req.body?.lastActionAt),
     status: requiredString(req.body?.status, "Status") as DeliveryTask["status"]
   });
 }));
@@ -395,9 +458,14 @@ app.patch("/delivery-tasks/:id", (req, res) => wrap(res, () => {
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
     pickupAt: optionalString(req.body?.pickupAt),
     dropAt: optionalString(req.body?.dropAt),
+    routeHint: optionalString(req.body?.routeHint),
     paymentAction: (optionalString(req.body?.paymentAction) || "None") as DeliveryTask["paymentAction"],
     status: requiredString(req.body?.status, "Status") as any,
-    cashCollectionRequired: Boolean(req.body?.cashCollectionRequired)
+    cashCollectionRequired: Boolean(req.body?.cashCollectionRequired),
+    cashHandoverMarked: Boolean(req.body?.cashHandoverMarked),
+    weightProofName: optionalString(req.body?.weightProofName),
+    cashProofName: optionalString(req.body?.cashProofName),
+    lastActionAt: optionalString(req.body?.lastActionAt)
   });
 }));
 
@@ -415,7 +483,7 @@ app.post("/notes", (req, res) => wrap(res, () => {
 }));
 
 app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
+  console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"})`);
 });
 
 function wrap(res: express.Response, run: () => unknown) {
@@ -509,89 +577,5 @@ function normalizeSlabs(value: unknown) {
     minQuantity: requiredNumber(item?.minQuantity, "Slab min quantity"),
     maxQuantity: item?.maxQuantity === undefined || item?.maxQuantity === null || item?.maxQuantity === "" ? undefined : requiredNumber(item.maxQuantity, "Slab max quantity"),
     purchaseRate: requiredNumber(item?.purchaseRate, "Slab rate")
-  })) as ProductSlab[];
-}
-
-function parseCsvRows(csv: string) {
-  const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean);
-  if (!header) {
-    throw new Error("CSV file is empty.");
-  }
-  const headers = header.split(",").map((item) => item.trim());
-  const defaultWarehouseIds = getSnapshot().warehouses.map((item) => item.id);
-  return lines.map((line) => {
-    const cols = line.split(",").map((item) => item.trim());
-    const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])) as Record<string, string>;
-    const barcode = readMapped(row, ["sku", "SKU", "BARCODE"]);
-    const name = readMapped(row, ["name", "NAME", "ITEM NAME", "ARTICLE_NAME"]);
-    const division = readMapped(row, ["division", "DIVISION"]);
-    const department = readMapped(row, ["department", "DEPARTMENT"]);
-    const section = readMapped(row, ["section", "SECTION"]);
-    const category = readMapped(row, ["category", "CATEGORY 6", "REMARKS"], "General");
-    const unit = readMapped(row, ["unit", "UNIT", "SIZE"], "Unit");
-    const rspText = readMapped(row, ["rsp", "RSP"], "0");
-    const mrpText = readMapped(row, ["mrp", "MRP"], "0");
-    const slabsText = readMapped(row, ["slabs", "SLABS"]);
-    return {
-      sku: requiredString(barcode || name, "SKU"),
-      name: requiredString(name, "Product name"),
-      division: requiredString(division, "Division"),
-      department: requiredString(department, "Department"),
-      section: requiredString(section, "Section"),
-      category: requiredString(category, "Category"),
-      unit: requiredString(unit, "Unit"),
-      defaultWeightKg: requiredNumber(readMapped(row, ["defaultWeightKg", "DEFAULT_WEIGHT_KG"], "0"), "Default weight"),
-      toleranceKg: requiredNumber(readMapped(row, ["toleranceKg", "TOLERANCE_KG"], "0"), "Tolerance kg"),
-      tolerancePercent: requiredNumber(readMapped(row, ["tolerancePercent", "TOLERANCE_PERCENT"], "0"), "Tolerance percent"),
-      allowedWarehouseIds: readMapped(row, ["allowedWarehouseIds", "ALLOWED_WAREHOUSE_IDS"])
-        .split("|")
-        .map((item) => item.trim())
-        .filter(Boolean).length > 0
-        ? readMapped(row, ["allowedWarehouseIds", "ALLOWED_WAREHOUSE_IDS"]).split("|").map((item) => item.trim()).filter(Boolean)
-        : defaultWarehouseIds,
-      slabs: slabsText ? parseCsvSlabs(slabsText) : [{ minQuantity: 1, purchaseRate: requiredNumber(rspText, "RSP") }],
-      remarks: readMapped(row, ["REMARKS"]),
-      category6: readMapped(row, ["CATEGORY 6", "CAT-6"]),
-      siteName: readMapped(row, ["SITE NAME", "MKT"]),
-      barcode,
-      supplierName: "",
-      hsnCode: readMapped(row, ["HSN CODE"]),
-      articleName: readMapped(row, ["ARTICLE_NAME"]),
-      itemName: readMapped(row, ["ITEM NAME"]),
-      brand: readMapped(row, ["BRAND"]),
-      shortName: readMapped(row, ["NAME"]),
-      size: readMapped(row, ["SIZE"]),
-      rsp: Number(rspText || 0),
-      mrp: Number(mrpText || 0)
-    };
-  });
-}
-
-function readMapped(row: Record<string, string>, keys: string[], fallback = "") {
-  for (const key of keys) {
-    const value = String(row[key] || "").trim();
-    if (value) {
-      return value;
-    }
-  }
-  return fallback;
-}
-
-function parseCsvSlabs(value: string): ProductSlab[] {
-  return value
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const [rangeText, rateText] = item.split(":").map((part) => part.trim());
-      const purchaseRate = requiredNumber(rateText, "Slab rate");
-      if (rangeText.endsWith("+")) {
-        return {
-          minQuantity: requiredNumber(rangeText.replace("+", ""), "Slab min quantity"),
-          purchaseRate
-        };
-      }
-      const [minQuantity, maxQuantity] = rangeText.split("-").map((part) => requiredNumber(part, "Slab quantity"));
-      return { minQuantity, maxQuantity, purchaseRate };
-    });
+  }));
 }
