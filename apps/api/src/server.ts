@@ -9,6 +9,7 @@ import {
   bulkCreateProducts,
   createSessionForUser,
   createCounterparty,
+  createDeliveryConsignment,
   createDeliveryTask,
   createNote,
   createPayment,
@@ -232,7 +233,10 @@ app.post("/counterparties", async (req, res) => wrap(res, async () => {
       mobileNumber: requiredString(req.body?.mobileNumber, "Mobile number"),
       address: requiredString(req.body?.address, "Address"),
       city: requiredString(req.body?.city, "City"),
-      contactPerson: requiredString(req.body?.contactPerson, "Contact person")
+      contactPerson: requiredString(req.body?.contactPerson, "Contact person"),
+      latitude: optionalNumber(req.body?.latitude),
+      longitude: optionalNumber(req.body?.longitude),
+      locationLabel: optionalString(req.body?.locationLabel)
     },
     currentUser
   );
@@ -284,7 +288,8 @@ app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
-      note: optionalString(req.body?.note) || ""
+      note: optionalString(req.body?.note) || "",
+      location: parseOptionalLocation(req.body?.location)
     },
     currentUser
   );
@@ -320,7 +325,8 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
-      note: optionalString(req.body?.note) || ""
+      note: optionalString(req.body?.note) || "",
+      location: parseOptionalLocation(req.body?.location)
     },
     currentUser
   );
@@ -477,6 +483,16 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
   });
 }));
 
+app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Warehouse Manager"]);
+  return createDeliveryConsignment({
+    docketIds: requiredStringArray(req.body?.docketIds, "Dockets"),
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
+    status: (optionalString(req.body?.status) || "Ready") as any
+  }, currentUser);
+}));
+
 app.post("/notes", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
   return createNote(
@@ -579,6 +595,19 @@ function optionalNumber(value: unknown) {
     return undefined;
   }
   return num;
+}
+
+function parseOptionalLocation(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const latitude = Number(record.latitude);
+  const longitude = Number(record.longitude);
+  if (Number.isNaN(latitude) || Number.isNaN(longitude)) return undefined;
+  return {
+    latitude,
+    longitude,
+    label: optionalString(record.label)
+  };
 }
 
 function requiredStringArray(value: unknown, label: string) {

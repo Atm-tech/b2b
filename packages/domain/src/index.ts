@@ -68,6 +68,9 @@ export type Counterparty = {
   address: string;
   city: string;
   contactPerson: string;
+  latitude?: number;
+  longitude?: number;
+  locationLabel?: string;
   createdBy: string;
   createdAt: string;
 };
@@ -150,6 +153,31 @@ export type SalesOrder = {
   deliveryCharge: number;
   note: string;
   status: SalesStatus;
+  createdAt: string;
+};
+
+export type DeliveryDocket = {
+  id: string;
+  salesOrderId: string;
+  shopId: string;
+  shopName: string;
+  productSku: string;
+  warehouseId: string;
+  quantity: number;
+  weightKg: number;
+  consignmentId?: string;
+  status: "Pending Packing" | "Ready" | "Tagged" | "Out for Delivery" | "Delivered";
+  createdAt: string;
+};
+
+export type DeliveryConsignment = {
+  id: string;
+  docketIds: string[];
+  warehouseId: string;
+  assignedTo: string;
+  totalWeightKg: number;
+  status: "Draft" | "Ready" | "Out for Delivery" | "Delivered";
+  createdBy: string;
   createdAt: string;
 };
 
@@ -285,6 +313,8 @@ export type AppSnapshot = {
   stockSummary: StockSummary[];
   ledgerEntries: LedgerEntry[];
   deliveryTasks: DeliveryTask[];
+  deliveryDockets: DeliveryDocket[];
+  deliveryConsignments: DeliveryConsignment[];
   notes: NoteRecord[];
 };
 

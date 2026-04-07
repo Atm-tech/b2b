@@ -107,9 +107,9 @@ function App() {
   const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,unit,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,rsp");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
-  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "" });
+  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "", location: null as null | { latitude: number; longitude: number; label?: string } });
   const [purchaseEditForm, setPurchaseEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", note: "", status: "Pending Payment" });
-  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0" });
+  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0", location: null as null | { latitude: number; longitude: number; label?: string } });
   const [salesEditForm, setSalesEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "", status: "Booked" });
   const [paymentForm, setPaymentForm] = useState({ side: "Purchase" as "Purchase" | "Sales", linkedOrderId: "", amount: "0", mode: "NEFT" as PaymentMode, cashTiming: "", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected", verificationNote: "" });
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
@@ -447,6 +447,7 @@ function App() {
                 currentUser={currentUser}
                 onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
                 onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
+                onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
               />
             ) : null
           ) : null}
@@ -704,7 +705,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           deliveryMode: "",
           paymentMode: "",
           cashTiming: "",
-          note: ""
+          note: "",
+          location: null
         }
       : {
           ...current,
@@ -721,6 +723,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           paymentMode: "",
           cashTiming: "",
           note: "",
+          location: null,
           priceApprovalRequested: false,
           minimumAllowedRate: "0"
         });
@@ -738,6 +741,26 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     window.setTimeout(() => {
       setCartToast((current) => current === message ? "" : current);
     }, 2200);
+  }
+
+  function markCurrentLocation() {
+    if (!navigator.geolocation) {
+      showCartToast("Current location is not available in this browser");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = Number(position.coords.latitude.toFixed(6));
+        const longitude = Number(position.coords.longitude.toFixed(6));
+        setOrderForm((current: any) => ({
+          ...current,
+          location: { latitude, longitude, label: `${latitude},${longitude}` }
+        }));
+        showCartToast(isPurchase ? "Supplier pickup location saved" : "Shop delivery location saved");
+      },
+      () => showCartToast("Could not capture current location"),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   }
 
   function validateCartStep() {
@@ -1195,9 +1218,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <div><span className="small-label">Bill total</span><strong>{cartTotal.toFixed(2)}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{orderForm.paymentMode}{orderForm.paymentMode === "Cash" && orderForm.cashTiming ? ` / ${orderForm.cashTiming}` : ""}</strong></div>
                   <div><span className="small-label">Delivery mode</span><strong>{orderForm.deliveryMode}</strong></div>
+                  <div><span className="small-label">{isPurchase ? "Pickup location" : "Delivery location"}</span><strong>{orderForm.location?.label || (parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.locationLabel) || "Not marked"}</strong></div>
                 </div>
                 {orderForm.note ? <div className="cart-line"><div><span className="small-label">Note</span><strong>{orderForm.note}</strong></div></div> : null}
                 <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={markCurrentLocation}>Mark current location</button>
                   <button type="button" className="ghost-button" onClick={() => setCartStep("payment")}>Back</button>
                   <button
                     type="button"
@@ -1569,15 +1594,21 @@ function WarehouseOperationsView({
   snapshot,
   currentUser,
   onReceive,
-  onUpdateSalesOrder
+  onUpdateSalesOrder,
+  onCreateConsignment
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   onReceive: (body: { purchaseOrderId: string; warehouseId: string; receivedQuantity: number; actualWeightKg: number; note: string; confirmPartial: boolean }) => Promise<void>;
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus }) => Promise<void>;
+  onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<void>;
 }) {
   const incomingOrders = snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const outgoingOrders = snapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const openDockets = snapshot.deliveryDockets.filter((item) => item.status !== "Delivered" && !item.consignmentId);
+  const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: "delivery" });
+  const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
+  const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
   const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; note: string }>>({});
 
   return (
@@ -1658,6 +1689,44 @@ function WarehouseOperationsView({
               </div>
             </article>;
           })}
+        </div>
+      </Panel>
+      <Panel title="Dockets and Consignment" eyebrow="Bundle multiple shop dockets">
+        <form className="form-grid" onSubmit={async (event) => {
+          event.preventDefault();
+          await onCreateConsignment({
+            docketIds: consignmentDraft.docketIds,
+            warehouseId: consignmentDraft.warehouseId,
+            assignedTo: consignmentDraft.assignedTo,
+            status: "Ready"
+          });
+          setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" });
+        }}>
+          <label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label>
+          <label>Delivery user<input value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))} /></label>
+          <label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>
+            {openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} · ${docket.shopName} · ${docket.weightKg.toFixed(2)} kg`}</option>)}
+          </select></label>
+          <div className="payment-card-actions wide-field">
+            <span className="small-label">{selectedDockets.length} docket(s) · {selectedDocketWeight.toFixed(2)} kg total consignment weight</span>
+            <button className="primary-button" type="submit">Create consignment</button>
+          </div>
+        </form>
+        <div className="stack-list payment-update-list top-gap">
+          {snapshot.deliveryConsignments.length === 0 ? <div className="empty-card">No consignments yet.</div> : snapshot.deliveryConsignments.map((item) => (
+            <article className="list-card payment-update-card" key={item.id}>
+              <div className="payment-update-head">
+                <div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div>
+                <span className="status-pill status-pending">{item.status}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Warehouse</span><strong>{item.warehouseId}</strong></div>
+                <div><span className="small-label">Assigned</span><strong>{item.assignedTo}</strong></div>
+                <div><span className="small-label">Total weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div>
+                <div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div>
+              </div>
+            </article>
+          ))}
         </div>
       </Panel>
     </section>

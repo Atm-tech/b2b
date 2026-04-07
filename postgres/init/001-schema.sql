@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS counterparties (
   address TEXT NOT NULL DEFAULT '',
   city TEXT NOT NULL DEFAULT '',
   contact_person TEXT NOT NULL DEFAULT '',
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  location_label TEXT,
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -192,6 +195,30 @@ CREATE TABLE IF NOT EXISTS delivery_tasks (
   cash_proof_name TEXT,
   last_action_at TIMESTAMPTZ,
   status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS delivery_dockets (
+  id TEXT PRIMARY KEY,
+  sales_order_id TEXT NOT NULL,
+  shop_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  consignment_id TEXT,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS delivery_consignments (
+  id TEXT PRIMARY KEY,
+  docket_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  warehouse_id TEXT NOT NULL,
+  assigned_to TEXT NOT NULL DEFAULT '',
+  total_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
