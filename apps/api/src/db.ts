@@ -66,8 +66,26 @@ const ready = initializeDatabase();
 
 async function initializeDatabase() {
   await pool.query(schemaSql);
+  await ensureOrderTaxColumns();
   await pool.query(indexSql);
   await seedDatabase();
+}
+
+async function ensureOrderTaxColumns() {
+  await pool.query(`
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
+    UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
+    UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
+    UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
+    UPDATE sales_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
+  `);
 }
 
 async function withTransaction<T>(run: (client: PoolClient) => Promise<T>) {
@@ -387,6 +405,10 @@ async function mapPurchaseOrders(client?: DbClient): Promise<PurchaseOrder[]> {
     quantityOrdered: numberValue(row.quantity_ordered),
     quantityReceived: numberValue(row.quantity_received),
     rate: numberValue(row.rate),
+    taxableAmount: numberValue(row.taxable_amount),
+    gstRate: numberValue(row.gst_rate) as PurchaseOrder["gstRate"],
+    gstAmount: numberValue(row.gst_amount),
+    taxMode: stringValue(row.tax_mode) as PurchaseOrder["taxMode"],
     totalAmount: numberValue(row.total_amount),
     expectedWeightKg: numberValue(row.expected_weight_kg),
     deliveryMode: stringValue(row.delivery_mode) as PurchaseOrder["deliveryMode"],
@@ -418,6 +440,10 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     warehouseId: stringValue(row.warehouse_id),
     quantity: numberValue(row.quantity),
     rate: numberValue(row.rate),
+    taxableAmount: numberValue(row.taxable_amount),
+    gstRate: numberValue(row.gst_rate) as SalesOrder["gstRate"],
+    gstAmount: numberValue(row.gst_amount),
+    taxMode: stringValue(row.tax_mode) as SalesOrder["taxMode"],
     totalAmount: numberValue(row.total_amount),
     paymentMode: stringValue(row.payment_mode) as PaymentMode,
     cashTiming: row.cash_timing ? (stringValue(row.cash_timing) as SalesOrder["cashTiming"]) : undefined,
@@ -609,7 +635,8 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
       client
     );
     if (!order) return;
-    const goodsValue = numberValue(order.rate) * numberValue(order.quantity_received);
+    const receivedRatio = numberValue(order.quantity_ordered) > 0 ? numberValue(order.quantity_received) / numberValue(order.quantity_ordered) : 0;
+    const goodsValue = numberValue(order.total_amount) * receivedRatio;
     await upsertLedger(side, linkedOrderId, stringValue(order.supplier_name), goodsValue, paidAmount, client);
     return;
   }
@@ -866,6 +893,10 @@ export async function createPurchaseOrder(payload: {
   warehouseId: string;
   quantityOrdered: number;
   rate: number;
+  taxableAmount?: number;
+  gstRate?: PurchaseOrder["gstRate"];
+  gstAmount?: number;
+  taxMode?: PurchaseOrder["taxMode"];
   previousRate?: number;
   deliveryMode: PurchaseOrder["deliveryMode"];
   paymentMode: PaymentMode;
@@ -875,7 +906,12 @@ export async function createPurchaseOrder(payload: {
   await ready;
   const product = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [payload.productSku]);
   if (!product) throw new Error("Product not found.");
-  const totalAmount = payload.quantityOrdered * payload.rate;
+  const baseAmount = payload.quantityOrdered * payload.rate;
+  const taxableAmount = payload.taxableAmount ?? baseAmount;
+  const gstRate = payload.gstRate ?? 0;
+  const gstAmount = payload.gstAmount ?? 0;
+  const taxMode = payload.taxMode || "Exclusive";
+  const totalAmount = taxableAmount + gstAmount;
   const expectedWeightKg = payload.quantityOrdered * numberValue(product.default_weight_kg);
   const id = makeId("PO");
   const rateAlertNote =
@@ -887,10 +923,10 @@ export async function createPurchaseOrder(payload: {
   await withTransaction(async (client) => {
     await query(
       `INSERT INTO purchase_orders (
-        id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, total_amount,
+        id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount,
         expected_weight_kg, delivery_mode, payment_mode, cash_timing, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-      [id, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, combinedNote, "Pending Payment", now()],
+      ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+      [id, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, combinedNote, "Pending Payment", now()],
       client
     );
     if (rateAlertNote) {
@@ -913,6 +949,10 @@ export async function createSalesOrder(payload: {
   warehouseId: string;
   quantity: number;
   rate: number;
+  taxableAmount?: number;
+  gstRate?: SalesOrder["gstRate"];
+  gstAmount?: number;
+  taxMode?: SalesOrder["taxMode"];
   minimumAllowedRate?: number;
   priceApprovalRequested?: boolean;
   paymentMode: PaymentMode;
@@ -936,12 +976,18 @@ export async function createSalesOrder(payload: {
       throw new Error("Not enough stock available.");
     }
     const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
+    const baseAmount = payload.quantity * payload.rate;
+    const taxableAmount = payload.taxableAmount ?? baseAmount;
+    const gstRate = payload.gstRate ?? 0;
+    const gstAmount = payload.gstAmount ?? 0;
+    const taxMode = payload.taxMode || "Exclusive";
+    const totalAmount = taxableAmount + gstAmount;
     await query(
       `INSERT INTO sales_orders (
-        id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, total_amount, payment_mode, cash_timing,
+        id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-      [id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, payload.quantity * payload.rate, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), approvalNote].filter(Boolean).join(" | "), needsPriceApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now()],
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+      [id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), approvalNote].filter(Boolean).join(" | "), needsPriceApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now()],
       client
     );
     if (needsPriceApproval) {

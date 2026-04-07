@@ -108,9 +108,9 @@ function App() {
   const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,unit,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,slabs");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
-  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "" });
+  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "" });
   const [purchaseEditForm, setPurchaseEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", note: "", status: "Pending Payment" });
-  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0" });
+  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0" });
   const [salesEditForm, setSalesEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "", status: "Booked" });
   const [paymentForm, setPaymentForm] = useState({ side: "Purchase" as "Purchase" | "Sales", linkedOrderId: "", amount: "0", mode: "NEFT" as PaymentMode, cashTiming: "", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected", verificationNote: "" });
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
@@ -379,7 +379,7 @@ function App() {
             isAdminUser ? <TwoCol left={<Panel title="Supplier Database" eyebrow="Read only"><DataTable headers={["Name","GST","Mobile","City"]} rows={suppliers.map((p) => [p.name, p.gstNumber, p.mobileNumber, p.city])} /></Panel>} right={<Panel title="Customer Database" eyebrow="Read only"><DataTable headers={["Name","GST","Mobile","City"]} rows={shops.map((p) => [p.name, p.gstNumber, p.mobileNumber, p.city])} /></Panel>} /> :
             <TwoCol left={<Panel title={currentUser.role === "Sales" ? "Register Customer" : "Register Supplier"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><form className="form-grid" onSubmit={async (e) => { e.preventDefault(); const forcedType = currentUser.role === "Sales" ? "Shop" : "Supplier"; await createPartyRecord({ ...partyForm, type: forcedType }); }}><label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label><label>Name<input value={partyForm.name} onChange={(e) => setPartyForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyForm.gstNumber} onChange={(e) => setPartyForm((c) => ({ ...c, gstNumber: e.target.value }))} /></label><label>Mobile<input value={partyForm.mobileNumber} onChange={(e) => setPartyForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">{currentUser.role === "Sales" ? "Save customer" : "Save supplier"}</button></form></Panel>} right={<><Panel title={currentUser.role === "Sales" ? "Update Customer" : "Update Supplier"} eyebrow="Edit details"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated."); }}><label>Party<select value={partyEditForm.id} onChange={(e) => { const sourceItems = currentUser.role === "Sales" ? shops : suppliers; const item = sourceItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : { id: "", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" }); }}>{renderOptions(currentUser.role === "Sales" ? shops : suppliers)}</select></label><label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} /></label><label>Mobile<input value={partyEditForm.mobileNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyEditForm.contactPerson} onChange={(e) => setPartyEditForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Update</button></form></Panel><Panel title={currentUser.role === "Sales" ? "Customer Database" : "Supplier Database"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><DataTable headers={["Name","GST","Mobile","City"]} rows={(currentUser.role === "Sales" ? shops : suppliers).map((p) => [p.name, p.gstNumber, p.mobileNumber, p.city])} /></Panel></>} />
           ) : null}
-          {activeView === "Purchase" ? (isAdminUser ? <TwoCol left={<Panel title="Purchase Summary" eyebrow="Read only"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.purchaseOrders.length}</strong><p>Total purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").length}</strong><p>Open purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Pending purchase payments</p></div></div></div></Panel>} right={<Panel title="Purchase List" eyebrow="Status tracking"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Payment","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.paymentMode, p.status])} /></Panel>} /> : <>
+          {activeView === "Purchase" ? (isAdminUser ? <TwoCol left={<Panel title="Purchase Summary" eyebrow="Read only"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.purchaseOrders.length}</strong><p>Total purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").length}</strong><p>Open purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Pending purchase payments</p></div></div></div></Panel>} right={<Panel title="Purchase List" eyebrow="Status tracking"><DataTable headers={["PO","Supplier","Product","Taxable","GST","Total","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.taxableAmount, p.gstAmount, p.totalAmount, p.status])} /></Panel>} /> : <>
             <CatalogOrderView
             mode="purchase"
             title="Purchaser Checkout"
@@ -393,14 +393,14 @@ function App() {
             orderForm={purchaseForm}
             setOrderForm={setPurchaseForm}
             onCreateParty={createPartyRecord}
-            onSubmit={() => post("/purchase-orders", { ...purchaseForm, quantityOrdered: Number(purchaseForm.quantityOrdered), rate: Number(purchaseForm.rate), previousRate: Number(purchaseForm.previousRate || 0), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined }, "Purchase order created.")}
+            onSubmit={() => post("/purchase-orders", { ...purchaseForm, quantityOrdered: Number(purchaseForm.quantityOrdered), rate: Number(purchaseForm.rate), taxableAmount: Number(purchaseForm.taxableAmount || 0), gstRate: Number(purchaseForm.gstRate || 0), gstAmount: Number(purchaseForm.gstAmount || 0), previousRate: Number(purchaseForm.previousRate || 0), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined }, "Purchase order created.")}
             rightPanel={null}
           />
             <Panel title="My Purchase List" eyebrow="Status tracking">
-              <DataTable headers={["PO","Supplier","Product","Ordered","Received","Payment","Status"]} rows={snapshot.purchaseOrders.filter((p) => p.purchaserId === currentUser.id || p.purchaserName === currentUser.fullName).map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.paymentMode, p.status])} />
+              <DataTable headers={["PO","Supplier","Product","Taxable","GST","Total","Status"]} rows={snapshot.purchaseOrders.filter((p) => p.purchaserId === currentUser.id || p.purchaserName === currentUser.fullName).map((p) => [p.id, p.supplierName, p.productSku, p.taxableAmount, p.gstAmount, p.totalAmount, p.status])} />
             </Panel>
           </>) : null}
-          {activeView === "Sales" ? (isAdminUser ? <TwoCol left={<Panel title="Sales Summary" eyebrow="Read only"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.salesOrders.length}</strong><p>Total sales orders</p></div></div><div className="list-card"><div><strong>{snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed").length}</strong><p>Open sales orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Pending sales payments</p></div></div></div></Panel>} right={<Panel title="Sales Details" eyebrow="Read only"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <TwoCol left={<Panel title="Sales Summary" eyebrow="Read only"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.salesOrders.length}</strong><p>Total sales orders</p></div></div><div className="list-card"><div><strong>{snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed").length}</strong><p>Open sales orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Pending sales payments</p></div></div></div></Panel>} right={<Panel title="Sales Details" eyebrow="Read only"><DataTable headers={["SO","Shop","Product","Taxable","GST","Total","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.taxableAmount, s.gstAmount, s.totalAmount, s.status])} /></Panel>} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Blinkit-style outbound booking"
@@ -412,7 +412,7 @@ function App() {
             orderForm={salesForm}
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
-            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), minimumAllowedRate: Number(salesForm.minimumAllowedRate || 0), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, salesForm.priceApprovalRequested ? "Sales order sent for admin approval." : "Sales order created.")}
+            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), taxableAmount: Number(salesForm.taxableAmount || 0), gstRate: Number(salesForm.gstRate || 0), gstAmount: Number(salesForm.gstAmount || 0), minimumAllowedRate: Number(salesForm.minimumAllowedRate || 0), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, salesForm.priceApprovalRequested ? "Sales order sent for admin approval." : "Sales order created.")}
             rightPanel={null}
           />) : null}
           {activeView === "Payments" ? (
@@ -585,7 +585,43 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   function setOrderQuantity(quantity: number) {
     const safeQuantity = String(Math.max(1, quantity));
-    setOrderForm((current: any) => isPurchase ? ({ ...current, quantityOrdered: safeQuantity }) : ({ ...current, quantity: safeQuantity }));
+    setOrderForm((current: any) => {
+      const next = isPurchase ? ({ ...current, quantityOrdered: safeQuantity }) : ({ ...current, quantity: safeQuantity });
+      return applyTaxCalculation(next, String(Math.max(1, quantity) * Number(current.rate || 0)), "Exclusive");
+    });
+  }
+
+  function calculateTax(amountText: string, gstRateText: string, taxMode: "Exclusive" | "Inclusive") {
+    const amount = Math.max(0, Number(amountText || 0));
+    const gstRate = Number(gstRateText || 0);
+    const divisor = 1 + gstRate / 100;
+    const taxableAmount = taxMode === "Inclusive" && divisor > 0 ? amount / divisor : amount;
+    const gstAmount = taxMode === "Inclusive" ? amount - taxableAmount : taxableAmount * (gstRate / 100);
+    const totalAmount = taxableAmount + gstAmount;
+    return {
+      taxableAmount: taxableAmount.toFixed(2),
+      gstAmount: gstAmount.toFixed(2),
+      totalAmount: totalAmount.toFixed(2)
+    };
+  }
+
+  function applyTaxCalculation(form: any, amountText: string, taxMode: "Exclusive" | "Inclusive" = form.taxMode || "Exclusive") {
+    const tax = calculateTax(amountText, form.gstRate || "0", taxMode);
+    return {
+      ...form,
+      taxMode,
+      taxableAmount: tax.taxableAmount,
+      gstAmount: tax.gstAmount
+    };
+  }
+
+  function updateTaxField(field: "taxableAmount" | "totalAmount" | "gstRate" | "taxMode", value: string) {
+    setOrderForm((current: any) => {
+      const next = { ...current, [field]: value };
+      const mode = field === "taxMode" ? value as "Exclusive" | "Inclusive" : next.taxMode;
+      const amount = field === "totalAmount" || mode === "Inclusive" ? (field === "totalAmount" ? value : String(Number(next.taxableAmount || 0) + Number(next.gstAmount || 0))) : next.taxableAmount;
+      return applyTaxCalculation(next, amount, mode);
+    });
   }
 
   function adjustProductQuantity(product: AppSnapshot["products"][number], delta: number) {
@@ -622,20 +658,26 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       showCartToast("Cannot sell below last purchase price. Request admin approval.");
       return;
     }
-    setOrderForm((current: any) => ({
-      ...current,
-      productSku: ratePopup.product.sku,
-      rate: String(nextRate),
-      previousRate: String(ratePopup.lastRate || 0),
-      warehouseId: current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "",
-      ...(isPurchase ? {} : {
-        priceApprovalRequested: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate,
-        minimumAllowedRate: String(ratePopup.lastRate || 0),
-        note: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate
-          ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${ratePopup.lastRate} for ${ratePopup.product.sku}.`
-          : current.note
-      })
-    }));
+    setOrderForm((current: any) => {
+      const priced = applyTaxCalculation(current, String(getOrderQuantity() * nextRate), "Exclusive");
+      return {
+        ...current,
+        productSku: ratePopup.product.sku,
+        rate: String(nextRate),
+        previousRate: String(ratePopup.lastRate || 0),
+        warehouseId: current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "",
+        taxableAmount: priced.taxableAmount,
+        gstAmount: priced.gstAmount,
+        taxMode: priced.taxMode,
+        ...(isPurchase ? {} : {
+          priceApprovalRequested: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate,
+          minimumAllowedRate: String(ratePopup.lastRate || 0),
+          note: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate
+            ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${ratePopup.lastRate} for ${ratePopup.product.sku}.`
+            : current.note
+        })
+      };
+    });
     if ((isPurchase ? orderForm.quantityOrdered : orderForm.quantity) === "0") {
       setOrderQuantity(1);
     }
@@ -656,6 +698,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           quantityOrdered: "0",
           rate: "0",
           previousRate: "0",
+          taxableAmount: "0",
+          gstRate: "0",
+          gstAmount: "0",
+          taxMode: "Exclusive",
           deliveryMode: "",
           paymentMode: "",
           cashTiming: "",
@@ -668,6 +714,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           warehouseId: "",
           quantity: "0",
           rate: "0",
+          taxableAmount: "0",
+          gstRate: "0",
+          gstAmount: "0",
+          taxMode: "Exclusive",
           deliveryMode: "",
           paymentMode: "",
           cashTiming: "",
@@ -762,7 +812,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   const selectedPartyId = isPurchase ? orderForm.supplierId : orderForm.shopId;
   const selectedProduct = getSelectedProduct();
-  const cartTotal = Number(orderForm.rate || 0) * getOrderQuantity();
+  const cartTaxable = Number(orderForm.taxableAmount || 0);
+  const cartGstAmount = Number(orderForm.gstAmount || 0);
+  const cartTotal = cartTaxable + cartGstAmount;
 
   const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
@@ -928,7 +980,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
             {orderForm.productSku ? <button type="button" className="floating-checkout-button" onClick={() => setCartOpen(true)}>
               <strong>Checkout</strong>
-              <span>{getOrderQuantity()} item · Total {cartTotal}</span>
+              <span>{getOrderQuantity()} item · Total {cartTotal.toFixed(2)}</span>
             </button> : null}
             {ratePopup ? <div className="cart-overlay" onClick={() => setRatePopup(null)}>
               <div className="cart-sheet rate-popup-sheet" onClick={(e) => e.stopPropagation()}>
@@ -1012,7 +1064,33 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                   <label className={cartErrors.rate ? "field-error" : ""}>
                     Rate
-                    <input type="number" value={orderForm.rate} onChange={(e) => { setCartErrors((current) => ({ ...current, rate: false })); setOrderForm((current: any) => ({ ...current, rate: e.target.value })); }} />
+                    <input type="number" value={orderForm.rate} onChange={(e) => { setCartErrors((current) => ({ ...current, rate: false })); setOrderForm((current: any) => applyTaxCalculation({ ...current, rate: e.target.value }, String(getOrderQuantity() * Number(e.target.value || 0)), "Exclusive")); }} />
+                  </label>
+                  <label>
+                    {isPurchase ? "Input GST Slab" : "Output GST Slab"}
+                    <select value={orderForm.gstRate} onChange={(e) => updateTaxField("gstRate", e.target.value)}>
+                      <option value="0">0%</option>
+                      <option value="5">5%</option>
+                      <option value="18">18%</option>
+                    </select>
+                  </label>
+                  <label>
+                    Amount Type
+                    <select value={orderForm.taxMode} onChange={(e) => updateTaxField("taxMode", e.target.value)}>
+                      <option>Exclusive</option>
+                      <option>Inclusive</option>
+                    </select>
+                  </label>
+                  {orderForm.taxMode === "Exclusive" ? <label>
+                    Taxable Amount
+                    <input type="number" value={orderForm.taxableAmount} onChange={(e) => updateTaxField("taxableAmount", e.target.value)} />
+                  </label> : <label>
+                    Amount Including Tax
+                    <input type="number" value={cartTotal.toFixed(2)} onChange={(e) => updateTaxField("totalAmount", e.target.value)} />
+                  </label>}
+                  <label>
+                    {isPurchase ? "Input GST" : "Output GST"}
+                    <input value={Number(orderForm.gstAmount || 0).toFixed(2)} readOnly />
                   </label>
                   <label className="wide-field">
                     Notes
@@ -1026,7 +1104,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </div>
                   <div>
                     <span className="small-label">Total</span>
-                    <strong>{cartTotal}</strong>
+                    <strong>{cartTotal.toFixed(2)}</strong>
                   </div>
                 </div>
                 <div className="cart-actions">
@@ -1065,7 +1143,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </div>
                   <div>
                     <span className="small-label">Total</span>
-                    <strong>{cartTotal}</strong>
+                    <strong>{cartTotal.toFixed(2)}</strong>
                   </div>
                 </div>
                 <div className="cart-actions">

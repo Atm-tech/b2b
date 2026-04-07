@@ -113,6 +113,10 @@ export type PurchaseOrder = {
   quantityOrdered: number;
   quantityReceived: number;
   rate: number;
+  taxableAmount: number;
+  gstRate: 0 | 5 | 18;
+  gstAmount: number;
+  taxMode: "Exclusive" | "Inclusive";
   totalAmount: number;
   expectedWeightKg: number;
   deliveryMode: "Dealer Delivery" | "Self Collection";
@@ -135,6 +139,10 @@ export type SalesOrder = {
   warehouseId: string;
   quantity: number;
   rate: number;
+  taxableAmount: number;
+  gstRate: 0 | 5 | 18;
+  gstAmount: number;
+  taxMode: "Exclusive" | "Inclusive";
   totalAmount: number;
   paymentMode: PaymentMode;
   cashTiming?: CashTiming;

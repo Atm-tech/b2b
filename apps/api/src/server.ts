@@ -276,6 +276,10 @@ app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       quantityOrdered: requiredNumber(req.body?.quantityOrdered, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
+      taxableAmount: optionalNumber(req.body?.taxableAmount),
+      gstRate: optionalNumber(req.body?.gstRate) as 0 | 5 | 18 | undefined,
+      gstAmount: optionalNumber(req.body?.gstAmount),
+      taxMode: optionalString(req.body?.taxMode) as "Exclusive" | "Inclusive" | undefined,
       previousRate: typeof req.body?.previousRate === "number" ? req.body.previousRate : undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -307,6 +311,10 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       quantity: requiredNumber(req.body?.quantity, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
+      taxableAmount: optionalNumber(req.body?.taxableAmount),
+      gstRate: optionalNumber(req.body?.gstRate) as 0 | 5 | 18 | undefined,
+      gstAmount: optionalNumber(req.body?.gstAmount),
+      taxMode: optionalString(req.body?.taxMode) as "Exclusive" | "Inclusive" | undefined,
       minimumAllowedRate: typeof req.body?.minimumAllowedRate === "number" ? req.body.minimumAllowedRate : undefined,
       priceApprovalRequested: Boolean(req.body?.priceApprovalRequested),
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
@@ -558,6 +566,17 @@ function requiredNumber(value: unknown, label: string) {
   const num = Number(value);
   if (Number.isNaN(num) || num < 0) {
     throw new Error(`${label} must be zero or greater.`);
+  }
+  return num;
+}
+
+function optionalNumber(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const num = Number(value);
+  if (Number.isNaN(num) || num < 0) {
+    return undefined;
   }
   return num;
 }
