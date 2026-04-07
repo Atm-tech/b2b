@@ -498,7 +498,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">("catalog");
   const [cartOpen, setCartOpen] = useState(false);
-  const [cartStep, setCartStep] = useState<"cart" | "payment">("cart");
+  const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">("cart");
   const [cartToast, setCartToast] = useState("");
   const [cartErrors, setCartErrors] = useState<Record<string, boolean>>({});
   const [ratePopup, setRatePopup] = useState<{ product: AppSnapshot["products"][number]; rate: string; lastRate: number; confirmHighRate: boolean } | null>(null);
@@ -814,6 +814,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const cartTaxable = Number(orderForm.taxableAmount || 0);
   const cartGstAmount = Number(orderForm.gstAmount || 0);
   const cartTotal = cartTaxable + cartGstAmount;
+  const totalWeightKg = selectedProduct ? selectedProduct.defaultWeightKg * getOrderQuantity() : 0;
+  const cartStepTitle = cartStep === "cart" ? "Cart" : cartStep === "payment" ? "Payment" : "Bill Summary";
 
   const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
@@ -1027,7 +1029,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 {cartToast ? <div className="cart-toast">{cartToast}</div> : null}
                 <div className="cart-head">
                   <div>
-                    <span className="eyebrow">{cartStep === "cart" ? "Cart" : "Payment"}</span>
+                    <span className="eyebrow">{cartStepTitle}</span>
                     <h3>{selectedProduct.name}</h3>
                   </div>
                   <button type="button" className="ghost-button" onClick={() => setCartOpen(false)}>Close</button>
@@ -1111,12 +1113,16 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <span className="small-label">Total</span>
                     <strong>{cartTotal.toFixed(2)}</strong>
                   </div>
+                  <div>
+                    <span className="small-label">Total weight</span>
+                    <strong>{totalWeightKg.toFixed(2)} kg</strong>
+                  </div>
                 </div>
                 <div className="cart-actions">
                   <button type="button" className="ghost-button" onClick={() => setCartOpen(false)}>Continue shopping</button>
                   <button type="button" className="primary-button" onClick={() => { if (validateCartStep()) setCartStep("payment"); }}>Proceed</button>
                 </div>
-                </> : <>
+                </> : cartStep === "payment" ? <>
                 <div className="cart-edit-grid">
                   <label className={cartErrors.paymentMode ? "field-error" : ""}>
                     Payment Method
@@ -1150,19 +1156,58 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <span className="small-label">Total</span>
                     <strong>{cartTotal.toFixed(2)}</strong>
                   </div>
+                  <div>
+                    <span className="small-label">Total weight</span>
+                    <strong>{totalWeightKg.toFixed(2)} kg</strong>
+                  </div>
                 </div>
                 <div className="cart-actions">
                   <button type="button" className="ghost-button" onClick={() => setCartStep("cart")}>Back</button>
                   <button
                     type="button"
                     className="primary-button"
-                    onClick={async () => {
+                    onClick={() => {
                       if (!validatePaymentStep()) return;
+                      setCartStep("summary");
+                    }}
+                  >
+                    Continue
+                  </button>
+                </div>
+                </> : <>
+                <div className="cart-line">
+                  <div>
+                    <span className="small-label">{isPurchase ? "Supplier" : "Customer"}</span>
+                    <strong>{parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.name || "-"}</strong>
+                  </div>
+                  <div>
+                    <span className="small-label">{isPurchase ? "Delivery To" : "Dispatch From"}</span>
+                    <strong>{warehouses.find((item) => item.id === orderForm.warehouseId)?.name || "-"}</strong>
+                  </div>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Product</span><strong>{selectedProduct.name}</strong></div>
+                  <div><span className="small-label">Quantity</span><strong>{getOrderQuantity()}</strong></div>
+                  <div><span className="small-label">Rate</span><strong>{Number(orderForm.rate || 0).toFixed(2)}</strong></div>
+                  <div><span className="small-label">Total weight</span><strong>{totalWeightKg.toFixed(2)} kg</strong></div>
+                  <div><span className="small-label">Taxable</span><strong>{cartTaxable.toFixed(2)}</strong></div>
+                  <div><span className="small-label">{isPurchase ? "Input GST" : "Output GST"} {orderForm.gstRate}%</span><strong>{cartGstAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Bill total</span><strong>{cartTotal.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Payment</span><strong>{orderForm.paymentMode}{orderForm.paymentMode === "Cash" && orderForm.cashTiming ? ` / ${orderForm.cashTiming}` : ""}</strong></div>
+                  <div><span className="small-label">Delivery mode</span><strong>{orderForm.deliveryMode}</strong></div>
+                </div>
+                {orderForm.note ? <div className="cart-line"><div><span className="small-label">Note</span><strong>{orderForm.note}</strong></div></div> : null}
+                <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={() => setCartStep("payment")}>Back</button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={async () => {
                       await onSubmit();
                       resetCurrentOrder();
                     }}
                   >
-                    Finalize
+                    Continue and finalize
                   </button>
                 </div>
                 </>}
