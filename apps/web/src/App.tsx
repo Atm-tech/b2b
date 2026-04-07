@@ -1084,10 +1084,16 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   {orderForm.taxMode === "Exclusive" ? <label>
                     Taxable Amount
                     <input type="number" value={orderForm.taxableAmount} onChange={(e) => updateTaxField("taxableAmount", e.target.value)} />
-                  </label> : <label>
-                    Amount Including Tax
-                    <input type="number" value={cartTotal.toFixed(2)} onChange={(e) => updateTaxField("totalAmount", e.target.value)} />
-                  </label>}
+                  </label> : <>
+                    <label>
+                      Amount Including Tax
+                      <input type="number" value={cartTotal.toFixed(2)} onChange={(e) => updateTaxField("totalAmount", e.target.value)} />
+                    </label>
+                    <label>
+                      Taxable Amount
+                      <input value={Number(orderForm.taxableAmount || 0).toFixed(2)} readOnly />
+                    </label>
+                  </>}
                   <label>
                     {isPurchase ? "Input GST" : "Output GST"}
                     <input value={Number(orderForm.gstAmount || 0).toFixed(2)} readOnly />
