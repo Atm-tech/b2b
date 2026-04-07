@@ -322,6 +322,8 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
       taxMode: optionalString(req.body?.taxMode) as "Exclusive" | "Inclusive" | undefined,
       minimumAllowedRate: typeof req.body?.minimumAllowedRate === "number" ? req.body.minimumAllowedRate : undefined,
       priceApprovalRequested: Boolean(req.body?.priceApprovalRequested),
+      availableStockAtOrder: optionalNumber(req.body?.availableStockAtOrder),
+      stockApprovalRequested: Boolean(req.body?.stockApprovalRequested),
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",

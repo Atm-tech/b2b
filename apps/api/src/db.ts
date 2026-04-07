@@ -1041,6 +1041,8 @@ export async function createSalesOrder(payload: {
   taxMode?: SalesOrder["taxMode"];
   minimumAllowedRate?: number;
   priceApprovalRequested?: boolean;
+  availableStockAtOrder?: number;
+  stockApprovalRequested?: boolean;
   paymentMode: PaymentMode;
   cashTiming?: SalesOrder["cashTiming"];
   deliveryMode: SalesOrder["deliveryMode"];
@@ -1051,7 +1053,7 @@ export async function createSalesOrder(payload: {
   const settings = await mapSettings();
   const id = makeId("SO");
   const needsPriceApproval = Boolean(payload.priceApprovalRequested) && typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
-  const approvalNote = needsPriceApproval
+  const priceApprovalNote = needsPriceApproval
     ? `Admin approval requested: sales rate ${payload.rate} is below last purchase price ${payload.minimumAllowedRate} for ${payload.productSku}. Requested by ${currentUser.fullName}.`
     : "";
 
@@ -1063,9 +1065,16 @@ export async function createSalesOrder(payload: {
     const stock = buildStockSummary(await mapWarehouses(client), await mapProducts(client), await mapInventoryLots(client)).find(
       (item) => item.warehouseId === payload.warehouseId && item.productSku === payload.productSku
     );
-    if (!stock || stock.availableQuantity < payload.quantity) {
-      throw new Error("Not enough stock available.");
+    const availableQuantity = stock?.availableQuantity ?? 0;
+    const needsStockApproval = availableQuantity < payload.quantity;
+    if (needsStockApproval && !payload.stockApprovalRequested) {
+      throw new Error(`Not enough stock available. Available ${availableQuantity}, requested ${payload.quantity}.`);
     }
+    const stockApprovalNote = needsStockApproval
+      ? `Admin approval requested: sales quantity ${payload.quantity} exceeds available stock ${availableQuantity} for ${payload.productSku} at ${payload.warehouseId}. Requested by ${currentUser.fullName}.`
+      : "";
+    const approvalNotes = [priceApprovalNote, stockApprovalNote].filter(Boolean);
+    const needsApproval = needsPriceApproval || needsStockApproval;
     const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
@@ -1079,16 +1088,18 @@ export async function createSalesOrder(payload: {
         id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-      [id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), approvalNote].filter(Boolean).join(" | "), needsPriceApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now()],
+      [id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), ...approvalNotes].filter(Boolean).join(" | "), needsApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now()],
       client
     );
-    if (needsPriceApproval) {
-      await query(
-        `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
-         VALUES ($1, 'Sales Order', $2, $3, $4, 'Management', $5)`,
-        [makeId("NOTE"), id, approvalNote, currentUser.fullName, now()],
-        client
-      );
+    if (needsApproval) {
+      for (const approvalNote of approvalNotes) {
+        await query(
+          `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
+           VALUES ($1, 'Sales Order', $2, $3, $4, 'Management', $5)`,
+          [makeId("NOTE"), id, approvalNote, currentUser.fullName, now()],
+          client
+        );
+      }
       return;
     }
     await query(

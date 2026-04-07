@@ -109,7 +109,7 @@ function App() {
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "", location: null as null | { latitude: number; longitude: number; label?: string } });
   const [purchaseEditForm, setPurchaseEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", note: "", status: "Pending Payment" });
-  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0", location: null as null | { latitude: number; longitude: number; label?: string } });
+  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as "0" | "5" | "18", gstAmount: "0", taxMode: "Exclusive" as "Exclusive" | "Inclusive", paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0", stockApprovalRequested: false, availableStockAtOrder: "0", location: null as null | { latitude: number; longitude: number; label?: string } });
   const [salesEditForm, setSalesEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "", status: "Booked" });
   const [paymentForm, setPaymentForm] = useState({ side: "Purchase" as "Purchase" | "Sales", linkedOrderId: "", amount: "0", mode: "NEFT" as PaymentMode, cashTiming: "", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected", verificationNote: "" });
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
@@ -411,7 +411,7 @@ function App() {
             orderForm={salesForm}
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
-            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), taxableAmount: Number(salesForm.taxableAmount || 0), gstRate: Number(salesForm.gstRate || 0), gstAmount: Number(salesForm.gstAmount || 0), minimumAllowedRate: Number(salesForm.minimumAllowedRate || 0), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, salesForm.priceApprovalRequested ? "Sales order sent for admin approval." : "Sales order created.")}
+            onSubmit={() => post("/sales-orders", { ...salesForm, quantity: Number(salesForm.quantity), rate: Number(salesForm.rate), taxableAmount: Number(salesForm.taxableAmount || 0), gstRate: Number(salesForm.gstRate || 0), gstAmount: Number(salesForm.gstAmount || 0), minimumAllowedRate: Number(salesForm.minimumAllowedRate || 0), availableStockAtOrder: Number(salesForm.availableStockAtOrder || 0), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined }, salesForm.priceApprovalRequested || salesForm.stockApprovalRequested ? "Sales order sent for admin approval." : "Sales order created.")}
             rightPanel={null}
           />) : null}
           {activeView === "Payments" ? (
@@ -586,7 +586,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   function setOrderQuantity(quantity: number) {
     const safeQuantity = String(Math.max(1, quantity));
     setOrderForm((current: any) => {
-      const next = isPurchase ? ({ ...current, quantityOrdered: safeQuantity }) : ({ ...current, quantity: safeQuantity });
+      const next = isPurchase ? ({ ...current, quantityOrdered: safeQuantity }) : ({ ...current, quantity: safeQuantity, stockApprovalRequested: false, availableStockAtOrder: "0" });
       return applyTaxCalculation(next, String(Math.max(1, quantity) * Number(current.rate || 0)), "Exclusive");
     });
   }
@@ -725,7 +725,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           note: "",
           location: null,
           priceApprovalRequested: false,
-          minimumAllowedRate: "0"
+          minimumAllowedRate: "0",
+          stockApprovalRequested: false,
+          availableStockAtOrder: "0"
         });
     setActiveDivision("");
     setSearch("");
@@ -765,10 +767,13 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   function validateCartStep() {
     const minSaleRate = selectedProduct ? getLastPurchaseRate(selectedProduct) : 0;
+    const requestedQuantity = getOrderQuantity();
+    const selectedWarehouseStock = selectedProduct && orderForm.warehouseId ? getWarehouseStock(selectedProduct.sku, orderForm.warehouseId) : 0;
+    const needsStockApproval = !isPurchase && Boolean(selectedProduct) && Boolean(orderForm.warehouseId) && requestedQuantity > selectedWarehouseStock;
     const nextErrors = {
       supplierId: isPurchase ? !orderForm.supplierId : !orderForm.shopId,
       warehouseId: !orderForm.warehouseId,
-      quantityOrdered: getOrderQuantity() <= 0,
+      quantityOrdered: requestedQuantity <= 0,
       rate: Number(orderForm.rate || 0) <= 0 || (!isPurchase && minSaleRate > 0 && Number(orderForm.rate || 0) < minSaleRate && !orderForm.priceApprovalRequested)
     };
     setCartErrors((current) => ({ ...current, ...nextErrors }));
@@ -790,6 +795,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
         return false;
       }
       showCartToast("Enter rate");
+      return false;
+    }
+    if (needsStockApproval && !orderForm.stockApprovalRequested) {
+      const approvalNote = buildStockApprovalNote(selectedProduct!.sku, requestedQuantity, selectedWarehouseStock, orderForm.warehouseId);
+      setOrderForm((current: any) => ({
+        ...current,
+        stockApprovalRequested: true,
+        availableStockAtOrder: String(selectedWarehouseStock),
+        note: current.note?.includes(approvalNote) ? current.note : [current.note, approvalNote].filter(Boolean).join(" | ")
+      }));
+      showCartToast(`Only ${selectedWarehouseStock} in stock. Admin approval requested; press Proceed again.`);
       return false;
     }
     return true;
@@ -823,6 +839,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   function getAvailableStock(sku: string) {
     return stockSummary.filter((item) => item.productSku === sku).reduce((sum, item) => sum + item.availableQuantity, 0);
+  }
+
+  function getWarehouseStock(sku: string, warehouseId: string) {
+    return stockSummary.find((item) => item.productSku === sku && item.warehouseId === warehouseId)?.availableQuantity ?? 0;
+  }
+
+  function buildStockApprovalNote(productSku: string, requestedQuantity: number, availableQuantity: number, warehouseId: string) {
+    return `Admin approval requested: sales quantity ${requestedQuantity} exceeds available stock ${availableQuantity} for ${productSku} at ${warehouseId}.`;
   }
 
   async function savePartyAndContinue() {
@@ -1074,7 +1098,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                   <label className={cartErrors.warehouseId ? "field-error" : ""}>
                     {isPurchase ? "Delivery To" : "Dispatch From"}
-                    <select value={orderForm.warehouseId} onChange={(e) => { setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => ({ ...current, warehouseId: e.target.value })); }}>
+                    <select value={orderForm.warehouseId} onChange={(e) => { setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => isPurchase ? ({ ...current, warehouseId: e.target.value }) : ({ ...current, warehouseId: e.target.value, stockApprovalRequested: false, availableStockAtOrder: "0" })); }}>
                       {renderWarehouseOptions(warehouses)}
                     </select>
                   </label>
@@ -1219,6 +1243,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <div><span className="small-label">Payment</span><strong>{orderForm.paymentMode}{orderForm.paymentMode === "Cash" && orderForm.cashTiming ? ` / ${orderForm.cashTiming}` : ""}</strong></div>
                   <div><span className="small-label">Delivery mode</span><strong>{orderForm.deliveryMode}</strong></div>
                   <div><span className="small-label">{isPurchase ? "Pickup location" : "Delivery location"}</span><strong>{orderForm.location?.label || (parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.locationLabel) || "Not marked"}</strong></div>
+                  {!isPurchase && orderForm.stockApprovalRequested ? <div><span className="small-label">Inventory approval</span><strong>Pending admin approval. Available stock was {Number(orderForm.availableStockAtOrder || 0)}</strong></div> : null}
                 </div>
                 {orderForm.note ? <div className="cart-line"><div><span className="small-label">Note</span><strong>{orderForm.note}</strong></div></div> : null}
                 <div className="cart-actions">
