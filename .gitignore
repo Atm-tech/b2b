@@ -1,6 +1,10 @@
 node_modules
 dist
 coverage
+.env
+.env.local
+apps/*/.env
+apps/*/.env.local
 *.tsbuildinfo
 *.log
 *.sqlite
