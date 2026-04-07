@@ -179,7 +179,7 @@ app.post("/products", async (req, res) => wrap(res, async () => {
       toleranceKg: requiredNumber(req.body?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(req.body?.tolerancePercent, "Tolerance percent"),
       allowedWarehouseIds: requiredStringArray(req.body?.allowedWarehouseIds, "Allowed warehouses"),
-      slabs: normalizeSlabs(req.body?.slabs)
+      slabs: normalizeSlabs(req.body?.slabs, optionalNumber(req.body?.rsp) ?? 0)
     },
     currentUser
   );
@@ -204,7 +204,7 @@ app.post("/products/bulk", async (req, res) => wrap(res, async () => {
       toleranceKg: requiredNumber(row?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(row?.tolerancePercent, "Tolerance percent"),
       allowedWarehouseIds: requiredStringArray(row?.allowedWarehouseIds, "Allowed warehouses"),
-      slabs: normalizeSlabs(row?.slabs)
+      slabs: normalizeSlabs(row?.slabs, optionalNumber(row?.rsp) ?? 0)
     })),
     currentUser
   );
@@ -588,9 +588,9 @@ function requiredStringArray(value: unknown, label: string) {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
-function normalizeSlabs(value: unknown) {
+function normalizeSlabs(value: unknown, fallbackRate = 0) {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("At least one slab is required.");
+    return [{ minQuantity: 1, purchaseRate: fallbackRate }];
   }
   return value.map((item) => ({
     minQuantity: requiredNumber(item?.minQuantity, "Slab min quantity"),

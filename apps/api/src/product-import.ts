@@ -41,15 +41,16 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
     const division = readMapped(row, ["division", "DIVISION"], "General");
     const department = readMapped(row, ["department", "DEPARTMENT"], "General");
     const section = readMapped(row, ["section", "SECTION"], "General");
+    const sizeText = readMapped(row, ["SIZE"]);
     const unit = inferUnit(readMapped(row, ["unit", "UNIT", "SIZE"], "Unit"));
     const rspText = readMapped(row, ["rsp", "RSP"], "0");
     const mrpText = readMapped(row, ["mrp", "MRP"], "0");
-    const slabsText = readMapped(row, ["slabs", "SLABS"]);
     const category = deriveRetailCategory(row);
     const allowedWarehouseIds = readMapped(row, ["allowedWarehouseIds", "ALLOWED_WAREHOUSE_IDS"])
       .split("|")
       .map((item) => item.trim())
       .filter(Boolean);
+    const parsedWeightKg = parseProductWeightKg(row);
 
     return {
       sku: requiredString(barcode || name, "SKU"),
@@ -59,11 +60,11 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       section: requiredString(section, "Section"),
       category,
       unit: requiredString(unit, "Unit"),
-      defaultWeightKg: requiredNumber(readMapped(row, ["defaultWeightKg", "DEFAULT_WEIGHT_KG"], "0"), "Default weight"),
+      defaultWeightKg: parsedWeightKg,
       toleranceKg: requiredNumber(readMapped(row, ["toleranceKg", "TOLERANCE_KG"], "0"), "Tolerance kg"),
       tolerancePercent: requiredNumber(readMapped(row, ["tolerancePercent", "TOLERANCE_PERCENT"], "0"), "Tolerance percent"),
       allowedWarehouseIds: allowedWarehouseIds.length > 0 ? allowedWarehouseIds : defaultWarehouseIds,
-      slabs: slabsText ? parseCsvSlabs(slabsText) : [{ minQuantity: 1, purchaseRate: requiredNumber(rspText, "RSP") }],
+      slabs: [makeFutureBaseSlab(rspText)],
       remarks: readMapped(row, ["REMARKS"]),
       category6: readMapped(row, ["CATEGORY 6", "CAT-6"]),
       siteName: readMapped(row, ["SITE NAME", "MKT"]),
@@ -74,11 +75,68 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       itemName: readMapped(row, ["ITEM NAME"]),
       brand: readMapped(row, ["BRAND"]),
       shortName: readMapped(row, ["NAME"]),
-      size: readMapped(row, ["SIZE"]),
+      size: sizeText,
       rsp: Number(rspText || 0),
       mrp: Number(mrpText || 0)
     };
   });
+}
+
+function parseProductWeightKg(row: ImportRow) {
+  const explicitWeight = readMapped(row, ["defaultWeightKg", "DEFAULT_WEIGHT_KG", "WEIGHT_KG", "WEIGHT KG", "WEIGHT"]);
+  if (explicitWeight) {
+    const explicit = Number(explicitWeight);
+    if (!Number.isNaN(explicit) && explicit >= 0) return explicit;
+  }
+
+  const searchableText = [
+    readMapped(row, ["SIZE"]),
+    readMapped(row, ["NAME"]),
+    readMapped(row, ["ITEM NAME"]),
+    readMapped(row, ["ARTICLE_NAME"]),
+    readMapped(row, ["REMARKS"])
+  ].join(" ");
+
+  return inferWeightKg(searchableText);
+}
+
+function inferWeightKg(text: string) {
+  const normalized = text
+    .toUpperCase()
+    .replace(/×/g, "X")
+    .replace(/\bLTRS\b/g, "LTR")
+    .replace(/\bLITRES\b/g, "LITRE")
+    .replace(/\bGMS\b/g, "GM")
+    .replace(/\bGRAMS\b/g, "GRAM");
+
+  const packFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\b/);
+  if (packFirst) {
+    return Number(packFirst[1]) * convertToKg(Number(packFirst[2]), packFirst[3]);
+  }
+
+  const unitFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)/);
+  if (unitFirst) {
+    return convertToKg(Number(unitFirst[1]), unitFirst[2]) * Number(unitFirst[3]);
+  }
+
+  const single = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\b/);
+  if (single) {
+    return convertToKg(Number(single[1]), single[2]);
+  }
+
+  return 0;
+}
+
+function convertToKg(value: number, unit: string) {
+  if (["KG", "KGS", "KILOGRAM"].includes(unit)) return value;
+  if (["G", "GM", "GRAM"].includes(unit)) return value / 1000;
+  if (["LTR", "LITRE", "L"].includes(unit)) return value;
+  if (unit === "ML") return value / 1000;
+  return 0;
+}
+
+function makeFutureBaseSlab(rspText: string): ProductSlab {
+  return { minQuantity: 1, purchaseRate: requiredNumber(rspText || "0", "RSP") };
 }
 
 export function deriveRetailCategory(row: ImportRow) {
@@ -172,25 +230,6 @@ function requiredNumber(value: unknown, label: string) {
     throw new Error(`${label} must be a number.`);
   }
   return numberValue;
-}
-
-function parseCsvSlabs(value: string): ProductSlab[] {
-  return value
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const [rangeText, rateText] = item.split(":").map((part) => part.trim());
-      const purchaseRate = requiredNumber(rateText, "Slab rate");
-      if (rangeText.endsWith("+")) {
-        return {
-          minQuantity: requiredNumber(rangeText.replace("+", ""), "Slab min quantity"),
-          purchaseRate
-        };
-      }
-      const [minQuantity, maxQuantity] = rangeText.split("-").map((part) => requiredNumber(part, "Slab quantity"));
-      return { minQuantity, maxQuantity, purchaseRate };
-    });
 }
 
 export function isWorkbookFile(fileName: string) {
