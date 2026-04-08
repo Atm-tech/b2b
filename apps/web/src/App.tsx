@@ -14,7 +14,13 @@ import type {
 } from "@aapoorti-b2b/domain";
 import { userRoles } from "@aapoorti-b2b/domain";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || "http://localhost:8080";
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+const browserOriginFallback = typeof window !== "undefined" && window.location.hostname === "localhost"
+  ? "http://localhost:8080"
+  : typeof window !== "undefined"
+    ? window.location.origin
+    : "http://localhost:8080";
+const API_BASE = configuredApiBase || browserOriginFallback;
 const SESSION_KEY = "aapoorti-b2b-user";
 const TOKEN_KEY = "aapoorti-b2b-token";
 const api = axios.create({

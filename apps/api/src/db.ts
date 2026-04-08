@@ -200,35 +200,6 @@ function defaultPaymentMethods(): PaymentMethodSetting[] {
 }
 
 async function seedDatabase() {
-  const userCount = Number((await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM users"))?.count || "0");
-  if (userCount === 0) {
-    const createdAt = now();
-    const users = [
-      ["admin", "Platform Admin", "9990000001", "Admin", ["Admin"]],
-      ["w", "Warehouse Manager", "9990000002", "Warehouse Manager", ["Warehouse Manager"]],
-      ["p", "Purchase Manager", "9990000003", "Purchaser", ["Purchaser"]],
-      ["a", "Accounts Manager", "9990000004", "Accounts", ["Accounts"]],
-      ["s", "Sales Executive", "9990000005", "Sales", ["Sales"]]
-    ];
-    for (const [username, fullName, mobileNumber, role, rolesJson] of users) {
-      await query(
-        `INSERT INTO users (username, full_name, mobile_number, role, roles_json, password, active, created_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, TRUE, $7)`,
-        [username, fullName, mobileNumber, role, JSON.stringify(rolesJson), "1234", createdAt]
-      );
-    }
-  }
-
-  const warehouseCount = Number((await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM warehouses"))?.count || "0");
-  if (warehouseCount === 0) {
-    await query(
-      `INSERT INTO warehouses (id, name, city, address, type, created_at) VALUES
-       ('WH-NOI-01', 'Noida Main Warehouse', 'Noida', 'Sector 63, Noida', 'Warehouse', $1),
-       ('WH-GZB-02', 'Ghaziabad Bulk Yard', 'Ghaziabad', 'Industrial Belt', 'Yard', $1)`,
-      [now()]
-    );
-  }
-
   const settingsCount = Number((await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM settings"))?.count || "0");
   if (settingsCount === 0) {
     await query(
@@ -236,64 +207,6 @@ async function seedDatabase() {
       ["payment_methods", JSON.stringify(defaultPaymentMethods()), "delivery_charge", JSON.stringify({ model: "Fixed", amount: 350 })]
     );
   }
-
-  await syncConfiguredOrgData();
-}
-
-async function syncConfiguredOrgData() {
-  const setupVersion = "2026-04-04-user-warehouse-reset-v3";
-  const existing = await one<{ value_json: string }>("SELECT value_json::text AS value_json FROM settings WHERE key = $1", ["org_setup_version"]);
-  if (existing?.value_json === JSON.stringify(setupVersion)) {
-    return;
-  }
-
-  await withTransaction(async (client) => {
-    await query("DELETE FROM note_records", [], client);
-    await query("DELETE FROM delivery_tasks", [], client);
-    await query("DELETE FROM ledger_entries", [], client);
-    await query("DELETE FROM inventory_lots", [], client);
-    await query("DELETE FROM receipt_checks", [], client);
-    await query("DELETE FROM payments", [], client);
-    await query("DELETE FROM sales_orders", [], client);
-    await query("DELETE FROM purchase_orders", [], client);
-    await query("DELETE FROM counterparties", [], client);
-    await query("DELETE FROM sessions", [], client);
-    await query("DELETE FROM warehouses", [], client);
-    await query("DELETE FROM users", [], client);
-
-    const createdAt = now();
-    const users = [
-      ["admin", "Admin", "", "Admin", ["Admin"]],
-      ["p", "Amar Purchase", "7987046155", "Purchaser", ["Purchaser"]],
-      ["amas", "Amar Sales", "7987046155", "Sales", ["Sales"]],
-      ["aakash", "Aakash", "8719858248", "Accounts", ["Accounts"]],
-      ["aadarsh", "Aadarsh", "", "Warehouse Manager", ["Warehouse Manager"]],
-      ["delivery", "Delivery", "", "Delivery", ["Delivery"]]
-    ];
-    for (const [username, fullName, mobileNumber, role, rolesJson] of users) {
-      await query(
-        `INSERT INTO users (username, full_name, mobile_number, role, roles_json, password, active, created_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, TRUE, $7)`,
-        [username, fullName, mobileNumber, role, JSON.stringify(rolesJson), "1234", createdAt],
-        client
-      );
-    }
-
-    await query(
-      `INSERT INTO warehouses (id, name, city, address, type, created_at) VALUES
-       ('GOVINDPURA', 'Govindpura', 'Bhopal', 'Govindpura', 'Warehouse', $1),
-       ('C21', 'C21', 'Bhopal', 'C21', 'Warehouse', $1)`,
-      [createdAt],
-      client
-    );
-    await query("UPDATE products SET allowed_warehouse_ids_json = $1::jsonb", [JSON.stringify(["GOVINDPURA", "C21"])], client);
-    await query(
-      `INSERT INTO settings (key, value_json) VALUES ($1, $2::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json`,
-      ["org_setup_version", JSON.stringify(setupVersion)],
-      client
-    );
-  });
 }
 
 async function mapUsers(client?: DbClient): Promise<AppUser[]> {

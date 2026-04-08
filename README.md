@@ -90,6 +90,34 @@ NODE_ENV=production
 - set `VITE_API_BASE_URL` to the deployed backend URL
 - a sample Render Blueprint is included in [render.yaml](/d:/AAPOORTI/Managment%20system/Sales%20managment/render.yaml)
 - a sample Render env file is included in [.env.render.example](/d:/AAPOORTI/Managment%20system/Sales%20managment/.env.render.example)
+- a sample Vercel env file is included in [.env.vercel.example](/d:/AAPOORTI/Managment%20system/Sales%20managment/.env.vercel.example)
+
+### Render dashboard env
+
+Set these on the Render backend service:
+
+```bash
+NODE_ENV=production
+PORT=8080
+DATABASE_URL=<render-postgres-connection-string>
+UPLOADS_DIR=/var/data/uploads
+ALLOWED_ORIGINS=https://your-frontend.vercel.app
+REQUEST_BODY_LIMIT=2mb
+MAX_UPLOAD_BYTES=8388608
+```
+
+### Vercel dashboard env
+
+Set this on the Vercel frontend project:
+
+```bash
+VITE_API_BASE_URL=https://your-api.onrender.com
+```
+
+The frontend already reads `VITE_API_BASE_URL` directly at build time. If it is not set, it falls back to:
+
+- `http://localhost:8080` on localhost
+- current browser origin for same-origin hosting
 
 ## Local Postgres
 
