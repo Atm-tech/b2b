@@ -40,6 +40,7 @@ body {
   min-height: 100vh;
   font-size: var(--text-md);
   overflow-x: hidden;
+  touch-action: manipulation;
 }
 
 button,
@@ -171,6 +172,12 @@ th {
   border: 1px solid rgba(31, 41, 55, 0.12);
   background: white;
   font-size: var(--text-sm);
+}
+
+input,
+select,
+textarea {
+  font-size: max(16px, 1rem);
 }
 
 .app-shell {
@@ -1313,6 +1320,18 @@ th {
     padding: 16px;
   }
 
+  .form-shell input,
+  .form-grid input,
+  .form-grid select,
+  .form-grid textarea,
+  .cart-edit-grid input,
+  .cart-edit-grid select,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
   .app-topbar-copy strong,
   .hero-compact h1,
   .section-head h2 {
@@ -1424,6 +1443,18 @@ th {
   .flow-card,
   .cart-sheet {
     padding: 14px;
+  }
+
+  .form-shell input,
+  .form-grid input,
+  .form-grid select,
+  .form-grid textarea,
+  .cart-edit-grid input,
+  .cart-edit-grid select,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 
   .product-action-row {
