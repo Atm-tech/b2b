@@ -445,17 +445,17 @@ function App() {
       <main className="login-shell">
         <section className="login-card panel">
           <div className="login-copy">
-            <span className="eyebrow">Aapoorti B2B</span>
-            <h1>Aapoorti Operations Console</h1>
+            <span className="eyebrow">B2B Supply Management</span>
+            <h1>Operations Console</h1>
             <p>Manage supplier purchase, warehouse receipt, accounts settlement, sales dispatch, and delivery tracking.</p>
             <div className="credential-list">
-              <p>`admin` / `1234`</p>
-              <p>`p` / `1234`</p>
-              <p>`amas` / `1234`</p>
-              <p>`aakash` / `1234`</p>
-              <p>`gp` / `1234`</p>
-              <p>`c21` / `1234`</p>
-              <p>`delivery` / `1234`</p>
+              <p>Admin: `admin` / `1234`</p>
+              <p>Purchaser: `p` / `1234`</p>
+              <p>Sales: `s` / `1234`</p>
+              <p>Accounts: `a` / `1234`</p>
+              <p>Govindpura Warehouse: `gp` / `1234`</p>
+              <p>C21 Warehouse: `c21` / `1234`</p>
+              <p>Delivery: `d` / `1234`</p>
             </div>
           </div>
           <form className="form-shell" onSubmit={doLogin}>
