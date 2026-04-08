@@ -75,6 +75,9 @@ async function initializeDatabase() {
 
 async function ensureCompatibilityColumns() {
   await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS default_gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS default_tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS location_label TEXT;
@@ -82,10 +85,19 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
+    ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS cart_id TEXT;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cart_id TEXT;
+    ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS net_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS weighing_proof_name TEXT;
+    UPDATE receipt_checks SET net_weight_kg = actual_weight_kg - container_weight_kg WHERE net_weight_kg = 0;
+    ALTER TABLE delivery_dockets ADD COLUMN IF NOT EXISTS container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE delivery_dockets ADD COLUMN IF NOT EXISTS weighing_proof_name TEXT;
+    ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS route_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
     UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
@@ -141,6 +153,14 @@ async function one<T extends QueryResultRow>(text: string, params: unknown[] = [
 
 function now() {
   return new Date().toISOString();
+}
+
+function operationalDate(value?: string) {
+  const text = String(value || "").trim();
+  if (!text) return now();
+  const dateOnly = text.match(/^\d{4}-\d{2}-\d{2}$/) ? `${text}T12:00:00.000Z` : text;
+  const date = new Date(dateOnly);
+  return Number.isNaN(date.getTime()) ? now() : date.toISOString();
 }
 
 function makeId(prefix: string) {
@@ -206,56 +226,6 @@ async function seedDatabase() {
        ('WH-NOI-01', 'Noida Main Warehouse', 'Noida', 'Sector 63, Noida', 'Warehouse', $1),
        ('WH-GZB-02', 'Ghaziabad Bulk Yard', 'Ghaziabad', 'Industrial Belt', 'Yard', $1)`,
       [now()]
-    );
-  }
-
-  const productCount = Number((await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM products"))?.count || "0");
-  if (productCount === 0) {
-    await upsertProduct(
-      {
-        sku: "AAP-CEM-43",
-        name: "OPC Cement 43 Grade",
-        division: "Building Material",
-        department: "Cement",
-        section: "Grey Cement",
-        category: "Construction",
-        unit: "Bag",
-        defaultWeightKg: 50,
-        toleranceKg: 30,
-        tolerancePercent: 1.2,
-        allowedWarehouseIds: ["WH-NOI-01", "WH-GZB-02"],
-        slabs: [
-          { minQuantity: 50, maxQuantity: 199, purchaseRate: 348 },
-          { minQuantity: 200, maxQuantity: 499, purchaseRate: 341 },
-          { minQuantity: 500, purchaseRate: 336 }
-        ],
-        createdBy: "admin",
-        createdAt: now()
-      },
-      { id: 1, username: "admin", fullName: "Platform Admin", role: "Admin", roles: ["Admin"] }
-    );
-    await upsertProduct(
-      {
-        sku: "AAP-TMT-12",
-        name: "TMT Bar 12mm",
-        division: "Steel",
-        department: "Rebars",
-        section: "Primary Steel",
-        category: "Steel",
-        unit: "Ton",
-        defaultWeightKg: 1000,
-        toleranceKg: 60,
-        tolerancePercent: 0.8,
-        allowedWarehouseIds: ["WH-NOI-01", "WH-GZB-02"],
-        slabs: [
-          { minQuantity: 5, maxQuantity: 19, purchaseRate: 56400 },
-          { minQuantity: 20, maxQuantity: 49, purchaseRate: 55750 },
-          { minQuantity: 50, purchaseRate: 55100 }
-        ],
-        createdBy: "admin",
-        createdAt: now()
-      },
-      { id: 1, username: "admin", fullName: "Platform Admin", role: "Admin", roles: ["Admin"] }
     );
   }
 
@@ -334,6 +304,7 @@ async function mapUsers(client?: DbClient): Promise<AppUser[]> {
     fullName: stringValue(row.full_name),
     role: stringValue(row.role) as UserRole,
     roles: rolesFromRow(row),
+    warehouseIds: Array.isArray(row.warehouse_ids_json) ? (row.warehouse_ids_json as string[]) : [],
     mobileNumber: stringValue(row.mobile_number),
     active: Boolean(row.active),
     createdAt: isoValue(row.created_at)
@@ -362,6 +333,8 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
     section: stringValue(row.section_name),
     category: stringValue(row.category),
     unit: stringValue(row.unit),
+    defaultGstRate: stringValue(row.default_tax_mode) === "NA" ? "NA" : numberValue(row.default_gst_rate) as ProductMaster["defaultGstRate"],
+    defaultTaxMode: stringValue(row.default_tax_mode) as ProductMaster["defaultTaxMode"],
     defaultWeightKg: numberValue(row.default_weight_kg),
     toleranceKg: numberValue(row.tolerance_kg),
     tolerancePercent: numberValue(row.tolerance_percent),
@@ -426,6 +399,7 @@ async function mapPurchaseOrders(client?: DbClient): Promise<PurchaseOrder[]> {
   );
   return rows.rows.map((row) => ({
     id: stringValue(row.id),
+    cartId: row.cart_id ? stringValue(row.cart_id) : undefined,
     supplierId: stringValue(row.supplier_id),
     supplierName: stringValue(row.supplier_name),
     productSku: stringValue(row.product_sku),
@@ -436,7 +410,7 @@ async function mapPurchaseOrders(client?: DbClient): Promise<PurchaseOrder[]> {
     quantityReceived: numberValue(row.quantity_received),
     rate: numberValue(row.rate),
     taxableAmount: numberValue(row.taxable_amount),
-    gstRate: numberValue(row.gst_rate) as PurchaseOrder["gstRate"],
+    gstRate: stringValue(row.tax_mode) === "NA" ? "NA" : numberValue(row.gst_rate) as PurchaseOrder["gstRate"],
     gstAmount: numberValue(row.gst_amount),
     taxMode: stringValue(row.tax_mode) as PurchaseOrder["taxMode"],
     totalAmount: numberValue(row.total_amount),
@@ -462,6 +436,7 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
   );
   return rows.rows.map((row) => ({
     id: stringValue(row.id),
+    cartId: row.cart_id ? stringValue(row.cart_id) : undefined,
     shopId: stringValue(row.shop_id),
     shopName: stringValue(row.shop_name),
     productSku: stringValue(row.product_sku),
@@ -471,7 +446,7 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     quantity: numberValue(row.quantity),
     rate: numberValue(row.rate),
     taxableAmount: numberValue(row.taxable_amount),
-    gstRate: numberValue(row.gst_rate) as SalesOrder["gstRate"],
+    gstRate: stringValue(row.tax_mode) === "NA" ? "NA" : numberValue(row.gst_rate) as SalesOrder["gstRate"],
     gstAmount: numberValue(row.gst_amount),
     taxMode: stringValue(row.tax_mode) as SalesOrder["taxMode"],
     totalAmount: numberValue(row.total_amount),
@@ -526,6 +501,9 @@ async function mapReceiptChecks(client?: DbClient): Promise<ReceiptCheck[]> {
     receivedQuantity: numberValue(row.received_quantity),
     pendingQuantity: numberValue(row.pending_quantity),
     actualWeightKg: numberValue(row.actual_weight_kg),
+    containerWeightKg: numberValue(row.container_weight_kg),
+    netWeightKg: numberValue(row.net_weight_kg) || numberValue(row.actual_weight_kg) - numberValue(row.container_weight_kg),
+    weighingProofName: row.weighing_proof_name ? stringValue(row.weighing_proof_name) : undefined,
     expectedWeightKg: numberValue(row.expected_weight_kg),
     weightVarianceKg: numberValue(row.weight_variance_kg),
     partialReceipt: Boolean(row.partial_receipt),
@@ -580,6 +558,7 @@ async function mapDeliveryTasks(client?: DbClient): Promise<DeliveryTask[]> {
     pickupAt: row.pickup_at ? isoValue(row.pickup_at) : undefined,
     dropAt: row.drop_at ? isoValue(row.drop_at) : undefined,
     routeHint: row.route_hint ? stringValue(row.route_hint) : undefined,
+    routeStops: Array.isArray(row.route_json) ? (row.route_json as DeliveryTask["routeStops"]) : [],
     paymentAction: stringValue(row.payment_action) as DeliveryTask["paymentAction"],
     cashCollectionRequired: Boolean(row.cash_collection_required),
     cashHandoverMarked: Boolean(row.cash_handover_marked),
@@ -609,6 +588,8 @@ async function mapDeliveryDockets(client?: DbClient): Promise<DeliveryDocket[]> 
     warehouseId: stringValue(row.warehouse_id),
     quantity: numberValue(row.quantity),
     weightKg: numberValue(row.weight_kg),
+    containerWeightKg: numberValue(row.container_weight_kg),
+    weighingProofName: row.weighing_proof_name ? stringValue(row.weighing_proof_name) : undefined,
     consignmentId: row.consignment_id ? stringValue(row.consignment_id) : undefined,
     status: stringValue(row.status) as DeliveryDocket["status"],
     createdAt: isoValue(row.created_at)
@@ -661,7 +642,7 @@ function buildStockSummary(warehouses: Warehouse[], products: ProductMaster[], i
   );
 }
 
-async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, partyName: string, goodsValue: number, paidAmount: number, client?: DbClient) {
+async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, partyName: string, goodsValue: number, paidAmount: number, client?: DbClient, createdAt = now()) {
   const pendingAmount = Math.max(goodsValue - paidAmount, 0);
   const status = pendingAmount === 0 ? "Settled" : paidAmount > 0 ? "Partial" : "Pending";
   const existing = await one<{ id: string }>("SELECT id FROM ledger_entries WHERE side = $1 AND linked_order_id = $2", [side, linkedOrderId], client);
@@ -678,7 +659,7 @@ async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, p
   await query(
     `INSERT INTO ledger_entries (id, side, linked_order_id, party_name, goods_value, paid_amount, pending_amount, status, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [makeId("LED"), side, linkedOrderId, partyName, goodsValue, paidAmount, pendingAmount, status, now()],
+    [makeId("LED"), side, linkedOrderId, partyName, goodsValue, paidAmount, pendingAmount, status, createdAt],
     client
   );
 }
@@ -687,7 +668,7 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
   const payments = await one<{ paid: number }>(
     `SELECT COALESCE(SUM(amount), 0) AS paid
      FROM payments
-     WHERE side = $1 AND linked_order_id = $2 AND verification_status = 'Verified'`,
+     WHERE side = $1 AND linked_order_id = $2 AND verification_status IN ('Verified', 'Resolved')`,
     [side, linkedOrderId],
     client
   );
@@ -702,10 +683,26 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
       [linkedOrderId],
       client
     );
-    if (!order) return;
+    if (!order) {
+      const cart = await one<Record<string, unknown>>(
+        `SELECT po.cart_id, MIN(po.created_at) AS created_at, MAX(c.name) AS supplier_name,
+                SUM(po.total_amount) AS total_amount,
+                SUM(CASE WHEN po.quantity_ordered > 0 THEN po.total_amount * (po.quantity_received / po.quantity_ordered) ELSE 0 END) AS received_value
+         FROM purchase_orders po
+         JOIN counterparties c ON c.id = po.supplier_id
+         WHERE po.cart_id = $1
+         GROUP BY po.cart_id`,
+        [linkedOrderId],
+        client
+      );
+      if (!cart) return;
+      const goodsValue = paidAmount > 0 ? numberValue(cart.total_amount) : numberValue(cart.received_value);
+      await upsertLedger(side, linkedOrderId, stringValue(cart.supplier_name), goodsValue, paidAmount, client, isoValue(cart.created_at) || now());
+      return;
+    }
     const receivedRatio = numberValue(order.quantity_ordered) > 0 ? numberValue(order.quantity_received) / numberValue(order.quantity_ordered) : 0;
-    const goodsValue = numberValue(order.total_amount) * receivedRatio;
-    await upsertLedger(side, linkedOrderId, stringValue(order.supplier_name), goodsValue, paidAmount, client);
+    const goodsValue = paidAmount > 0 ? numberValue(order.total_amount) : numberValue(order.total_amount) * receivedRatio;
+    await upsertLedger(side, linkedOrderId, stringValue(order.supplier_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
     return;
   }
 
@@ -717,9 +714,23 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
     [linkedOrderId],
     client
   );
-  if (!order) return;
+  if (!order) {
+    const cart = await one<Record<string, unknown>>(
+      `SELECT so.cart_id, MIN(so.created_at) AS created_at, MAX(c.name) AS shop_name,
+              SUM(so.total_amount + so.delivery_charge) AS goods_value
+       FROM sales_orders so
+       JOIN counterparties c ON c.id = so.shop_id
+       WHERE so.cart_id = $1
+       GROUP BY so.cart_id`,
+      [linkedOrderId],
+      client
+    );
+    if (!cart) return;
+    await upsertLedger(side, linkedOrderId, stringValue(cart.shop_name), numberValue(cart.goods_value), paidAmount, client, isoValue(cart.created_at) || now());
+    return;
+  }
   const goodsValue = numberValue(order.total_amount) + numberValue(order.delivery_charge);
-  await upsertLedger(side, linkedOrderId, stringValue(order.shop_name), goodsValue, paidAmount, client);
+  await upsertLedger(side, linkedOrderId, stringValue(order.shop_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
 }
 
 async function updateCounterpartyLocation(counterpartyId: string, location: { latitude: number; longitude: number; label?: string }, client?: DbClient) {
@@ -747,7 +758,7 @@ function buildMetrics(snapshot: Omit<AppSnapshot, "metrics">): AppSnapshot["metr
   };
 }
 
-export async function getSnapshot(): Promise<AppSnapshot> {
+export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
   const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
     mapUsers(),
@@ -767,7 +778,7 @@ export async function getSnapshot(): Promise<AppSnapshot> {
     mapSettings()
   ]);
   const stockSummary = buildStockSummary(warehouses, products, inventoryLots);
-  const snapshotWithoutMetrics = {
+  let snapshotWithoutMetrics = {
     settings,
     users,
     warehouses,
@@ -785,6 +796,32 @@ export async function getSnapshot(): Promise<AppSnapshot> {
     deliveryConsignments,
     notes
   };
+  if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery"))) {
+    const scopedWarehouseIds = new Set(currentUser.warehouseIds);
+    const scopedPurchaseOrderIds = new Set(snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
+    const scopedSalesOrderIds = new Set(snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
+    const scopedCartIds = new Set([
+      ...snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.cartId).filter(Boolean) as string[],
+      ...snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.cartId).filter(Boolean) as string[]
+    ]);
+    const scopedDeliveryTaskIds = new Set(snapshotWithoutMetrics.deliveryTasks.filter((task) => task.assignedTo === currentUser.username || task.assignedTo === currentUser.fullName || task.routeStops.some((stop) => scopedWarehouseIds.has(stop.warehouseId))).map((task) => task.id));
+    snapshotWithoutMetrics = {
+      ...snapshotWithoutMetrics,
+      warehouses: snapshotWithoutMetrics.warehouses.filter((item) => scopedWarehouseIds.has(item.id)),
+      products: snapshotWithoutMetrics.products.filter((item) => item.allowedWarehouseIds.some((id) => scopedWarehouseIds.has(id))),
+      purchaseOrders: snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      salesOrders: snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      payments: snapshotWithoutMetrics.payments.filter((item) => scopedPurchaseOrderIds.has(item.linkedOrderId) || scopedSalesOrderIds.has(item.linkedOrderId) || scopedCartIds.has(item.linkedOrderId)),
+      receiptChecks: snapshotWithoutMetrics.receiptChecks.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      inventoryLots: snapshotWithoutMetrics.inventoryLots.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      stockSummary: snapshotWithoutMetrics.stockSummary.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      ledgerEntries: snapshotWithoutMetrics.ledgerEntries.filter((item) => scopedCartIds.has(item.linkedOrderId) || scopedPurchaseOrderIds.has(item.linkedOrderId) || scopedSalesOrderIds.has(item.linkedOrderId)),
+      deliveryTasks: snapshotWithoutMetrics.deliveryTasks.filter((item) => scopedDeliveryTaskIds.has(item.id)),
+      deliveryDockets: snapshotWithoutMetrics.deliveryDockets.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      deliveryConsignments: snapshotWithoutMetrics.deliveryConsignments.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      notes: snapshotWithoutMetrics.notes.filter((item) => scopedPurchaseOrderIds.has(item.entityId) || scopedSalesOrderIds.has(item.entityId) || scopedCartIds.has(item.entityId))
+    };
+  }
   return {
     metrics: buildMetrics(snapshotWithoutMetrics),
     ...snapshotWithoutMetrics
@@ -804,6 +841,7 @@ export async function authenticate(username: string, password: string) {
     fullName: stringValue(row.full_name),
     role: stringValue(row.role) as UserRole,
     roles: rolesFromRow(row),
+    warehouseIds: Array.isArray(row.warehouse_ids_json) ? (row.warehouse_ids_json as string[]) : [],
     mobileNumber: stringValue(row.mobile_number),
     active: Boolean(row.active),
     createdAt: isoValue(row.created_at)
@@ -833,6 +871,7 @@ export async function getUserBySessionToken(token: string) {
     fullName: stringValue(row.full_name),
     role: stringValue(row.role) as UserRole,
     roles: rolesFromRow(row),
+    warehouseIds: Array.isArray(row.warehouse_ids_json) ? (row.warehouse_ids_json as string[]) : [],
     mobileNumber: stringValue(row.mobile_number),
     active: Boolean(row.active),
     createdAt: isoValue(row.created_at)
@@ -844,13 +883,14 @@ export async function deleteSession(token: string) {
   await query("DELETE FROM sessions WHERE token = $1", [token]);
 }
 
-export async function createUser(payload: { username: string; fullName: string; mobileNumber: string; role?: UserRole; roles?: UserRole[]; password?: string }) {
+export async function createUser(payload: { username: string; fullName: string; mobileNumber: string; role?: UserRole; roles?: UserRole[]; password?: string; warehouseIds?: string[] }) {
   await ready;
   const roles = payload.roles && payload.roles.length > 0 ? payload.roles : [payload.role || "Purchaser"];
+  const warehouseIds = payload.warehouseIds || [];
   await query(
-    `INSERT INTO users (username, full_name, mobile_number, role, roles_json, password, active, created_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, TRUE, $7)`,
-    [payload.username.trim(), payload.fullName.trim(), payload.mobileNumber.trim(), roles[0], JSON.stringify(roles), payload.password?.trim() || "1234", now()]
+    `INSERT INTO users (username, full_name, mobile_number, role, roles_json, warehouse_ids_json, password, active, created_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, TRUE, $8)`,
+    [payload.username.trim(), payload.fullName.trim(), payload.mobileNumber.trim(), roles[0], JSON.stringify(roles), JSON.stringify(warehouseIds), payload.password?.trim() || "1234", now()]
   );
   return getSnapshot();
 }
@@ -867,15 +907,16 @@ export async function createWarehouse(payload: { id: string; name: string; city:
 }
 
 async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "createdAt"> & { createdBy: string; createdAt: string }, currentUser: CurrentUser) {
+  const allowedWarehouseIds = payload.allowedWarehouseIds.length > 0 ? payload.allowedWarehouseIds : await getDefaultWarehouseIds();
   await query(
     `INSERT INTO products (
-      sku, name, division, department, section_name, category, unit, default_weight_kg, tolerance_kg, tolerance_percent,
+      sku, name, division, department, section_name, category, unit, default_gst_rate, default_tax_mode, default_weight_kg, tolerance_kg, tolerance_percent,
       allowed_warehouse_ids_json, slabs_json, remarks, category_6, site_name, barcode, supplier_name, hsn_code,
       article_name, item_name, brand, short_name, size, rsp, mrp, created_by, created_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-      $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18,
-      $19, $20, $21, $22, $23, $24, $25, $26, $27
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+      $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20,
+      $21, $22, $23, $24, $25, $26, $27, $28, $29
     )
     ON CONFLICT (sku) DO UPDATE SET
       name = EXCLUDED.name,
@@ -884,6 +925,8 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       section_name = EXCLUDED.section_name,
       category = EXCLUDED.category,
       unit = EXCLUDED.unit,
+      default_gst_rate = EXCLUDED.default_gst_rate,
+      default_tax_mode = EXCLUDED.default_tax_mode,
       default_weight_kg = EXCLUDED.default_weight_kg,
       tolerance_kg = EXCLUDED.tolerance_kg,
       tolerance_percent = EXCLUDED.tolerance_percent,
@@ -911,10 +954,12 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       payload.section.trim(),
       payload.category.trim(),
       payload.unit.trim(),
+      payload.defaultGstRate === "NA" ? 0 : payload.defaultGstRate,
+      payload.defaultTaxMode,
       payload.defaultWeightKg,
       payload.toleranceKg,
       payload.tolerancePercent,
-      JSON.stringify(payload.allowedWarehouseIds),
+      JSON.stringify(allowedWarehouseIds),
       JSON.stringify(payload.slabs),
       payload.remarks?.trim() || "",
       payload.category6?.trim() || "",
@@ -935,28 +980,95 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
   );
 }
 
+async function getDefaultWarehouseIds() {
+  const warehouses = await query<{ id: string }>("SELECT id FROM warehouses ORDER BY id");
+  return warehouses.rows.map((warehouse) => warehouse.id);
+}
+
 export async function createProduct(payload: Omit<ProductMaster, "createdBy" | "createdAt">, currentUser: CurrentUser) {
   await ready;
+  await ensureProductNameUnique(payload.name, payload.sku);
   await upsertProduct({ ...payload, createdBy: currentUser.username, createdAt: now() }, currentUser);
+  return getSnapshot();
+}
+
+export async function updateProduct(sku: string, payload: Omit<ProductMaster, "sku" | "createdBy" | "createdAt">, currentUser: CurrentUser) {
+  await ready;
+  const existing = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [sku]);
+  if (!existing) throw new Error("Product not found.");
+  await ensureProductNameUnique(payload.name, sku);
+  await upsertProduct({ ...payload, sku, createdBy: currentUser.username, createdAt: isoValue(existing.created_at) || now() }, currentUser);
+  return getSnapshot();
+}
+
+export async function deleteProduct(sku: string) {
+  await ready;
+  const inPurchase = await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM purchase_orders WHERE product_sku = $1", [sku]);
+  const inSales = await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM sales_orders WHERE product_sku = $1", [sku]);
+  const inInventory = await one<{ count: string }>("SELECT COUNT(*)::text AS count FROM inventory_lots WHERE product_sku = $1", [sku]);
+  if (Number(inPurchase?.count || 0) > 0 || Number(inSales?.count || 0) > 0 || Number(inInventory?.count || 0) > 0) {
+    throw new Error("Product is linked to orders or inventory and cannot be deleted.");
+  }
+  await query("DELETE FROM products WHERE sku = $1", [sku]);
   return getSnapshot();
 }
 
 export async function bulkCreateProducts(rows: Array<Omit<ProductMaster, "createdBy" | "createdAt">>, currentUser: CurrentUser) {
   await ready;
   for (const row of rows) {
+    await ensureProductNameUnique(row.name, row.sku);
     await upsertProduct({ ...row, createdBy: currentUser.username, createdAt: now() }, currentUser);
   }
   return getSnapshot();
 }
 
+async function ensureProductNameUnique(name: string, sku: string) {
+  const duplicate = await one<{ sku: string }>(
+    `SELECT sku FROM products
+     WHERE UPPER(REGEXP_REPLACE(name, '\\s+', ' ', 'g')) = UPPER(REGEXP_REPLACE($1, '\\s+', ' ', 'g'))
+       AND sku <> $2
+     LIMIT 1`,
+    [name.trim(), sku.trim()]
+  );
+  if (duplicate) throw new Error(`Product name already exists under SKU ${duplicate.sku}.`);
+}
+
 export async function createCounterparty(payload: Omit<Counterparty, "id" | "createdBy" | "createdAt">, currentUser: CurrentUser) {
   await ready;
+  const name = payload.name.trim();
+  const gstNumber = payload.gstNumber.trim();
+  validateCounterpartyIdentity(name, gstNumber);
+  await ensureCounterpartyUnique(payload.type, name, gstNumber);
   await query(
     `INSERT INTO counterparties (id, type, name, gst_number, mobile_number, address, city, contact_person, latitude, longitude, location_label, created_by, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, payload.name.trim(), payload.gstNumber.trim(), payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
+    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
   );
   return getSnapshot();
+}
+
+function validateCounterpartyIdentity(name: string, gstNumber: string) {
+  if (!name) throw new Error("Name is required.");
+  if (!gstNumber) throw new Error("GST number is required. Use N/A for non-GST parties.");
+}
+
+function isNaGst(gstNumber: string) {
+  return gstNumber.trim().toUpperCase() === "N/A";
+}
+
+async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, excludeId?: string) {
+  const duplicateName = await one<{ id: string }>(
+    `SELECT id FROM counterparties WHERE type = $1 AND LOWER(name) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
+    [type, name, excludeId || null]
+  );
+  if (duplicateName) throw new Error(`${type} name already exists.`);
+  if (!isNaGst(gstNumber)) {
+    const duplicateGst = await one<{ id: string }>(
+      `SELECT id FROM counterparties WHERE type = $1 AND LOWER(gst_number) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
+      [type, gstNumber, excludeId || null]
+    );
+    if (duplicateGst) throw new Error(`${type} GST number already exists. Only N/A can be reused.`);
+  }
 }
 
 export async function updateSettings(payload: { paymentMethods: PaymentMethodSetting[]; deliveryCharge: { model: "Fixed" | "Per Km"; amount: number } }) {
@@ -970,6 +1082,8 @@ export async function updateSettings(payload: { paymentMethods: PaymentMethodSet
 }
 
 export async function createPurchaseOrder(payload: {
+  cartId?: string;
+  skipFinancials?: boolean;
   supplierId: string;
   productSku: string;
   warehouseId: string;
@@ -985,18 +1099,22 @@ export async function createPurchaseOrder(payload: {
   cashTiming?: PurchaseOrder["cashTiming"];
   note: string;
   location?: { latitude: number; longitude: number; label?: string };
+  operationDate?: string;
+  advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
   await ready;
   const product = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [payload.productSku]);
   if (!product) throw new Error("Product not found.");
   const baseAmount = payload.quantityOrdered * payload.rate;
   const taxableAmount = payload.taxableAmount ?? baseAmount;
-  const gstRate = payload.gstRate ?? 0;
-  const gstAmount = payload.gstAmount ?? 0;
-  const taxMode = payload.taxMode || "Exclusive";
+  const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
+  const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
+  const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
+  const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
   const totalAmount = taxableAmount + gstAmount;
   const expectedWeightKg = payload.quantityOrdered * numberValue(product.default_weight_kg);
   const id = makeId("PO");
+  const createdAt = operationalDate(payload.operationDate);
   const rateAlertNote =
     typeof payload.previousRate === "number" && payload.previousRate > 0 && payload.rate > payload.previousRate
       ? `Rate alert: entered purchase rate ${payload.rate} is higher than last purchase rate ${payload.previousRate} for ${payload.productSku}. Confirmed by ${currentUser.fullName}.`
@@ -1009,27 +1127,56 @@ export async function createPurchaseOrder(payload: {
     }
     await query(
       `INSERT INTO purchase_orders (
-        id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount,
+        id, cart_id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount,
         expected_weight_kg, delivery_mode, payment_mode, cash_timing, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-      [id, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, combinedNote, "Pending Payment", now()],
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      [id, payload.cartId || null, payload.supplierId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantityOrdered, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, expectedWeightKg, payload.deliveryMode, payload.paymentMode, payload.cashTiming || null, combinedNote, "Order Placed - Pending Delivery", createdAt],
       client
     );
     if (rateAlertNote) {
       await query(
         `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [makeId("NOTE"), "Purchase Order", id, rateAlertNote, currentUser.fullName, "Operational", now()],
+        [makeId("NOTE"), "Purchase Order", id, rateAlertNote, currentUser.fullName, "Operational", createdAt],
         client
       );
     }
-    await recalculateLedger("Purchase", id, client);
+    if (!payload.skipFinancials) {
+      await insertAdvancePayment("Purchase", id, payload.advancePayment, currentUser, createdAt, client);
+      await recalculateLedger("Purchase", id, client);
+    }
   });
 
   return getSnapshot();
 }
 
+export async function createPurchaseCart(payload: Omit<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate" | "advancePayment"> & {
+  lines: Array<Pick<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate">>;
+  advancePayment?: AdvancePaymentPayload;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
+  const cartId = makeId("PCART");
+  const createdAt = operationalDate(payload.operationDate);
+  for (const [index, line] of payload.lines.entries()) {
+    await createPurchaseOrder({
+      ...payload,
+      ...line,
+      cartId,
+      advancePayment: index === 0 ? payload.advancePayment : undefined,
+      skipFinancials: true
+    }, currentUser);
+  }
+  await withTransaction(async (client) => {
+    await insertAdvancePayment("Purchase", cartId, payload.advancePayment, currentUser, createdAt, client);
+    await recalculateLedger("Purchase", cartId, client);
+  });
+  return getSnapshot();
+}
+
 export async function createSalesOrder(payload: {
+  cartId?: string;
+  skipFinancials?: boolean;
   shopId: string;
   productSku: string;
   warehouseId: string;
@@ -1048,10 +1195,13 @@ export async function createSalesOrder(payload: {
   deliveryMode: SalesOrder["deliveryMode"];
   note: string;
   location?: { latitude: number; longitude: number; label?: string };
+  operationDate?: string;
+  advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
   await ready;
   const settings = await mapSettings();
   const id = makeId("SO");
+  const createdAt = operationalDate(payload.operationDate);
   const needsPriceApproval = Boolean(payload.priceApprovalRequested) && typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
   const priceApprovalNote = needsPriceApproval
     ? `Admin approval requested: sales rate ${payload.rate} is below last purchase price ${payload.minimumAllowedRate} for ${payload.productSku}. Requested by ${currentUser.fullName}.`
@@ -1078,17 +1228,18 @@ export async function createSalesOrder(payload: {
     const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
-    const gstRate = payload.gstRate ?? 0;
-    const gstAmount = payload.gstAmount ?? 0;
-    const taxMode = payload.taxMode || "Exclusive";
+  const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
+  const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
+  const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
+  const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
     const totalAmount = taxableAmount + gstAmount;
     const docketWeightKg = numberValue(product?.default_weight_kg) * payload.quantity;
     await query(
       `INSERT INTO sales_orders (
-        id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+        id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-      [id, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), ...approvalNotes].filter(Boolean).join(" | "), needsApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), now()],
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), ...approvalNotes].filter(Boolean).join(" | "), needsApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), createdAt],
       client
     );
     if (needsApproval) {
@@ -1096,22 +1247,56 @@ export async function createSalesOrder(payload: {
         await query(
           `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
            VALUES ($1, 'Sales Order', $2, $3, $4, 'Management', $5)`,
-          [makeId("NOTE"), id, approvalNote, currentUser.fullName, now()],
+          [makeId("NOTE"), id, approvalNote, currentUser.fullName, createdAt],
           client
         );
+      }
+      if (!payload.skipFinancials) {
+        await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
+        await recalculateLedger("Sales", id, client);
       }
       return;
     }
     await query(
       `INSERT INTO delivery_dockets (id, sales_order_id, shop_id, product_sku, warehouse_id, quantity, weight_kg, consignment_id, status, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9)`,
-      [makeId("DCK"), id, payload.shopId, payload.productSku, payload.warehouseId, payload.quantity, docketWeightKg, payload.deliveryMode === "Delivery" ? "Pending Packing" : "Ready", now()],
+      [makeId("DCK"), id, payload.shopId, payload.productSku, payload.warehouseId, payload.quantity, docketWeightKg, payload.deliveryMode === "Delivery" ? "Pending Packing" : "Ready", createdAt],
       client
     );
+    if (!payload.skipFinancials) {
+      await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
+    }
     await reserveInventory(payload.warehouseId, payload.productSku, payload.quantity, client);
-    await recalculateLedger("Sales", id, client);
+    if (!payload.skipFinancials) {
+      await recalculateLedger("Sales", id, client);
+    }
   });
 
+  return getSnapshot();
+}
+
+export async function createSalesCart(payload: Omit<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "advancePayment"> & {
+  lines: Array<Pick<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "note">>;
+  advancePayment?: AdvancePaymentPayload;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
+  const cartId = makeId("SCART");
+  const createdAt = operationalDate(payload.operationDate);
+  for (const [index, line] of payload.lines.entries()) {
+    await createSalesOrder({
+      ...payload,
+      ...line,
+      cartId,
+      note: line.note || payload.note,
+      advancePayment: index === 0 ? payload.advancePayment : undefined,
+      skipFinancials: true
+    }, currentUser);
+  }
+  await withTransaction(async (client) => {
+    await insertAdvancePayment("Sales", cartId, payload.advancePayment, currentUser, createdAt, client);
+    await recalculateLedger("Sales", cartId, client);
+  });
   return getSnapshot();
 }
 
@@ -1139,6 +1324,43 @@ async function reserveInventory(warehouseId: string, productSku: string, quantit
   }
 }
 
+type AdvancePaymentPayload = {
+  amount: number;
+  mode: PaymentMode;
+  cashTiming?: PaymentRecord["cashTiming"];
+  referenceNumber?: string;
+  voucherNumber?: string;
+  utrNumber?: string;
+  proofName?: string;
+  verificationNote?: string;
+};
+
+async function insertAdvancePayment(side: "Purchase" | "Sales", linkedOrderId: string, payment: AdvancePaymentPayload | undefined, currentUser: CurrentUser, createdAt: string, client: DbClient) {
+  if (!payment || payment.amount <= 0) return;
+  await query(
+    `INSERT INTO payments (
+      id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+      proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Submitted', $11, $12, NULL, $13, $13)`,
+    [
+      makeId("PAY"),
+      side,
+      linkedOrderId,
+      payment.amount,
+      payment.mode,
+      payment.cashTiming || null,
+      payment.referenceNumber?.trim() || "",
+      payment.voucherNumber?.trim() || null,
+      payment.utrNumber?.trim() || null,
+      payment.proofName?.trim() || null,
+      payment.verificationNote?.trim() || (side === "Purchase" ? "Advance given at order finalization." : "Advance taken at order finalization."),
+      currentUser.fullName,
+      createdAt
+    ],
+    client
+  );
+}
+
 export async function createPayment(payload: {
   side: "Purchase" | "Sales";
   linkedOrderId: string;
@@ -1149,11 +1371,13 @@ export async function createPayment(payload: {
   voucherNumber?: string;
   utrNumber?: string;
   proofName?: string;
-  verificationStatus: PaymentRecord["verificationStatus"];
+  verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
   verificationNote?: string;
+  operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
-  const submittedAt = payload.verificationStatus === "Submitted" ? now() : null;
+  const createdAt = operationalDate(payload.operationDate);
+  const submittedAt = payload.verificationStatus === "Submitted" || payload.verificationStatus === "Disputed" ? createdAt : null;
   await withTransaction(async (client) => {
     await query(
       `INSERT INTO payments (
@@ -1175,19 +1399,19 @@ export async function createPayment(payload: {
         payload.verificationNote?.trim() || "",
         currentUser.fullName,
         payload.verificationStatus === "Verified" ? currentUser.fullName : null,
-        now(),
+        createdAt,
         submittedAt
       ],
       client
     );
-    if (payload.verificationStatus === "Verified") {
+    if (payload.verificationStatus !== "Rejected") {
       await recalculateLedger(payload.side, payload.linkedOrderId, client);
     }
   });
   return getSnapshot();
 }
 
-export async function verifyPayment(paymentId: string, status: PaymentRecord["verificationStatus"], note: string, currentUser: CurrentUser) {
+export async function verifyPayment(paymentId: string, status: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved", note: string, currentUser: CurrentUser) {
   await ready;
   return withTransaction(async (client) => {
     const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId], client);
@@ -1200,9 +1424,7 @@ export async function verifyPayment(paymentId: string, status: PaymentRecord["ve
       [status, note.trim(), currentUser.fullName, paymentId],
       client
     );
-    if (status === "Verified") {
-      await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id), client);
-    }
+    await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id), client);
     return getSnapshot();
   });
 }
@@ -1212,11 +1434,16 @@ export async function createReceiptCheck(payload: {
   warehouseId: string;
   receivedQuantity: number;
   actualWeightKg: number;
+  containerWeightKg?: number;
+  weighingProofName?: string;
+  cashProofName?: string;
   note: string;
   confirmPartial: boolean;
+  operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
   return withTransaction(async (client) => {
+    const createdAt = operationalDate(payload.operationDate);
     const order = await one<Record<string, unknown>>("SELECT * FROM purchase_orders WHERE id = $1", [payload.purchaseOrderId], client);
     if (!order) throw new Error("Purchase order not found.");
     const product = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [stringValue(order.product_sku)], client);
@@ -1230,18 +1457,20 @@ export async function createReceiptCheck(payload: {
     if (partialReceipt && !payload.confirmPartial) {
       throw new Error("Confirm partial receipt before saving.");
     }
+    const containerWeightKg = Math.max(payload.containerWeightKg || 0, 0);
+    const netWeightKg = Math.max(payload.actualWeightKg - containerWeightKg, 0);
     const expectedWeightKg = payload.receivedQuantity * numberValue(product.default_weight_kg);
     const toleranceByPercent = (expectedWeightKg * numberValue(product.tolerance_percent)) / 100;
     const allowedVariance = Math.max(numberValue(product.tolerance_kg), toleranceByPercent);
-    const weightVarianceKg = payload.actualWeightKg - expectedWeightKg;
+    const weightVarianceKg = netWeightKg - expectedWeightKg;
     const flagged = Math.abs(weightVarianceKg) > allowedVariance || partialReceipt;
 
     await query(
       `INSERT INTO receipt_checks (
         grc_number, purchase_order_id, warehouse_id, receiver_id, ordered_quantity, received_quantity, pending_quantity,
-        actual_weight_kg, expected_weight_kg, weight_variance_kg, partial_receipt, flagged, notes_json, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)`,
-      [makeId("GRC"), payload.purchaseOrderId, payload.warehouseId, currentUser.id, orderedQuantity, payload.receivedQuantity, pendingQuantity, payload.actualWeightKg, expectedWeightKg, weightVarianceKg, partialReceipt, flagged, JSON.stringify([payload.note.trim()]), now()],
+        actual_weight_kg, container_weight_kg, net_weight_kg, weighing_proof_name, expected_weight_kg, weight_variance_kg, partial_receipt, flagged, notes_json, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17)`,
+      [makeId("GRC"), payload.purchaseOrderId, payload.warehouseId, currentUser.id, orderedQuantity, payload.receivedQuantity, pendingQuantity, payload.actualWeightKg, containerWeightKg, netWeightKg, payload.weighingProofName?.trim() || null, expectedWeightKg, weightVarianceKg, partialReceipt, flagged, JSON.stringify([payload.note.trim()]), createdAt],
       client
     );
 
@@ -1254,10 +1483,63 @@ export async function createReceiptCheck(payload: {
       `INSERT INTO inventory_lots (
         lot_id, source_order_id, source_type, warehouse_id, product_sku, quantity_available, quantity_reserved, quantity_blocked, status, created_at
       ) VALUES ($1, $2, 'Purchase', $3, $4, $5, 0, $6, $7, $8)`,
-      [makeId("LOT"), payload.purchaseOrderId, payload.warehouseId, stringValue(order.product_sku), flagged ? 0 : payload.receivedQuantity, flagged ? payload.receivedQuantity : 0, flagged ? "Blocked" : "Available", now()],
+      [makeId("LOT"), payload.purchaseOrderId, payload.warehouseId, stringValue(order.product_sku), flagged ? 0 : payload.receivedQuantity, flagged ? payload.receivedQuantity : 0, flagged ? "Blocked" : "Available", createdAt],
       client
     );
-    await recalculateLedger("Purchase", payload.purchaseOrderId, client);
+    const linkedOrderId = stringValue(order.cart_id) || payload.purchaseOrderId;
+    if (
+      stringValue(order.delivery_mode) === "Dealer Delivery" &&
+      stringValue(order.payment_mode) === "Cash" &&
+      stringValue(order.cash_timing) === "At Delivery" &&
+      payload.cashProofName?.trim()
+    ) {
+      const existingPayment = await one<Record<string, unknown>>(
+        `SELECT * FROM payments
+         WHERE side = 'Purchase' AND linked_order_id = $1 AND mode = 'Cash'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [linkedOrderId],
+        client
+      );
+      if (existingPayment) {
+        await query(
+          `UPDATE payments
+           SET verification_status = 'Verified',
+               verification_note = $1,
+               proof_name = COALESCE($2, proof_name),
+               reference_number = CASE WHEN TRIM(COALESCE(reference_number, '')) = '' THEN $3 ELSE reference_number END,
+               verified_by = $4
+           WHERE id = $5`,
+          [
+            `Cash paid on vendor delivery and confirmed by warehouse receiver ${currentUser.fullName}.`,
+            payload.cashProofName.trim(),
+            `CASH-${linkedOrderId}`,
+            currentUser.fullName,
+            stringValue(existingPayment.id)
+          ],
+          client
+        );
+      } else {
+        await query(
+          `INSERT INTO payments (
+            id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+            proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
+          ) VALUES ($1, 'Purchase', $2, $3, 'Cash', 'At Delivery', $4, NULL, NULL, $5, 'Verified', $6, $7, $7, $8, $8)`,
+          [
+            makeId("PAY"),
+            linkedOrderId,
+            numberValue(order.total_amount),
+            `CASH-${linkedOrderId}`,
+            payload.cashProofName.trim(),
+            `Cash paid on vendor delivery and confirmed by warehouse receiver ${currentUser.fullName}.`,
+            currentUser.fullName,
+            createdAt
+          ],
+          client
+        );
+      }
+    }
+    await recalculateLedger("Purchase", linkedOrderId, client);
     return getSnapshot();
   });
 }
@@ -1270,6 +1552,7 @@ export async function createDeliveryTask(payload: {
   from: string;
   to: string;
   assignedTo: string;
+  routeStops?: DeliveryTask["routeStops"];
   pickupAt?: string;
   dropAt?: string;
   routeHint?: string;
@@ -1280,36 +1563,52 @@ export async function createDeliveryTask(payload: {
   cashProofName?: string;
   lastActionAt?: string;
   status: DeliveryTask["status"];
+  operationDate?: string;
 }) {
   await ready;
-  await query(
-    `INSERT INTO delivery_tasks (
-      id, side, linked_order_id, linked_order_ids_json, mode, source_location, destination_location, assigned_to,
-      pickup_at, drop_at, route_hint, payment_action, cash_collection_required, cash_handover_marked,
-      weight_proof_name, cash_proof_name, last_action_at, status, created_at
-    ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-    [
-      makeId("DL"),
-      payload.side,
-      payload.linkedOrderId.trim(),
-      JSON.stringify(payload.linkedOrderIds && payload.linkedOrderIds.length > 0 ? payload.linkedOrderIds : [payload.linkedOrderId.trim()]),
-      payload.mode,
-      payload.from.trim(),
-      payload.to.trim(),
-      payload.assignedTo.trim(),
-      payload.pickupAt || null,
-      payload.dropAt || null,
-      payload.routeHint?.trim() || null,
-      payload.paymentAction || "None",
-      payload.cashCollectionRequired,
-      payload.cashHandoverMarked || false,
-      payload.weightProofName?.trim() || null,
-      payload.cashProofName?.trim() || null,
-      payload.lastActionAt || null,
-      payload.status,
-      now()
-    ]
-  );
+  const createdAt = operationalDate(payload.operationDate);
+  const linkedOrderIds = payload.linkedOrderIds && payload.linkedOrderIds.length > 0 ? payload.linkedOrderIds : [payload.linkedOrderId.trim()];
+  await withTransaction(async (client) => {
+    await query(
+      `INSERT INTO delivery_tasks (
+        id, side, linked_order_id, linked_order_ids_json, mode, source_location, destination_location, assigned_to,
+        pickup_at, drop_at, route_hint, route_json, payment_action, cash_collection_required, cash_handover_marked,
+        weight_proof_name, cash_proof_name, last_action_at, status, created_at
+      ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      [
+        makeId("DL"),
+        payload.side,
+        payload.linkedOrderId.trim(),
+        JSON.stringify(linkedOrderIds),
+        payload.mode,
+        payload.from.trim(),
+        payload.to.trim(),
+        payload.assignedTo.trim(),
+        payload.pickupAt || null,
+        payload.dropAt || null,
+        payload.routeHint?.trim() || null,
+        JSON.stringify(payload.routeStops || []),
+        payload.paymentAction || "None",
+        payload.cashCollectionRequired,
+        payload.cashHandoverMarked || false,
+        payload.weightProofName?.trim() || null,
+        payload.cashProofName?.trim() || null,
+        payload.lastActionAt || null,
+        payload.status,
+        createdAt
+      ],
+      client
+    );
+    if (payload.side === "Purchase") {
+      await query(
+        `UPDATE purchase_orders
+         SET status = 'Pickup Assigned'
+         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+    }
+  });
   return getSnapshot();
 }
 
@@ -1318,6 +1617,7 @@ export async function createDeliveryConsignment(payload: {
   warehouseId: string;
   assignedTo: string;
   status?: DeliveryConsignment["status"];
+  operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
   const docketIds = payload.docketIds.map((item) => item.trim()).filter(Boolean);
@@ -1331,11 +1631,12 @@ export async function createDeliveryConsignment(payload: {
   if (mismatchedWarehouse) throw new Error("All dockets must belong to the selected warehouse.");
   const totalWeightKg = dockets.rows.reduce((sum, row) => sum + numberValue(row.weight_kg), 0);
   const id = makeId("CON");
+  const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
     await query(
       `INSERT INTO delivery_consignments (id, docket_ids_json, warehouse_id, assigned_to, total_weight_kg, status, created_by, created_at)
        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)`,
-      [id, JSON.stringify(docketIds), payload.warehouseId, payload.assignedTo.trim(), totalWeightKg, payload.status || "Ready", currentUser.fullName, now()],
+      [id, JSON.stringify(docketIds), payload.warehouseId, payload.assignedTo.trim(), totalWeightKg, payload.status || "Ready", currentUser.fullName, createdAt],
       client
     );
     await query(
@@ -1354,12 +1655,14 @@ export async function createNote(payload: {
   entityId: string;
   note: string;
   visibility: NoteRecord["visibility"];
+  operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
+  const createdAt = operationalDate(payload.operationDate);
   await query(
     `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [makeId("NOTE"), payload.entityType, payload.entityId.trim(), payload.note.trim(), currentUser.fullName, payload.visibility, now()]
+    [makeId("NOTE"), payload.entityType, payload.entityId.trim(), payload.note.trim(), currentUser.fullName, payload.visibility, createdAt]
   );
   return getSnapshot();
 }
@@ -1373,11 +1676,17 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   contactPerson: string;
 }) {
   await ready;
+  const existing = await one<Record<string, unknown>>("SELECT * FROM counterparties WHERE id = $1", [counterpartyId]);
+  if (!existing) throw new Error("Party not found.");
+  const name = payload.name.trim();
+  const gstNumber = payload.gstNumber.trim();
+  validateCounterpartyIdentity(name, gstNumber);
+  await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, counterpartyId);
   await query(
     `UPDATE counterparties
      SET name = $1, gst_number = $2, mobile_number = $3, address = $4, city = $5, contact_person = $6
      WHERE id = $7`,
-    [payload.name.trim(), payload.gstNumber.trim(), payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), counterpartyId]
+    [name, gstNumber, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), counterpartyId]
   );
   return getSnapshot();
 }
@@ -1401,7 +1710,7 @@ export async function updatePurchaseOrder(orderId: string, payload: {
      WHERE id = $8`,
     [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, payload.note.trim(), payload.status, orderId]
   );
-  await recalculateLedger("Purchase", orderId);
+  await recalculateLedger("Purchase", stringValue(order.cart_id) || orderId);
   return getSnapshot();
 }
 
@@ -1412,6 +1721,8 @@ export async function updateSalesOrder(orderId: string, payload: {
   deliveryMode: SalesOrder["deliveryMode"];
   note: string;
   status: SalesOrder["status"];
+  containerWeightKg?: number;
+  weighingProofName?: string;
 }) {
   await ready;
   const order = await one<Record<string, unknown>>("SELECT * FROM sales_orders WHERE id = $1", [orderId]);
@@ -1426,7 +1737,16 @@ export async function updateSalesOrder(orderId: string, payload: {
      WHERE id = $9`,
     [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId]
   );
-  await recalculateLedger("Sales", orderId);
+  if (payload.containerWeightKg !== undefined || payload.weighingProofName) {
+    await query(
+      `UPDATE delivery_dockets
+       SET container_weight_kg = COALESCE($1, container_weight_kg),
+           weighing_proof_name = COALESCE($2, weighing_proof_name)
+       WHERE sales_order_id = $3`,
+      [payload.containerWeightKg ?? null, payload.weighingProofName?.trim() || null, orderId]
+    );
+  }
+  await recalculateLedger("Sales", stringValue(order.cart_id) || orderId);
   return getSnapshot();
 }
 
@@ -1436,12 +1756,14 @@ export async function updatePayment(paymentId: string, payload: {
   voucherNumber?: string;
   utrNumber?: string;
   proofName?: string;
-  verificationStatus: PaymentRecord["verificationStatus"];
+  verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
   verificationNote: string;
+  operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
   const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId]);
   if (!payment) throw new Error("Payment not found.");
+  const submittedAt = payload.operationDate ? operationalDate(payload.operationDate) : now();
   await query(
     `UPDATE payments
      SET amount = $1, reference_number = $2, voucher_number = $3, utr_number = $4, proof_name = $5, verification_status = $6,
@@ -1455,8 +1777,8 @@ export async function updatePayment(paymentId: string, payload: {
       payload.proofName?.trim() || null,
       payload.verificationStatus,
       payload.verificationNote.trim(),
-      payload.verificationStatus === "Verified" ? currentUser.fullName : null,
-      payload.verificationStatus === "Submitted" ? now() : null,
+      payload.verificationStatus === "Verified" || payload.verificationStatus === "Resolved" ? currentUser.fullName : null,
+      payload.verificationStatus === "Submitted" || payload.verificationStatus === "Disputed" ? submittedAt : null,
       paymentId
     ]
   );
@@ -1482,6 +1804,7 @@ export async function updateReceiptCheck(grcNumber: string, payload: {
 export async function updateDeliveryTask(taskId: string, payload: {
   linkedOrderIds?: string[];
   assignedTo: string;
+  routeStops?: DeliveryTask["routeStops"];
   pickupAt?: string;
   dropAt?: string;
   routeHint?: string;
@@ -1494,26 +1817,87 @@ export async function updateDeliveryTask(taskId: string, payload: {
   lastActionAt?: string;
 }) {
   await ready;
-  await query(
-    `UPDATE delivery_tasks
-     SET linked_order_ids_json = $1::jsonb, assigned_to = $2, pickup_at = $3, drop_at = $4, route_hint = $5, payment_action = $6,
-         status = $7, cash_collection_required = $8, cash_handover_marked = $9, weight_proof_name = $10, cash_proof_name = $11, last_action_at = $12
-     WHERE id = $13`,
-    [
-      JSON.stringify(payload.linkedOrderIds || []),
-      payload.assignedTo.trim(),
-      payload.pickupAt || null,
-      payload.dropAt || null,
-      payload.routeHint?.trim() || null,
-      payload.paymentAction || "None",
-      payload.status,
-      payload.cashCollectionRequired,
-      payload.cashHandoverMarked || false,
-      payload.weightProofName?.trim() || null,
-      payload.cashProofName?.trim() || null,
-      payload.lastActionAt || now(),
-      taskId
-    ]
-  );
+  await withTransaction(async (client) => {
+    const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1", [taskId], client);
+    if (!task) throw new Error("Delivery task not found.");
+    await query(
+      `UPDATE delivery_tasks
+       SET linked_order_ids_json = $1::jsonb, assigned_to = $2, pickup_at = $3, drop_at = $4, route_hint = $5, route_json = $6::jsonb, payment_action = $7,
+           status = $8, cash_collection_required = $9, cash_handover_marked = $10, weight_proof_name = $11, cash_proof_name = $12, last_action_at = $13
+       WHERE id = $14`,
+      [
+        JSON.stringify(payload.linkedOrderIds || []),
+        payload.assignedTo.trim(),
+        payload.pickupAt || null,
+        payload.dropAt || null,
+        payload.routeHint?.trim() || null,
+        JSON.stringify(payload.routeStops || []),
+        payload.paymentAction || "None",
+        payload.status,
+        payload.cashCollectionRequired,
+        payload.cashHandoverMarked || false,
+        payload.weightProofName?.trim() || null,
+        payload.cashProofName?.trim() || null,
+        payload.lastActionAt || now(),
+        taskId
+      ],
+      client
+    );
+    const side = stringValue(task.side) as DeliveryTask["side"];
+    const linkedOrderId = stringValue(task.linked_order_id);
+    const linkedOrderIds = payload.linkedOrderIds || (Array.isArray(task.linked_order_ids_json) ? (task.linked_order_ids_json as string[]) : [linkedOrderId]);
+    if (side === "Purchase") {
+      const purchaseStatus =
+        payload.status === "Delivered"
+          ? "Order Delivered - Warehouse Check"
+          : payload.status === "Handed Over"
+            ? "Order Delivered - Warehouse Check"
+            : payload.status === "Picked"
+              ? "In Pickup"
+              : "Pickup Assigned";
+      await query(
+        `UPDATE purchase_orders
+         SET status = $1
+         WHERE cart_id = ANY($2::text[]) OR id = ANY($2::text[])`,
+        [purchaseStatus, linkedOrderIds],
+        client
+      );
+    }
+    if (
+      side === "Purchase" &&
+      (payload.paymentAction || stringValue(task.payment_action) as DeliveryTask["paymentAction"]) === "Deliver Payment" &&
+      payload.status === "Delivered" &&
+      payload.cashHandoverMarked &&
+      payload.cashProofName
+    ) {
+      const payment = await one<Record<string, unknown>>(
+        `SELECT * FROM payments
+         WHERE side = 'Purchase' AND linked_order_id = $1 AND mode = 'Cash'
+           AND verification_status IN ('Pending', 'Submitted', 'Disputed', 'Rejected')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [linkedOrderId],
+        client
+      );
+      if (payment) {
+        await query(
+          `UPDATE payments
+           SET verification_status = 'Verified',
+               verification_note = $1,
+               proof_name = COALESCE($2, proof_name),
+               verified_by = $3
+           WHERE id = $4`,
+          [
+            `Cash delivered to supplier by ${payload.assignedTo.trim()} and proof uploaded.`,
+            payload.cashProofName.trim(),
+            payload.assignedTo.trim(),
+            stringValue(payment.id)
+          ],
+          client
+        );
+        await recalculateLedger("Purchase", linkedOrderId, client);
+      }
+    }
+  });
   return getSnapshot();
 }

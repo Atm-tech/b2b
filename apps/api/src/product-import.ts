@@ -35,14 +35,20 @@ export function parseWorkbookRows(filePath: string, defaultWarehouseIds: string[
 }
 
 function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<Omit<ProductMaster, "createdBy" | "createdAt">> {
-  return rows.map((row) => {
+  const seen = new Set<string>();
+  const products: Array<Omit<ProductMaster, "createdBy" | "createdAt">> = [];
+  for (const row of rows) {
     const barcode = readMapped(row, ["sku", "SKU", "BARCODE"]);
     const name = readMapped(row, ["name", "NAME", "ITEM NAME", "ARTICLE_NAME"]);
+    if (!name.trim()) continue;
+    const normalizedName = normalizeProductName(name);
+    if (seen.has(normalizedName)) continue;
+    seen.add(normalizedName);
     const division = readMapped(row, ["division", "DIVISION"], "General");
     const department = readMapped(row, ["department", "DEPARTMENT"], "General");
     const section = readMapped(row, ["section", "SECTION"], "General");
-    const sizeText = readMapped(row, ["SIZE"]);
-    const unit = inferUnit(readMapped(row, ["unit", "UNIT", "SIZE"], "Unit"));
+    const sizeText = readMapped(row, ["size", "SIZE"]) || extractSizeText(name);
+    const unit = inferUnit(readMapped(row, ["unit", "UNIT", "size", "SIZE"]) || name);
     const rspText = readMapped(row, ["rsp", "RSP"], "0");
     const mrpText = readMapped(row, ["mrp", "MRP"], "0");
     const category = deriveRetailCategory(row);
@@ -52,14 +58,16 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       .filter(Boolean);
     const parsedWeightKg = parseProductWeightKg(row);
 
-    return {
-      sku: requiredString(barcode || name, "SKU"),
+    products.push({
+      sku: requiredString(barcode || makeSkuFromName(name), "SKU"),
       name: requiredString(name, "Product name"),
       division: requiredString(division, "Division"),
       department: requiredString(department, "Department"),
       section: requiredString(section, "Section"),
       category,
       unit: requiredString(unit, "Unit"),
+      defaultGstRate: 0,
+      defaultTaxMode: "Exclusive",
       defaultWeightKg: parsedWeightKg,
       toleranceKg: requiredNumber(readMapped(row, ["toleranceKg", "TOLERANCE_KG"], "0"), "Tolerance kg"),
       tolerancePercent: requiredNumber(readMapped(row, ["tolerancePercent", "TOLERANCE_PERCENT"], "0"), "Tolerance percent"),
@@ -78,8 +86,9 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       size: sizeText,
       rsp: Number(rspText || 0),
       mrp: Number(mrpText || 0)
-    };
-  });
+    });
+  }
+  return products;
 }
 
 function parseProductWeightKg(row: ImportRow) {
@@ -90,11 +99,11 @@ function parseProductWeightKg(row: ImportRow) {
   }
 
   const searchableText = [
-    readMapped(row, ["SIZE"]),
-    readMapped(row, ["NAME"]),
-    readMapped(row, ["ITEM NAME"]),
-    readMapped(row, ["ARTICLE_NAME"]),
-    readMapped(row, ["REMARKS"])
+    readMapped(row, ["size", "SIZE"]),
+    readMapped(row, ["name", "NAME"]),
+    readMapped(row, ["itemName", "ITEM NAME"]),
+    readMapped(row, ["articleName", "ARTICLE_NAME"]),
+    readMapped(row, ["remarks", "REMARKS"])
   ].join(" ");
 
   return inferWeightKg(searchableText);
@@ -106,20 +115,31 @@ function inferWeightKg(text: string) {
     .replace(/×/g, "X")
     .replace(/\bLTRS\b/g, "LTR")
     .replace(/\bLITRES\b/g, "LITRE")
+    .replace(/\bLTS\b/g, "LT")
     .replace(/\bGMS\b/g, "GM")
     .replace(/\bGRAMS\b/g, "GRAM");
 
-  const packFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\b/);
+  const freePack = normalized.match(/(\d+)\s*\+\s*(\d+)\s*(?:X|\*)?\s*(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
+  if (freePack) {
+    return (Number(freePack[1]) + Number(freePack[2])) * convertToKg(Number(freePack[3]), freePack[4]);
+  }
+
+  const groupedFreePack = normalized.match(/\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*(?:X|\*)\s*(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
+  if (groupedFreePack) {
+    return (Number(groupedFreePack[1]) + Number(groupedFreePack[2])) * convertToKg(Number(groupedFreePack[3]), groupedFreePack[4]);
+  }
+
+  const packFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
   if (packFirst) {
     return Number(packFirst[1]) * convertToKg(Number(packFirst[2]), packFirst[3]);
   }
 
-  const unitFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)/);
+  const unitFirst = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\s*(?:X|\*)\s*(\d+(?:\.\d+)?)/);
   if (unitFirst) {
     return convertToKg(Number(unitFirst[1]), unitFirst[2]) * Number(unitFirst[3]);
   }
 
-  const single = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|L|ML)\b/);
+  const single = normalized.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
   if (single) {
     return convertToKg(Number(single[1]), single[2]);
   }
@@ -130,7 +150,7 @@ function inferWeightKg(text: string) {
 function convertToKg(value: number, unit: string) {
   if (["KG", "KGS", "KILOGRAM"].includes(unit)) return value;
   if (["G", "GM", "GRAM"].includes(unit)) return value / 1000;
-  if (["LTR", "LITRE", "L"].includes(unit)) return value;
+  if (["LTR", "LITRE", "LT", "L"].includes(unit)) return value;
   if (unit === "ML") return value / 1000;
   return 0;
 }
@@ -140,28 +160,21 @@ function makeFutureBaseSlab(rspText: string): ProductSlab {
 }
 
 export function deriveRetailCategory(row: ImportRow) {
-  const category6 = readMapped(row, ["CATEGORY 6", "CAT-6"]).toUpperCase();
-  const division = readMapped(row, ["DIVISION"]).toUpperCase();
-  const section = readMapped(row, ["SECTION"]).toUpperCase();
-  const department = readMapped(row, ["DEPARTMENT"]).toUpperCase();
+  const category6 = readMapped(row, ["category6", "CATEGORY 6", "CAT-6"]).toUpperCase();
+  const division = readMapped(row, ["division", "DIVISION"]).toUpperCase();
+  const section = readMapped(row, ["section", "SECTION"]).toUpperCase();
+  const department = readMapped(row, ["department", "DEPARTMENT"]).toUpperCase();
   const raw = [
     category6,
     division,
     section,
     department,
-    readMapped(row, ["ARTICLE_NAME"]),
-    readMapped(row, ["ITEM NAME"]),
-    readMapped(row, ["NAME"]),
-    readMapped(row, ["BRAND"]),
-    readMapped(row, ["REMARKS"])
+    readMapped(row, ["articleName", "ARTICLE_NAME"]),
+    readMapped(row, ["itemName", "ITEM NAME"]),
+    readMapped(row, ["name", "NAME"]),
+    readMapped(row, ["brand", "BRAND"]),
+    readMapped(row, ["remarks", "REMARKS"])
   ].join(" ").toUpperCase();
-
-  if (division.includes("HOUSEHOLD") || division.includes("ELECTRONICS") || division.includes("FMCG-NON FOOD")) {
-    if (matchesAny(raw, ["TOY", "SOFT TOY", "KIDS"])) return "Toys & Kids Essentials";
-    if (matchesAny(raw, ["CROCKERY", "CUP SET", "BOTTLE SET", "BOTTLE", "KITCHEN", "INDUCTION", "APPLIANCES"])) return "Kitchen & Appliances";
-    if (matchesAny(raw, ["BED SHEET", "PARDA", "CARPET", "TOWEL", "HOME FURNISHING"])) return "Home Furnishing";
-    if (matchesAny(raw, ["TOOLS", "PLASTIC GOODS", "HOME CARE", "BULB", "HOUSEHOLD"])) return "Household Essentials";
-  }
 
   if (matchesAny(division, ["MENS", "LADIES", "GIRLS", "KIDS"])) {
     if (matchesAny(raw, ["FOOTMART", "SHOE", "CHAPPAL", "SANDLE", "SANDAL", "CROCS"])) return "Footwear";
@@ -174,10 +187,21 @@ export function deriveRetailCategory(row: ImportRow) {
   }
 
   if (matchesAny(raw, ["SWEET", "PAPADI", "NAMKEEN", "BISCUIT", "COOKIE", "SNACK"])) return "Snacks & Sweets";
-  if (matchesAny(raw, ["DRINK", "BEVRAGE", "BEVERAGE", "TEA", "COFFEE", "JUICE", "COLD DRINK"])) return "Tea, Coffee & Beverages";
+  if (matchesAny(raw, ["WATER BOTTLE", "PACKAGED WATER", "DRINKING WATER"])) return "Packaged Water";
+  if (matchesAny(raw, ["COCA COLA", "COCA-COLA", "FANTA", "FENTA", "SPRITE", "THUMS UP", "THUMP UP", "LIMCA", "APPY FIZZ", "COLD DRINK", "SOFT DRINK"])) return "Cold Beverages";
+  if (matchesAny(raw, ["MAAZA", "MANGO DRINK", "LITCHI DRINK", "JUICE"])) return "Juices & Fruit Drinks";
+  if (matchesAny(raw, ["DRINK", "BEVRAGE", "BEVERAGE", "TEA", "COFFEE"])) return "Tea, Coffee & Beverages";
   if (matchesAny(raw, ["DRY FRUIT", "CASHEW", "ALMOND", "PISTA", "ELAICHEE"])) return "Dry Fruits & Nuts";
+  if (matchesAny(raw, ["SUGAR", "ATTA", "FLOUR", "RICE", "PULSE", "DAL", "POHA", "BASMATI", "DUBRAJ", "CHINNOR"])) return "Staples & Grains";
   if (matchesAny(raw, ["GHEE", "SOYA", "MUSTURED", "MUSTARD", "REFINED", "OIL", "COOKING MEDIUM"])) return "Oils & Ghee";
-  if (matchesAny(raw, ["ATTA", "FLOUR", "RICE", "PULSE", "DAL", "POHA", "SUGAR", "BASMATI", "DUBRAJ", "CHINNOR"])) return "Staples & Grains";
+  if (matchesAny(raw, ["FIAMA", "SOAP", "BATHING BAR"])) return "Bathing Bars & Soaps";
+  if (matchesAny(raw, ["RIN", "SURF EXCEL", "GHADI", "DETERGENT", "LAUNDRY", "WASHING POWDER"])) return "Laundry & Detergents";
+  if (division.includes("HOUSEHOLD") || division.includes("ELECTRONICS") || division.includes("FMCG-NON FOOD")) {
+    if (matchesAny(raw, ["TOY", "SOFT TOY", "KIDS"])) return "Toys & Kids Essentials";
+    if (matchesAny(raw, ["CROCKERY", "CUP SET", "BOTTLE SET", "KITCHEN", "INDUCTION", "APPLIANCES"])) return "Kitchen & Appliances";
+    if (matchesAny(raw, ["BED SHEET", "PARDA", "CARPET", "TOWEL", "HOME FURNISHING"])) return "Home Furnishing";
+    if (matchesAny(raw, ["TOOLS", "PLASTIC GOODS", "HOME CARE", "BULB", "HOUSEHOLD"])) return "Household Essentials";
+  }
   if (matchesAny(raw, ["ELECTRONICS"])) return "Electronics";
   if (matchesAny(raw, ["FMCG", "PACKING"])) return "Grocery & Staples";
   if (matchesAny(raw, ["MENS", "LADIES", "GIRLS", "KIDS"])) return "Apparel";
@@ -192,11 +216,42 @@ function inferUnit(value: string) {
   const clean = value.trim();
   if (!clean) return "Unit";
   const upper = clean.toUpperCase();
-  if (upper.includes("KG")) return "Kg";
-  if (upper.includes("GM") || upper.includes("G ")) return "Gram";
-  if (upper.includes("LTR") || upper.includes("L ")) return "Litre";
-  if (upper.includes("ML")) return "Ml";
+  if (/\d\s*KGS?\b|\bKGS?\b|\bKILOGRAM\b/.test(upper)) return "Kg";
+  if (/\d\s*ML\b|\bML\b/.test(upper)) return "Ml";
+  if (/\d\s*(?:LTR|LT|L)\b|\bLTR\b|\bLITRE\b|\bLT\b/.test(upper)) return "Litre";
+  if (/\d\s*(?:G|GM)\b|\bGM\b|\bGRAM\b/.test(upper)) return "Gram";
   return clean;
+}
+
+function extractSizeText(name: string) {
+  const normalized = name.toUpperCase().replace(/\bLTR\b/g, "LT").replace(/\bLITRE\b/g, "LT");
+  const freePack = normalized.match(/\(?\s*\d+\s*\+\s*\d+\s*\)?\s*(?:X|\*)?\s*\d+(?:\.\d+)?\s*(?:KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
+  if (freePack) return freePack[0];
+  const pack = normalized.match(/\d+(?:\.\d+)?\s*(?:X|\*)\s*\d+(?:\.\d+)?\s*(?:KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
+  if (pack) return pack[0];
+  const single = normalized.match(/\d+(?:\.\d+)?\s*(?:KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML)\b/);
+  return single ? single[0] : "";
+}
+
+function normalizeProductName(name: string) {
+  return name.toUpperCase()
+    .replace(/\bTHUMP\s+UP\b/g, "THUMS UP")
+    .replace(/\bFENTA\b/g, "FANTA")
+    .replace(/\bLTS\b/g, "LT")
+    .replace(/\bLTR\b/g, "LT")
+    .replace(/\bLITRE\b/g, "LT")
+    .replace(/\bGRAMS\b/g, "G")
+    .replace(/\bGMS\b/g, "GM")
+    .replace(/[^\w.+*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function makeSkuFromName(name: string) {
+  return normalizeProductName(name)
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
 }
 
 function normalizeWorkbookValue(value: unknown) {

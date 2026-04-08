@@ -7,6 +7,7 @@ export type AppUser = {
   fullName: string;
   role: UserRole;
   roles: UserRole[];
+  warehouseIds: string[];
   mobileNumber: string;
   active: boolean;
   createdAt: string;
@@ -35,6 +36,8 @@ export type ProductMaster = {
   section: string;
   category: string;
   unit: string;
+  defaultGstRate: GstRate;
+  defaultTaxMode: TaxMode;
   defaultWeightKg: number;
   toleranceKg: number;
   tolerancePercent: number;
@@ -77,7 +80,7 @@ export type Counterparty = {
 
 export type PaymentMode = "Cash" | "Card" | "UPI" | "NEFT" | "RTGS" | "Cheque";
 export type CashTiming = "In Hand" | "At Delivery";
-export type VerificationStatus = "Pending" | "Submitted" | "Verified" | "Rejected";
+export type VerificationStatus = "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
 
 export type PaymentMethodSetting = {
   code: PaymentMode;
@@ -96,8 +99,15 @@ export type PlatformSettings = {
   deliveryCharge: DeliveryChargeSetting;
 };
 
+export type GstRate = "NA" | 0 | 5 | 18;
+export type TaxMode = "NA" | "Exclusive" | "Inclusive";
+
 export type PurchaseStatus =
   | "Draft"
+  | "Order Placed - Pending Delivery"
+  | "Pickup Assigned"
+  | "In Pickup"
+  | "Order Delivered - Warehouse Check"
   | "Pending Payment"
   | "Ready for Dispatch"
   | "In Transit"
@@ -107,6 +117,7 @@ export type PurchaseStatus =
 
 export type PurchaseOrder = {
   id: string;
+  cartId?: string;
   supplierId: string;
   supplierName: string;
   productSku: string;
@@ -117,9 +128,9 @@ export type PurchaseOrder = {
   quantityReceived: number;
   rate: number;
   taxableAmount: number;
-  gstRate: 0 | 5 | 18;
+  gstRate: GstRate;
   gstAmount: number;
-  taxMode: "Exclusive" | "Inclusive";
+  taxMode: TaxMode;
   totalAmount: number;
   expectedWeightKg: number;
   deliveryMode: "Dealer Delivery" | "Self Collection";
@@ -134,6 +145,7 @@ export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Out for D
 
 export type SalesOrder = {
   id: string;
+  cartId?: string;
   shopId: string;
   shopName: string;
   productSku: string;
@@ -143,9 +155,9 @@ export type SalesOrder = {
   quantity: number;
   rate: number;
   taxableAmount: number;
-  gstRate: 0 | 5 | 18;
+  gstRate: GstRate;
   gstAmount: number;
-  taxMode: "Exclusive" | "Inclusive";
+  taxMode: TaxMode;
   totalAmount: number;
   paymentMode: PaymentMode;
   cashTiming?: CashTiming;
@@ -165,6 +177,8 @@ export type DeliveryDocket = {
   warehouseId: string;
   quantity: number;
   weightKg: number;
+  containerWeightKg: number;
+  weighingProofName?: string;
   consignmentId?: string;
   status: "Pending Packing" | "Ready" | "Tagged" | "Out for Delivery" | "Delivered";
   createdAt: string;
@@ -210,6 +224,9 @@ export type ReceiptCheck = {
   receivedQuantity: number;
   pendingQuantity: number;
   actualWeightKg: number;
+  containerWeightKg: number;
+  netWeightKg: number;
+  weighingProofName?: string;
   expectedWeightKg: number;
   weightVarianceKg: number;
   partialReceipt: boolean;
@@ -243,6 +260,23 @@ export type LedgerEntry = {
   createdAt: string;
 };
 
+export type DeliveryRouteStop = {
+  orderId: string;
+  supplierId?: string;
+  supplierName: string;
+  productSummary: string;
+  warehouseId: string;
+  warehouseName: string;
+  amountToPay: number;
+  paymentRequired: boolean;
+  latitude?: number;
+  longitude?: number;
+  locationLabel?: string;
+  reached: boolean;
+  paid: boolean;
+  picked: boolean;
+};
+
 export type DeliveryTask = {
   id: string;
   side: "Purchase" | "Sales";
@@ -255,6 +289,7 @@ export type DeliveryTask = {
   pickupAt?: string;
   dropAt?: string;
   routeHint?: string;
+  routeStops: DeliveryRouteStop[];
   paymentAction: "None" | "Collect Payment" | "Deliver Payment";
   cashCollectionRequired: boolean;
   cashHandoverMarked: boolean;

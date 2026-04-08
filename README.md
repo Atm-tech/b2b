@@ -52,7 +52,7 @@ Copy `.env.example` and set:
 
 - `NODE_ENV`
 - `PORT`
-- `DATABASE_PATH`
+- `DATABASE_URL`
 - `UPLOADS_DIR`
 - `ALLOWED_ORIGINS`
 - `REQUEST_BODY_LIMIT`
@@ -61,9 +61,9 @@ Copy `.env.example` and set:
 
 ## Deployment Notes
 
-- SQLite runs from `apps/api/data/aapoorti-b2b-v2.sqlite`
-- in production set `DATABASE_PATH` to a persistent disk path
-- in production set `UPLOADS_DIR` to a persistent disk path
+- This app now uses PostgreSQL, not SQLite.
+- In production, point `DATABASE_URL` to your Render Postgres instance.
+- In production set `UPLOADS_DIR` to a persistent disk path.
 - backend serves uploaded payment and delivery proof files from `/uploads/...`
 - for Render backend use:
 
@@ -77,17 +77,19 @@ start command:
 npm run start -w apps/api
 ```
 
-- recommended Render env for persistent local database:
+- recommended Render env:
 
 ```bash
-DATABASE_PATH=/var/data/aapoorti-b2b.sqlite
+DATABASE_URL=<render-postgres-connection-string>
 UPLOADS_DIR=/var/data/uploads
 ALLOWED_ORIGINS=https://your-frontend.example.com
 NODE_ENV=production
 ```
 
-- for Vercel frontend set `Root Directory` to `apps/web`
+- frontend can be deployed on Render static hosting or Vercel
 - set `VITE_API_BASE_URL` to the deployed backend URL
+- a sample Render Blueprint is included in [render.yaml](/d:/AAPOORTI/Managment%20system/Sales%20managment/render.yaml)
+- a sample Render env file is included in [.env.render.example](/d:/AAPOORTI/Managment%20system/Sales%20managment/.env.render.example)
 
 ## Local Postgres
 

@@ -3,7 +3,7 @@ import express from "express";
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import multer from "multer";
-import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, UserRole, Warehouse } from "@aapoorti-b2b/domain";
+import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, ProductMaster, UserRole, Warehouse } from "@aapoorti-b2b/domain";
 import {
   authenticate,
   bulkCreateProducts,
@@ -14,18 +14,22 @@ import {
   createNote,
   createPayment,
   createProduct,
+  createPurchaseCart,
   createPurchaseOrder,
   createReceiptCheck,
+  createSalesCart,
   createSalesOrder,
   createUser,
   createWarehouse,
   databasePath,
+  deleteProduct,
   deleteSession,
   getSnapshot,
   getUserBySessionToken,
   updateCounterparty,
   updateDeliveryTask,
   updatePayment,
+  updateProduct,
   updatePurchaseOrder,
   updateReceiptCheck,
   updateSalesOrder,
@@ -41,6 +45,7 @@ const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.resolve(process.
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");
+const receiptDir = path.join(uploadsDir, "receipt-proofs");
 const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "2mb";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -50,11 +55,12 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
 mkdirSync(csvDir, { recursive: true });
 mkdirSync(paymentDir, { recursive: true });
 mkdirSync(deliveryDir, { recursive: true });
+mkdirSync(receiptDir, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, file, cb) => {
-      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : paymentDir);
+      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : file.fieldname === "receiptProof" ? receiptDir : paymentDir);
     },
     filename: (_req, file, cb) => {
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -120,7 +126,7 @@ app.post("/auth/login", async (req, res) => {
     return;
   }
   const token = await createSessionForUser(user.id);
-  res.json({ user, token, snapshot: await getSnapshot() });
+  res.json({ user, token, snapshot: await getSnapshot(user) });
 });
 
 app.post("/auth/logout", async (req, res) => wrap(res, async () => {
@@ -133,8 +139,8 @@ app.post("/auth/logout", async (req, res) => wrap(res, async () => {
 
 app.get("/snapshot", async (req, res) => {
   try {
-    await getCurrentUser(req);
-    res.json(await getSnapshot());
+    const currentUser = await getCurrentUser(req);
+    res.json(await getSnapshot(currentUser));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unauthorized.";
     res.status(401).json({ message });
@@ -150,6 +156,7 @@ app.post("/users", async (req, res) => wrap(res, async () => {
     mobileNumber: requiredString(req.body?.mobileNumber, "Mobile number"),
     role: roles[0] || (requiredString(req.body?.role, "Role") as UserRole),
     roles,
+    warehouseIds: Array.isArray(req.body?.warehouseIds) ? req.body.warehouseIds.map((item: unknown) => String(item)) : [],
     password: optionalString(req.body?.password)
   });
 }));
@@ -176,6 +183,8 @@ app.post("/products", async (req, res) => wrap(res, async () => {
       section: requiredString(req.body?.section, "Section"),
       category: requiredString(req.body?.category, "Category"),
       unit: requiredString(req.body?.unit, "Unit"),
+      defaultGstRate: parseOptionalGstRate(req.body?.defaultGstRate) ?? 0,
+      defaultTaxMode: (optionalString(req.body?.defaultTaxMode) || (String(req.body?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
       defaultWeightKg: requiredNumber(req.body?.defaultWeightKg, "Default weight"),
       toleranceKg: requiredNumber(req.body?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(req.body?.tolerancePercent, "Tolerance percent"),
@@ -184,6 +193,36 @@ app.post("/products", async (req, res) => wrap(res, async () => {
     },
     currentUser
   );
+}));
+
+app.patch("/products/:sku", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin"]);
+  return updateProduct(
+    req.params.sku,
+    {
+      name: requiredString(req.body?.name, "Product name"),
+      division: requiredString(req.body?.division, "Division"),
+      department: requiredString(req.body?.department, "Department"),
+      section: requiredString(req.body?.section, "Section"),
+      category: requiredString(req.body?.category, "Category"),
+      unit: requiredString(req.body?.unit, "Unit"),
+      defaultGstRate: parseOptionalGstRate(req.body?.defaultGstRate) ?? 0,
+      defaultTaxMode: (optionalString(req.body?.defaultTaxMode) || (String(req.body?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
+      defaultWeightKg: requiredNumber(req.body?.defaultWeightKg, "Default weight"),
+      toleranceKg: requiredNumber(req.body?.toleranceKg, "Tolerance kg"),
+      tolerancePercent: requiredNumber(req.body?.tolerancePercent, "Tolerance percent"),
+      allowedWarehouseIds: requiredStringArray(req.body?.allowedWarehouseIds, "Allowed warehouses"),
+      slabs: normalizeSlabs(req.body?.slabs, optionalNumber(req.body?.rsp) ?? 0),
+      rsp: optionalNumber(req.body?.rsp),
+      mrp: optionalNumber(req.body?.mrp)
+    },
+    currentUser
+  );
+}));
+
+app.delete("/products/:sku", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
+  return deleteProduct(req.params.sku);
 }));
 
 app.post("/products/bulk", async (req, res) => wrap(res, async () => {
@@ -201,6 +240,8 @@ app.post("/products/bulk", async (req, res) => wrap(res, async () => {
       section: requiredString(row?.section, "Section"),
       category: requiredString(row?.category, "Category"),
       unit: requiredString(row?.unit, "Unit"),
+      defaultGstRate: parseOptionalGstRate(row?.defaultGstRate) ?? 0,
+      defaultTaxMode: (optionalString(row?.defaultTaxMode) || (String(row?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
       defaultWeightKg: requiredNumber(row?.defaultWeightKg, "Default weight"),
       toleranceKg: requiredNumber(row?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(row?.tolerancePercent, "Tolerance percent"),
@@ -229,7 +270,7 @@ app.post("/counterparties", async (req, res) => wrap(res, async () => {
     {
       type: requiredString(req.body?.type, "Type") as CounterpartyType,
       name: requiredString(req.body?.name, "Name"),
-      gstNumber: optionalString(req.body?.gstNumber) || "",
+      gstNumber: requiredString(req.body?.gstNumber, "GST number"),
       mobileNumber: requiredString(req.body?.mobileNumber, "Mobile number"),
       address: requiredString(req.body?.address, "Address"),
       city: requiredString(req.body?.city, "City"),
@@ -246,7 +287,7 @@ app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Purchaser", "Sales"]);
   return updateCounterparty(req.params.id, {
     name: requiredString(req.body?.name, "Name"),
-    gstNumber: optionalString(req.body?.gstNumber) || "",
+    gstNumber: requiredString(req.body?.gstNumber, "GST number"),
     mobileNumber: requiredString(req.body?.mobileNumber, "Mobile number"),
     address: requiredString(req.body?.address, "Address"),
     city: requiredString(req.body?.city, "City"),
@@ -281,18 +322,46 @@ app.post("/purchase-orders", async (req, res) => wrap(res, async () => {
       quantityOrdered: requiredNumber(req.body?.quantityOrdered, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
       taxableAmount: optionalNumber(req.body?.taxableAmount),
-      gstRate: optionalNumber(req.body?.gstRate) as 0 | 5 | 18 | undefined,
+      gstRate: parseOptionalGstRate(req.body?.gstRate),
       gstAmount: optionalNumber(req.body?.gstAmount),
-      taxMode: optionalString(req.body?.taxMode) as "Exclusive" | "Inclusive" | undefined,
+      taxMode: optionalString(req.body?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
       previousRate: typeof req.body?.previousRate === "number" ? req.body.previousRate : undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       note: optionalString(req.body?.note) || "",
-      location: parseOptionalLocation(req.body?.location)
+      location: parseOptionalLocation(req.body?.location),
+      operationDate: optionalString(req.body?.operationDate),
+      advancePayment: parseOptionalAdvancePayment(req.body?.advancePayment)
     },
     currentUser
   );
+}));
+
+app.post("/purchase-orders/cart", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Purchaser"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    productSku: requiredString(line?.productSku, "Product"),
+    quantityOrdered: requiredNumber(line?.quantityOrdered ?? line?.quantity, "Quantity"),
+    rate: requiredNumber(line?.rate, "Rate"),
+    taxableAmount: optionalNumber(line?.taxableAmount),
+    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 18 | "NA" | undefined,
+    gstAmount: optionalNumber(line?.gstAmount),
+    taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
+    previousRate: typeof line?.previousRate === "number" ? line.previousRate : optionalNumber(line?.previousRate)
+  }));
+  return createPurchaseCart({
+    supplierId: requiredString(req.body?.supplierId, "Supplier"),
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
+    paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
+    cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
+    note: optionalString(req.body?.note) || "",
+    location: parseOptionalLocation(req.body?.location),
+    operationDate: optionalString(req.body?.operationDate),
+    advancePayment: parseOptionalAdvancePayment(req.body?.advancePayment),
+    lines
+  }, currentUser);
 }));
 
 app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
@@ -317,9 +386,9 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
       quantity: requiredNumber(req.body?.quantity, "Quantity"),
       rate: requiredNumber(req.body?.rate, "Rate"),
       taxableAmount: optionalNumber(req.body?.taxableAmount),
-      gstRate: optionalNumber(req.body?.gstRate) as 0 | 5 | 18 | undefined,
+      gstRate: parseOptionalGstRate(req.body?.gstRate),
       gstAmount: optionalNumber(req.body?.gstAmount),
-      taxMode: optionalString(req.body?.taxMode) as "Exclusive" | "Inclusive" | undefined,
+      taxMode: optionalString(req.body?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
       minimumAllowedRate: typeof req.body?.minimumAllowedRate === "number" ? req.body.minimumAllowedRate : undefined,
       priceApprovalRequested: Boolean(req.body?.priceApprovalRequested),
       availableStockAtOrder: optionalNumber(req.body?.availableStockAtOrder),
@@ -328,10 +397,42 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
       note: optionalString(req.body?.note) || "",
-      location: parseOptionalLocation(req.body?.location)
+      location: parseOptionalLocation(req.body?.location),
+      operationDate: optionalString(req.body?.operationDate),
+      advancePayment: parseOptionalAdvancePayment(req.body?.advancePayment)
     },
     currentUser
   );
+}));
+
+app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Sales"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    productSku: requiredString(line?.productSku, "Product"),
+    quantity: requiredNumber(line?.quantity, "Quantity"),
+    rate: requiredNumber(line?.rate, "Rate"),
+    taxableAmount: optionalNumber(line?.taxableAmount),
+    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 18 | "NA" | undefined,
+    gstAmount: optionalNumber(line?.gstAmount),
+    taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
+    minimumAllowedRate: typeof line?.minimumAllowedRate === "number" ? line.minimumAllowedRate : optionalNumber(line?.minimumAllowedRate),
+    priceApprovalRequested: Boolean(line?.priceApprovalRequested),
+    availableStockAtOrder: optionalNumber(line?.availableStockAtOrder),
+    stockApprovalRequested: Boolean(line?.stockApprovalRequested),
+    note: optionalString(line?.note) || ""
+  }));
+  return createSalesCart({
+    shopId: requiredString(req.body?.shopId, "Shop"),
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
+    cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
+    deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
+    note: optionalString(req.body?.note) || "",
+    location: parseOptionalLocation(req.body?.location),
+    operationDate: optionalString(req.body?.operationDate),
+    advancePayment: parseOptionalAdvancePayment(req.body?.advancePayment),
+    lines
+  }, currentUser);
 }));
 
 app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
@@ -342,7 +443,9 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
     cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
     deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
     note: optionalString(req.body?.note) || "",
-    status: requiredString(req.body?.status, "Status") as any
+    status: requiredString(req.body?.status, "Status") as any,
+    containerWeightKg: optionalNumber(req.body?.containerWeightKg),
+    weighingProofName: optionalString(req.body?.weighingProofName)
   });
 }));
 
@@ -362,8 +465,9 @@ app.post("/payments", async (req, res) => wrap(res, async () => {
       voucherNumber: optionalString(req.body?.voucherNumber),
       utrNumber: optionalString(req.body?.utrNumber),
       proofName: optionalString(req.body?.proofName),
-      verificationStatus: requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected",
-      verificationNote: optionalString(req.body?.verificationNote)
+      verificationStatus: requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved",
+      verificationNote: optionalString(req.body?.verificationNote),
+      operationDate: optionalString(req.body?.operationDate)
     },
     currentUser
   );
@@ -381,7 +485,8 @@ app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
     utrNumber: optionalString(req.body?.utrNumber),
     proofName: optionalString(req.body?.proofName),
     verificationStatus: requiredString(req.body?.verificationStatus, "Verification status") as any,
-    verificationNote: optionalString(req.body?.verificationNote) || ""
+    verificationNote: optionalString(req.body?.verificationNote) || "",
+    operationDate: optionalString(req.body?.operationDate)
   }, currentUser);
 }));
 
@@ -409,11 +514,23 @@ app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (
   };
 }));
 
+app.post("/receipt-checks/upload-proof", upload.single("receiptProof"), async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Warehouse Manager"]);
+  if (!req.file) {
+    throw new Error("Weighing proof file is required.");
+  }
+  return {
+    fileName: req.file.filename,
+    originalName: req.file.originalname,
+    fileUrl: `/uploads/receipt-proofs/${req.file.filename}`
+  };
+}));
+
 app.post("/payments/verify", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Accounts"]);
   return verifyPayment(
     requiredString(req.body?.paymentId, "Payment id"),
-    requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected",
+    requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved",
     optionalString(req.body?.verificationNote) || "",
     currentUser
   );
@@ -427,8 +544,12 @@ app.post("/receipt-checks", async (req, res) => wrap(res, async () => {
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       receivedQuantity: requiredNumber(req.body?.receivedQuantity, "Received quantity"),
       actualWeightKg: requiredNumber(req.body?.actualWeightKg, "Actual weight"),
+      containerWeightKg: optionalNumber(req.body?.containerWeightKg) ?? 0,
+      weighingProofName: optionalString(req.body?.weighingProofName),
+      cashProofName: optionalString(req.body?.cashProofName),
       note: requiredString(req.body?.note, "Note"),
-      confirmPartial: Boolean(req.body?.confirmPartial)
+      confirmPartial: Boolean(req.body?.confirmPartial),
+      operationDate: optionalString(req.body?.operationDate)
     },
     currentUser
   );
@@ -453,6 +574,7 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
     from: requiredString(req.body?.from, "From"),
     to: requiredString(req.body?.to, "To"),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
+    routeStops: Array.isArray(req.body?.routeStops) ? req.body.routeStops : [],
     pickupAt: optionalString(req.body?.pickupAt),
     dropAt: optionalString(req.body?.dropAt),
     routeHint: optionalString(req.body?.routeHint),
@@ -462,7 +584,8 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
     weightProofName: optionalString(req.body?.weightProofName),
     cashProofName: optionalString(req.body?.cashProofName),
     lastActionAt: optionalString(req.body?.lastActionAt),
-    status: requiredString(req.body?.status, "Status") as DeliveryTask["status"]
+    status: requiredString(req.body?.status, "Status") as DeliveryTask["status"],
+    operationDate: optionalString(req.body?.operationDate)
   });
 }));
 
@@ -472,6 +595,7 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
   return updateDeliveryTask(req.params.id, {
     linkedOrderIds,
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
+    routeStops: Array.isArray(req.body?.routeStops) ? req.body.routeStops : [],
     pickupAt: optionalString(req.body?.pickupAt),
     dropAt: optionalString(req.body?.dropAt),
     routeHint: optionalString(req.body?.routeHint),
@@ -491,7 +615,8 @@ app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
     docketIds: requiredStringArray(req.body?.docketIds, "Dockets"),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
-    status: (optionalString(req.body?.status) || "Ready") as any
+    status: (optionalString(req.body?.status) || "Ready") as any,
+    operationDate: optionalString(req.body?.operationDate)
   }, currentUser);
 }));
 
@@ -502,7 +627,8 @@ app.post("/notes", async (req, res) => wrap(res, async () => {
       entityType: requiredString(req.body?.entityType, "Entity type") as NoteRecord["entityType"],
       entityId: requiredString(req.body?.entityId, "Entity id"),
       note: requiredString(req.body?.note, "Note"),
-      visibility: requiredString(req.body?.visibility, "Visibility") as NoteRecord["visibility"]
+      visibility: requiredString(req.body?.visibility, "Visibility") as NoteRecord["visibility"],
+      operationDate: optionalString(req.body?.operationDate)
     },
     currentUser
   );
@@ -538,13 +664,7 @@ async function getCurrentUser(req: express.Request) {
   if (!user) {
     throw new Error("Session expired. Login again.");
   }
-  return {
-    id: user.id,
-    username: user.username,
-    fullName: user.fullName,
-    role: user.role,
-    roles: user.roles
-  };
+  return user;
 }
 
 function parseLinkedOrderIds(value: unknown, fallbackValue?: unknown) {
@@ -557,6 +677,13 @@ function parseLinkedOrderIds(value: unknown, fallbackValue?: unknown) {
     throw new Error("At least one linked order is required.");
   }
   return text.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseCartLines(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("At least one cart product is required.");
+  }
+  return value as Array<Record<string, any>>;
 }
 
 function getBearerToken(req: express.Request) {
@@ -599,6 +726,11 @@ function optionalNumber(value: unknown) {
   return num;
 }
 
+function parseOptionalGstRate(value: unknown) {
+  if (String(value || "").trim().toUpperCase() === "NA") return "NA";
+  return optionalNumber(value) as 0 | 5 | 18 | undefined;
+}
+
 function parseOptionalLocation(value: unknown) {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
@@ -609,6 +741,23 @@ function parseOptionalLocation(value: unknown) {
     latitude,
     longitude,
     label: optionalString(record.label)
+  };
+}
+
+function parseOptionalAdvancePayment(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const amount = optionalNumber(record.amount);
+  if (!amount || amount <= 0) return undefined;
+  return {
+    amount,
+    mode: requiredString(record.mode, "Advance payment mode") as PaymentMode,
+    cashTiming: optionalString(record.cashTiming) as "In Hand" | "At Delivery" | undefined,
+    referenceNumber: optionalString(record.referenceNumber),
+    voucherNumber: optionalString(record.voucherNumber),
+    utrNumber: optionalString(record.utrNumber),
+    proofName: optionalString(record.proofName),
+    verificationNote: optionalString(record.verificationNote)
   };
 }
 

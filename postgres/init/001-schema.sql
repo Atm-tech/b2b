@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 CREATE TABLE IF NOT EXISTS purchase_orders (
   id TEXT PRIMARY KEY,
+  cart_id TEXT,
   supplier_id TEXT NOT NULL,
   product_sku TEXT NOT NULL,
   purchaser_id BIGINT NOT NULL,
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 
 CREATE TABLE IF NOT EXISTS sales_orders (
   id TEXT PRIMARY KEY,
+  cart_id TEXT,
   shop_id TEXT NOT NULL,
   product_sku TEXT NOT NULL,
   salesman_id BIGINT NOT NULL,
@@ -143,6 +145,9 @@ CREATE TABLE IF NOT EXISTS receipt_checks (
   received_quantity DOUBLE PRECISION NOT NULL,
   pending_quantity DOUBLE PRECISION NOT NULL,
   actual_weight_kg DOUBLE PRECISION NOT NULL,
+  container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  net_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  weighing_proof_name TEXT,
   expected_weight_kg DOUBLE PRECISION NOT NULL,
   weight_variance_kg DOUBLE PRECISION NOT NULL,
   partial_receipt BOOLEAN NOT NULL,
@@ -206,6 +211,8 @@ CREATE TABLE IF NOT EXISTS delivery_dockets (
   warehouse_id TEXT NOT NULL,
   quantity DOUBLE PRECISION NOT NULL,
   weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0,
+  weighing_proof_name TEXT,
   consignment_id TEXT,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
