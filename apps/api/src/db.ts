@@ -996,6 +996,7 @@ export async function updateSettings(payload: { paymentMethods: PaymentMethodSet
 
 export async function createPurchaseOrder(payload: {
   cartId?: string;
+  lineIdPrefix?: string;
   skipFinancials?: boolean;
   supplierId: string;
   productSku: string;
@@ -1026,7 +1027,7 @@ export async function createPurchaseOrder(payload: {
   const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
   const totalAmount = taxableAmount + gstAmount;
   const expectedWeightKg = payload.quantityOrdered * numberValue(product.default_weight_kg);
-  const id = makeId("PO");
+  const id = makeId(payload.lineIdPrefix || "PO");
   const createdAt = operationalDate(payload.operationDate);
   const rateAlertNote =
     typeof payload.previousRate === "number" && payload.previousRate > 0 && payload.rate > payload.previousRate
@@ -1069,13 +1070,14 @@ export async function createPurchaseCart(payload: Omit<Parameters<typeof createP
 }, currentUser: CurrentUser) {
   await ready;
   if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
-  const cartId = makeId("PCART");
+  const cartId = makeId("PO");
   const createdAt = operationalDate(payload.operationDate);
   for (const [index, line] of payload.lines.entries()) {
     await createPurchaseOrder({
       ...payload,
       ...line,
       cartId,
+      lineIdPrefix: "POL",
       advancePayment: index === 0 ? payload.advancePayment : undefined,
       skipFinancials: true
     }, currentUser);
@@ -1365,6 +1367,15 @@ export async function createReceiptCheck(payload: {
     const orderedQuantity = numberValue(order.quantity_ordered);
     const totalReceivedBefore = numberValue(order.quantity_received);
     const totalReceivedNow = totalReceivedBefore + payload.receivedQuantity;
+    if (payload.receivedQuantity <= 0) {
+      throw new Error("Received quantity must be greater than zero.");
+    }
+    if (totalReceivedBefore >= orderedQuantity) {
+      throw new Error("This purchase line is already fully received.");
+    }
+    if (totalReceivedNow > orderedQuantity) {
+      throw new Error(`Received quantity exceeds ordered quantity. Ordered ${orderedQuantity}, already received ${totalReceivedBefore}.`);
+    }
     const pendingQuantity = Math.max(orderedQuantity - totalReceivedNow, 0);
     const partialReceipt = pendingQuantity > 0;
     if (partialReceipt && !payload.confirmPartial) {
