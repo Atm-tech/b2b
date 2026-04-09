@@ -67,6 +67,9 @@ export type Counterparty = {
   type: CounterpartyType;
   name: string;
   gstNumber: string;
+  bankName: string;
+  bankAccountNumber: string;
+  ifscCode: string;
   mobileNumber: string;
   address: string;
   city: string;

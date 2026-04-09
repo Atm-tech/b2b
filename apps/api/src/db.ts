@@ -81,6 +81,9 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS location_label TEXT;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
@@ -278,6 +281,9 @@ async function mapCounterparties(client?: DbClient): Promise<Counterparty[]> {
     type: stringValue(row.type) as CounterpartyType,
     name: stringValue(row.name),
     gstNumber: stringValue(row.gst_number),
+    bankName: stringValue(row.bank_name),
+    bankAccountNumber: stringValue(row.bank_account_number),
+    ifscCode: stringValue(row.ifsc_code),
     mobileNumber: stringValue(row.mobile_number),
     address: stringValue(row.address),
     city: stringValue(row.city),
@@ -950,37 +956,57 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
   await ready;
   const name = payload.name.trim();
   const gstNumber = payload.gstNumber.trim();
-  validateCounterpartyIdentity(name, gstNumber);
-  await ensureCounterpartyUnique(payload.type, name, gstNumber);
+  const bankName = payload.bankName.trim();
+  const bankAccountNumber = payload.bankAccountNumber.trim();
+  const ifscCode = payload.ifscCode.trim().toUpperCase();
+  validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
+  await ensureCounterpartyUnique(payload.type, name, gstNumber, bankAccountNumber, ifscCode);
   await query(
-    `INSERT INTO counterparties (id, type, name, gst_number, mobile_number, address, city, contact_person, latitude, longitude, location_label, created_by, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
+    `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, contact_person, latitude, longitude, location_label, created_by, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
   );
   return getSnapshot();
 }
 
-function validateCounterpartyIdentity(name: string, gstNumber: string) {
+function validateCounterpartyIdentity(name: string, gstNumber: string, bankName: string, bankAccountNumber: string, ifscCode: string) {
   if (!name) throw new Error("Name is required.");
   if (!gstNumber) throw new Error("GST number is required. Use N/A for non-GST parties.");
+  if (!bankName) throw new Error("Bank name is required. Use N/A when not available.");
+  if (!bankAccountNumber) throw new Error("Bank account number is required. Use N/A when not available.");
+  if (!ifscCode) throw new Error("IFSC code is required. Use N/A when not available.");
 }
 
-function isNaGst(gstNumber: string) {
-  return gstNumber.trim().toUpperCase() === "N/A";
+function isNaValue(value: string) {
+  return value.trim().toUpperCase() === "N/A";
 }
 
-async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, excludeId?: string) {
+async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, bankAccountNumber: string, ifscCode: string, excludeId?: string) {
   const duplicateName = await one<{ id: string }>(
     `SELECT id FROM counterparties WHERE type = $1 AND LOWER(name) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
     [type, name, excludeId || null]
   );
   if (duplicateName) throw new Error(`${type} name already exists.`);
-  if (!isNaGst(gstNumber)) {
+  if (!isNaValue(gstNumber)) {
     const duplicateGst = await one<{ id: string }>(
       `SELECT id FROM counterparties WHERE type = $1 AND LOWER(gst_number) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
       [type, gstNumber, excludeId || null]
     );
     if (duplicateGst) throw new Error(`${type} GST number already exists. Only N/A can be reused.`);
+  }
+  if (!isNaValue(bankAccountNumber)) {
+    const duplicateAccount = await one<{ id: string }>(
+      `SELECT id FROM counterparties WHERE type = $1 AND LOWER(bank_account_number) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
+      [type, bankAccountNumber, excludeId || null]
+    );
+    if (duplicateAccount) throw new Error(`${type} bank account number already exists. Only N/A can be reused.`);
+  }
+  if (!isNaValue(ifscCode)) {
+    const duplicateIfsc = await one<{ id: string }>(
+      `SELECT id FROM counterparties WHERE type = $1 AND LOWER(ifsc_code) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
+      [type, ifscCode, excludeId || null]
+    );
+    if (duplicateIfsc) throw new Error(`${type} IFSC code already exists. Only N/A can be reused.`);
   }
 }
 
@@ -1594,6 +1620,9 @@ export async function createNote(payload: {
 export async function updateCounterparty(counterpartyId: string, payload: {
   name: string;
   gstNumber: string;
+  bankName: string;
+  bankAccountNumber: string;
+  ifscCode: string;
   mobileNumber: string;
   address: string;
   city: string;
@@ -1604,13 +1633,16 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   if (!existing) throw new Error("Party not found.");
   const name = payload.name.trim();
   const gstNumber = payload.gstNumber.trim();
-  validateCounterpartyIdentity(name, gstNumber);
-  await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, counterpartyId);
+  const bankName = payload.bankName.trim();
+  const bankAccountNumber = payload.bankAccountNumber.trim();
+  const ifscCode = payload.ifscCode.trim().toUpperCase();
+  validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
+  await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, bankAccountNumber, ifscCode, counterpartyId);
   await query(
     `UPDATE counterparties
-     SET name = $1, gst_number = $2, mobile_number = $3, address = $4, city = $5, contact_person = $6
-     WHERE id = $7`,
-    [name, gstNumber, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), counterpartyId]
+     SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, contact_person = $9
+     WHERE id = $10`,
+    [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), counterpartyId]
   );
   return getSnapshot();
 }
