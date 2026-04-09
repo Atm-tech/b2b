@@ -1519,6 +1519,19 @@ export async function createDeliveryTask(payload: {
   const createdAt = operationalDate(payload.operationDate);
   const linkedOrderIds = payload.linkedOrderIds && payload.linkedOrderIds.length > 0 ? payload.linkedOrderIds : [payload.linkedOrderId.trim()];
   await withTransaction(async (client) => {
+    let taskMode = payload.mode;
+    if (payload.side === "Purchase") {
+      const purchaseModes = await query<Record<string, unknown>>(
+        `SELECT DISTINCT delivery_mode
+         FROM purchase_orders
+         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+      const modes = new Set(purchaseModes.rows.map((row) => stringValue(row.delivery_mode)));
+      if (modes.has("Self Collection")) taskMode = "Self Collection";
+      else if (modes.has("Dealer Delivery")) taskMode = "Dealer Delivery";
+    }
     await query(
       `INSERT INTO delivery_tasks (
         id, side, linked_order_id, linked_order_ids_json, mode, source_location, destination_location, assigned_to,
@@ -1530,7 +1543,7 @@ export async function createDeliveryTask(payload: {
         payload.side,
         payload.linkedOrderId.trim(),
         JSON.stringify(linkedOrderIds),
-        payload.mode,
+        taskMode,
         payload.from.trim(),
         payload.to.trim(),
         payload.assignedTo.trim(),

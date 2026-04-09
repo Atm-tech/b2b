@@ -3077,7 +3077,7 @@ function WarehouseOperationsViewV2({
               side: "Purchase",
               linkedOrderId: chosenGroups[0].id,
               linkedOrderIds: chosenGroups.map((group) => group.id),
-              mode: chosenGroups.some((group) => (purchaseLedger(group)?.pendingAmount || 0) > 0) ? "Self Collection" : "Dealer Delivery",
+              mode: "Self Collection",
               from: routeStops.map((stop) => stop.supplierName).join(", "),
               to: destination?.name || chosenGroups[0].lines[0].warehouseId,
               assignedTo: inboundAssignedTo,
