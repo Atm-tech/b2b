@@ -233,6 +233,78 @@ function purchaseWorkflowStatus(snapshot: AppSnapshot, orderId: string) {
   return `${purchaseWarehouseStatus(lines)} / Payment ${purchasePaymentStatus(snapshot, orderId)}`;
 }
 
+function deliveryTasksForUser(snapshot: AppSnapshot, user: AppUser) {
+  return snapshot.deliveryTasks.filter((task) => task.assignedTo === user.username || task.assignedTo === user.fullName);
+}
+
+function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
+  const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
+  const today = new Date().toISOString().slice(0, 10);
+  if (roles.includes("Admin")) {
+    return [
+      { label: "Purchase open", value: countGroupedOrders(snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed")) },
+      { label: "Sales open", value: countGroupedOrders(snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed")) },
+      { label: "Payment flags", value: snapshot.payments.filter((item) => item.verificationStatus === "Rejected" || item.verificationStatus === "Disputed").length },
+      { label: "Live delivery", value: snapshot.deliveryTasks.filter((item) => item.status !== "Delivered" && item.status !== "Handed Over").length }
+    ];
+  }
+  if (roles.includes("Delivery")) {
+    const myTasks = deliveryTasksForUser(snapshot, user);
+    return [
+      { label: "Current delivery", value: myTasks.filter((item) => item.status !== "Planned" && item.status !== "Handed Over" && item.status !== "Delivered").length },
+      { label: "New assignments", value: myTasks.filter((item) => item.status === "Planned").length },
+      { label: "Completed today", value: myTasks.filter((item) => (item.status === "Handed Over" || item.status === "Delivered") && item.lastActionAt?.slice(0, 10) === today).length },
+      { label: "Cash actions", value: myTasks.filter((item) => item.cashCollectionRequired).length }
+    ];
+  }
+  if (roles.includes("Warehouse Manager")) {
+    const warehouseScope = userWarehouseScope(user);
+    const scopedPurchaseOrders = snapshot.purchaseOrders.filter((item) => warehouseScope.size === 0 || warehouseScope.has(item.warehouseId));
+    const scopedSalesOrders = snapshot.salesOrders.filter((item) => warehouseScope.size === 0 || warehouseScope.has(item.warehouseId));
+    const scopedTasks = snapshot.deliveryTasks.filter((task) => task.routeStops.some((stop) => warehouseScope.size === 0 || warehouseScope.has(stop.warehouseId)));
+    return [
+      { label: "Inbound checks", value: countGroupedOrders(scopedPurchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed")) },
+      { label: "Outbound checks", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery")) },
+      { label: "Pickup tags", value: scopedTasks.filter((task) => task.side === "Purchase" && task.status === "Planned").length },
+      { label: "Dispatch tags", value: scopedTasks.filter((task) => task.side === "Sales" && task.status === "Planned").length }
+    ];
+  }
+  if (roles.includes("Accounts")) {
+    const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
+    const orderQueue = [
+      ...groupPurchaseOrders(snapshot.purchaseOrders).map((group) => purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id)),
+      ...Array.from(new Set(snapshot.salesOrders.map((order) => orderPublicId(order)))).map((id) => snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id))
+    ].filter((amount) => amount > 0);
+    return [
+      { label: "Awaiting action", value: orderQueue.length },
+      { label: "Pending proofs", value: pending.length },
+      { label: "Disputes", value: snapshot.payments.filter((item) => item.verificationStatus === "Disputed" || item.verificationStatus === "Rejected").length },
+      { label: "Cash today", value: snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0) }
+    ];
+  }
+  if (roles.includes("Sales")) {
+    const myOrders = snapshot.salesOrders.filter((item) => item.salesmanId === user.id || item.salesmanName === user.fullName);
+    const myIds = new Set(myOrders.map((item) => orderPublicId(item)));
+    return [
+      { label: "Open sales", value: countGroupedOrders(myOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed")) },
+      { label: "Approval pending", value: countGroupedOrders(myOrders.filter((item) => item.status === "Draft")) },
+      { label: "Collection pending", value: Array.from(myIds).filter((id) => (snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id)) > 0).length },
+      { label: "Ready to dispatch", value: countGroupedOrders(myOrders.filter((item) => item.status === "Ready for Dispatch")) }
+    ];
+  }
+  if (roles.includes("Purchaser")) {
+    const myOrders = snapshot.purchaseOrders.filter((item) => item.purchaserId === user.id || item.purchaserName === user.fullName);
+    const myGroups = groupPurchaseOrders(myOrders);
+    return [
+      { label: "Open purchases", value: myGroups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length },
+      { label: "Payment pending", value: myGroups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length },
+      { label: "Disputes", value: myGroups.filter((group) => ["Flagged", "Disputed"].includes(purchasePaymentStatus(snapshot, group.id))).length },
+      { label: "Warehouse pending", value: myGroups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received" && group.lines.some((line) => line.quantityReceived === 0)).length }
+    ];
+  }
+  return [];
+}
+
 function userWarehouseScope(user: AppUser) {
   return new Set((user.warehouseIds || []).filter(Boolean));
 }
@@ -674,7 +746,7 @@ function App() {
             isAdminUser ? <TwoCol left={<Panel title="Supplier Master" eyebrow="Admin view"><DataTable headers={["Name","GST","Account","IFSC","City"]} rows={suppliers.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} /></Panel>} right={<Panel title="Customer Master" eyebrow="Admin view"><DataTable headers={["Name","GST","Account","IFSC","City"]} rows={shops.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} /></Panel>} /> :
             <TwoCol left={<Panel title={currentUser.role === "Sales" ? "Register Customer" : "Register Supplier"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><form className="form-grid" onSubmit={saveStandaloneParty}><label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label><label className={partyFormErrors.name ? "field-error" : ""}>Name<input value={partyForm.name} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, name: false })); setPartyForm((c) => ({ ...c, name: e.target.value })); }} /></label><label className={partyFormErrors.gstNumber ? "field-error" : ""}>GST<input value={partyForm.gstNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.value })); }} placeholder="GST number or N/A" /></label><label>Bank name<input value={partyForm.bankName} onChange={(e) => setPartyForm((c) => ({ ...c, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label><label className={partyFormErrors.bankAccountNumber ? "field-error" : ""}>Bank account<input value={partyForm.bankAccountNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, bankAccountNumber: false })); setPartyForm((c) => ({ ...c, bankAccountNumber: e.target.value })); }} placeholder="Account number or N/A" /></label><label className={partyFormErrors.ifscCode ? "field-error" : ""}>IFSC<input value={partyForm.ifscCode} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, ifscCode: false })); setPartyForm((c) => ({ ...c, ifscCode: e.target.value.toUpperCase() })); }} placeholder="IFSC code or N/A" /></label><label>Mobile<input value={partyForm.mobileNumber} onChange={(e) => setPartyForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">{currentUser.role === "Sales" ? "Save customer" : "Save supplier"}</button></form></Panel>} right={<><Panel title={currentUser.role === "Sales" ? "Update Customer" : "Update Supplier"} eyebrow="Edit details"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}><label>Party<select value={partyEditForm.id} onChange={(e) => { const sourceItems = currentUser.role === "Sales" ? shops : suppliers; const item = sourceItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(currentUser.role === "Sales" ? shops : suppliers)}</select></label><label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label><label>Bank name<input value={partyEditForm.bankName} onChange={(e) => setPartyEditForm((c) => ({ ...c, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label><label>Bank account<input value={partyEditForm.bankAccountNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, bankAccountNumber: e.target.value }))} placeholder="Account number or N/A" /></label><label>IFSC<input value={partyEditForm.ifscCode} onChange={(e) => setPartyEditForm((c) => ({ ...c, ifscCode: e.target.value.toUpperCase() }))} placeholder="IFSC code or N/A" /></label><label>Mobile<input value={partyEditForm.mobileNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyEditForm.contactPerson} onChange={(e) => setPartyEditForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Update</button></form></Panel><Panel title={currentUser.role === "Sales" ? "Customer Database" : "Supplier Database"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><DataTable headers={["Name","GST","Account","IFSC","City"]} rows={(currentUser.role === "Sales" ? shops : suppliers).map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} /></Panel></>} />
           ) : null}
-          {activeView === "Purchase" ? (isAdminUser ? <TwoCol left={<Panel title="Purchase Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{countGroupedOrders(snapshot.purchaseOrders)}</strong><p>Total purchase orders</p></div></div><div className="list-card"><div><strong>{countGroupedOrders(snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"))}</strong><p>Open purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Pending purchase payments</p></div></div></div></Panel>} right={<Panel title="Purchase Orders" eyebrow="Live status"><DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(snapshot.purchaseOrders, snapshot)} /></Panel>} /> : <>
+          {activeView === "Purchase" ? (isAdminUser ? <Panel title="Purchase Orders" eyebrow="Live status"><DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(snapshot.purchaseOrders, snapshot)} /></Panel> : <>
             <PurchaserPurchaseWorkspace
               snapshot={snapshot}
               currentUser={currentUser}
@@ -692,7 +764,7 @@ function App() {
               onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
             />
           </>) : null}
-          {activeView === "Sales" ? (isAdminUser ? <TwoCol left={<Panel title="Sales Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders)}</strong><p>Total sales carts</p></div></div><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed"))}</strong><p>Open sales carts</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Pending sales payments</p></div></div></div></Panel>} right={<Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel>} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Customer order booking"
@@ -710,7 +782,7 @@ function App() {
           />) : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
-              <TwoCol left={<Panel title="Payment Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.payments.filter((item) => item.side === "Purchase" && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved").length}</strong><p>Purchase pending</p></div></div><div className="list-card"><div><strong>{snapshot.payments.filter((item) => item.side === "Sales" && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved").length}</strong><p>Sales pending</p></div></div><div className="list-card"><div><strong>{snapshot.payments.filter((item) => item.verificationStatus === "Rejected" || item.verificationStatus === "Disputed").length}</strong><p>Flagged</p></div></div></div></Panel>} right={<Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>} />
+              <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>
             ) : isPurchaserOnly ? (
               <PurchaserPaymentsView
                 snapshot={snapshot}
@@ -738,7 +810,7 @@ function App() {
           ) : null}
           {activeView === "Receipts" ? (
             isAdminUser ? (
-              <TwoCol left={<Panel title="Warehouse Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").length}</strong><p>Incoming orders</p></div></div><div className="list-card"><div><strong>{snapshot.salesOrders.filter((item) => item.status === "Ready for Dispatch" || item.status === "Booked" || item.status === "Out for Delivery").length}</strong><p>Outgoing orders</p></div></div><div className="list-card"><div><strong>{snapshot.receiptChecks.filter((item) => item.flagged || item.partialReceipt).length}</strong><p>Flagged / partial</p></div></div></div></Panel>} right={<Panel title="Receipt Checks" eyebrow="Admin view"><DataTable headers={["GRC","PO","Warehouse","Received","Pending","Flagged"]} rows={snapshot.receiptChecks.map((item) => [item.grcNumber, item.purchaseOrderId, item.warehouseId, item.receivedQuantity, item.pendingQuantity, item.flagged ? "Yes" : "No"])} /></Panel>} />
+              <Panel title="Receipt Checks" eyebrow="Admin view"><DataTable headers={["GRC","PO","Warehouse","Received","Pending","Flagged"]} rows={snapshot.receiptChecks.map((item) => [item.grcNumber, item.purchaseOrderId, item.warehouseId, item.receivedQuantity, item.pendingQuantity, item.flagged ? "Yes" : "No"])} /></Panel>
             ) : isWarehouseOnly || currentRoles.includes("Warehouse Manager") ? (
               <WarehouseOperationsViewV2
                 snapshot={snapshot}
@@ -771,7 +843,7 @@ function App() {
           ) : null}
           {activeView === "Delivery" || activeView === "CurrentDelivery" || activeView === "NewAssignment" ? (
             isAdminUser ? (
-              <TwoCol left={<Panel title="Delivery Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.side === "Purchase").length}</strong><p>Inbound tasks</p></div></div><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.side === "Sales").length}</strong><p>Outbound tasks</p></div></div><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.status !== "Delivered").length}</strong><p>Live tasks</p></div></div></div></Panel>} right={<Panel title="Delivery Details" eyebrow="Admin view"><DataTable headers={["ID","Side","Orders","Assigned","Mode","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.assignedTo, d.mode, d.status])} /></Panel>} />
+              <Panel title="Delivery Details" eyebrow="Admin view"><DataTable headers={["ID","Side","Orders","Assigned","Mode","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.assignedTo, d.mode, d.status])} /></Panel>
             ) : isDeliveryOnly ? (
               <DeliveryJobsView
                 snapshot={snapshot}
@@ -2469,19 +2541,8 @@ function PurchaserPaymentsView({
     setCreateDrafts((current) => ({ ...current, [orderId]: { ...getCreateDraft(orderId), [field]: value } }));
   }
 
-  const pendingCount = myGroups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
-  const completedCount = myGroups.filter((group) => purchasePaymentStatus(snapshot, group.id) === "Completed").length;
-  const flaggedCount = myGroups.filter((group) => ["Flagged", "Disputed"].includes(purchasePaymentStatus(snapshot, group.id))).length;
-
   return (
     <section className="dashboard-grid">
-      <Panel title="Payment Summary" eyebrow="Purchase accounts flow">
-        <div className="simple-summary payment-summary-grid">
-          <div className="list-card"><div><strong>{pendingCount}</strong><p>Pending till accounts completes</p></div></div>
-          <div className="list-card"><div><strong>{completedCount}</strong><p>Completed by accounts</p></div></div>
-          <div className="list-card"><div><strong>{flaggedCount}</strong><p>Flagged by accounts</p></div></div>
-        </div>
-      </Panel>
       <Panel title="Purchase Payment Tracker" eyebrow="Order-wise balance and proof">
         <div className="stack-list payment-update-list">
           {myGroups.length === 0 ? <div className="empty-card">No purchase orders found yet.</div> : myGroups.map((group) => {
@@ -2685,13 +2746,6 @@ function SalesPaymentsView({
 
   return (
     <section className="dashboard-grid">
-      <Panel title="Sales Pending Summary" eyebrow="Follow-up reminders">
-        <div className="simple-summary payment-summary-grid">
-          <div className="list-card"><div><strong>{undeliveredOrders.length}</strong><p>Undelivered orders</p></div></div>
-          <div className="list-card"><div><strong>{underPriceOrders.length}</strong><p>Under-price approval pending</p></div></div>
-          <div className="list-card"><div><strong>{pendingCollections.length}</strong><p>Payment not approved by accounts</p></div></div>
-        </div>
-      </Panel>
       <Panel title="Pending Orders" eyebrow="Undelivered and under-price">
         <div className="stack-list payment-update-list">
           {[...undeliveredOrders, ...underPriceOrders.filter((order) => !undeliveredOrders.some((item) => item.id === order.id))].slice(0, 12).map((order) => {
@@ -2815,14 +2869,6 @@ function AccountsPaymentsView({
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   return (
     <section className="dashboard-grid">
-        <Panel title="Accounts Summary" eyebrow="Pending and completed">
-          <div className="simple-summary payment-summary-grid">
-            <div className="list-card"><div><strong>{accountOrderOptions.length}</strong><p>Orders awaiting accounts action</p></div></div>
-            <div className="list-card"><div><strong>{pending.length}</strong><p>Pending payment proofs</p></div></div>
-            <div className="list-card"><div><strong>{completed.length}</strong><p>Completed payments</p></div></div>
-            <div className="list-card"><div><strong>{dayCash}</strong><p>Cash reported today</p></div></div>
-          </div>
-        </Panel>
         <Panel title="Orders Awaiting Accounts Action" eyebrow="Order-wise pending balance">
           <DataTable
             headers={["Side","Order","Party","Pending"]}
@@ -4284,18 +4330,11 @@ function DeliveryJobsView({
 
   return (
     <section className="dashboard-grid">
-      <Panel title="Delivery Summary" eyebrow="Route and handover">
-        <div className="simple-summary payment-summary-grid">
-          <div className="list-card"><div><strong>{myTasks.filter((item) => item.side === "Purchase").length}</strong><p>Inbound pickups</p></div></div>
-          <div className="list-card"><div><strong>{myTasks.filter((item) => item.side === "Sales").length}</strong><p>Outbound deliveries</p></div></div>
-          <div className="list-card"><div><strong>{myTasks.filter((item) => item.cashCollectionRequired).length}</strong><p>Cash actions</p></div></div>
-        </div>
-        <div className="payment-card-actions top-gap">
+      <Panel title="My Delivery Jobs" eyebrow="Step by step">
+        <div className="payment-card-actions">
           <button className="ghost-button" type="button" onClick={() => navigator.geolocation.getCurrentPosition((position) => setCurrentPosition({ latitude: position.coords.latitude, longitude: position.coords.longitude }))}>Use my location</button>
           {currentPosition ? <span className="small-label">{currentPosition.latitude.toFixed(4)}, {currentPosition.longitude.toFixed(4)}</span> : null}
         </div>
-      </Panel>
-      <Panel title="My Delivery Jobs" eyebrow="Step by step">
         <div className="stack-list payment-update-list">
           {deliveryTab === "current"
             ? (activeTask ? renderTask(activeTask) : <div className="empty-card">No current active delivery. Start from New Assignment.</div>)
@@ -4322,11 +4361,6 @@ function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
         <div className="segmented-tabs">
           <button className={side === "Purchase" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Purchase")}>In</button>
           <button className={side === "Sales" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Sales")}>Out</button>
-        </div>
-        <div className="simple-summary payment-summary-grid top-gap">
-          <div className="list-card"><div><strong>{tasks.length}</strong><p>{side === "Purchase" ? "Inbound tasks" : "Outbound tasks"}</p></div></div>
-          <div className="list-card"><div><strong>{tasks.filter((task) => task.status !== "Delivered").length}</strong><p>Live</p></div></div>
-          <div className="list-card"><div><strong>{tasks.filter((task) => task.cashCollectionRequired).length}</strong><p>Cash actions</p></div></div>
         </div>
       </Panel>
       <Panel title={side === "Purchase" ? "Inbound Tracking" : "Outbound Tracking"} eyebrow="Sorted by route">
@@ -4356,9 +4390,7 @@ function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
 
 function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: AppSnapshot; currentUser: AppUser; simpleMode: boolean; onOpen: (view: ViewKey) => void }) {
   const roles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
-  const isPurchaserOnly = roles.includes("Purchaser") && !roles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
-  const today = new Date().toISOString().slice(0, 10);
-  const dailyCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
+  const taskCards = homeTaskCards(snapshot, currentUser);
   const quickActions: Array<{ title: string; text: string; view: ViewKey }> = [];
   if (roles.includes("Admin")) {
     quickActions.push({ title: "Products", text: "Manage product master and pricing.", view: "Products" });
@@ -4401,13 +4433,7 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
         </Panel>
         <Panel title="Today" eyebrow="Quick summary">
           <div className="simple-summary">
-            <div className="list-card"><div><strong>{snapshot.metrics.partyCount}</strong><p>Parties ready</p></div></div>
-            <div className="list-card"><div><strong>{snapshot.metrics.productCount}</strong><p>Products ready</p></div></div>
-            <div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Purchase payments pending</p></div></div>
-            {!isPurchaserOnly ? <div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Sales payments pending</p></div></div> : null}
-            {roles.includes("Admin") ? <div className="list-card"><div><strong>{snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").length}</strong><p>Incoming warehouse orders</p></div></div> : null}
-            {roles.includes("Admin") ? <div className="list-card"><div><strong>{snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed").length}</strong><p>Open sales orders</p></div></div> : null}
-            {roles.includes("Admin") || roles.includes("Accounts") ? <div className="list-card"><div><strong>{dailyCash}</strong><p>Cash of the day</p></div></div> : null}
+            {taskCards.map((card) => <div className="list-card" key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
           </div>
         </Panel>
       </section>
@@ -4416,15 +4442,11 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
 
   return (
     <section className="dashboard-grid">
-      {roles.includes("Admin") ? <Panel title="MIS Today" eyebrow="All modules">
-        <DataTable headers={["Module","Open / Pending","Key signal"]} rows={[
-          ["Purchase", snapshot.purchaseOrders.filter((p) => p.status !== "Received" && p.status !== "Closed").length, `${snapshot.metrics.pendingPurchasePayments} payment pending`],
-          ["Sales", snapshot.salesOrders.filter((s) => s.status !== "Delivered" && s.status !== "Closed").length, `${snapshot.metrics.pendingSalesPayments} payment pending`],
-          ["Warehouse", snapshot.receiptChecks.filter((r) => r.partialReceipt || r.flagged).length, `${snapshot.metrics.availableInventoryUnits} units live`],
-          ["Delivery", snapshot.deliveryTasks.filter((d) => d.status !== "Delivered").length, `${snapshot.deliveryTasks.filter((d) => d.cashCollectionRequired).length} cash actions`],
-          ["Accounts", snapshot.payments.filter((p) => p.verificationStatus !== "Verified").length, `${dailyCash} cash today`]
-        ]} />
-      </Panel> : null}
+      <Panel title="Task Summary" eyebrow="Home">
+        <div className="simple-summary payment-summary-grid">
+          {taskCards.map((card) => <div className="list-card" key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
+        </div>
+      </Panel>
       <Panel title="Purchase Orders" eyebrow="Inbound"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel>
       <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
       <Panel title="Payment Verification" eyebrow="Accounts"><DataTable headers={["Payment","Side","Order","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.verificationStatus])} /></Panel>
