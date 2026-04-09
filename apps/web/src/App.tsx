@@ -3735,6 +3735,9 @@ function DeliveryJobsView({
     const cashUrl = draft.cashProofName ? `${API_BASE}/uploads/delivery-proofs/${draft.cashProofName}` : "";
     const routeMapUrl = mapsDirectionsUrl([...(draft.routeStops || []).map((stop) => liveStopLocation(stop)), task.to]);
     const nextStop = draft.routeStops.find((stop) => !stop.picked) || draft.routeStops[0];
+    const progressMapUrl = nextStop && !draft.routeStops.every((stop) => stop.picked)
+      ? mapsDirectionsUrl([liveStopLocation(nextStop)])
+      : mapsDirectionsUrl([task.to]);
 
     return <article className="list-card payment-update-card" key={task.id}>
       <div className="payment-update-head">
@@ -3752,7 +3755,26 @@ function DeliveryJobsView({
       </div>
       {nextStop ? <div className="rate-warning-box top-gap">{stepInstruction(nextStop)}</div> : null}
       {compact ? <div className="payment-card-actions top-gap">
-        {routeMapUrl ? <a className="ghost-button" href={routeMapUrl} target="_blank" rel="noreferrer">Open route map</a> : null}
+        {task.status === "Planned" ? <button className="primary-button" type="button" onClick={async () => {
+          await onUpdateTask(task.id, {
+            linkedOrderIds: task.linkedOrderIds,
+            assignedTo: task.assignedTo,
+            routeStops: draft.routeStops,
+            pickupAt: task.pickupAt,
+            dropAt: task.dropAt,
+            routeHint: draft.routeHint,
+            paymentAction: task.paymentAction,
+            status: "Picked",
+            cashCollectionRequired: task.cashCollectionRequired,
+            cashHandoverMarked: draft.cashHandoverMarked,
+            weightProofName: draft.weightProofName || undefined,
+            cashProofName: draft.cashProofName || undefined,
+            lastActionAt: new Date().toISOString()
+          });
+          setDeliveryTab("current");
+        }}>Start assignment</button> : null}
+        {progressMapUrl ? <a className="ghost-button" href={progressMapUrl} target="_blank" rel="noreferrer">{task.status === "Planned" ? "Open first stop map" : draft.routeStops.every((stop) => stop.picked) ? "Open warehouse map" : "Open next stop map"}</a> : null}
+        {routeMapUrl ? <a className="ghost-button" href={routeMapUrl} target="_blank" rel="noreferrer">Full route</a> : null}
       </div> : <>
         {draft.routeStops.length > 0 ? <div className="stack-list top-gap">
           {draft.routeStops.map((stop, index) => <article className="list-card" key={`${task.id}-${stop.orderId}`}>
