@@ -43,6 +43,8 @@ type ViewKey =
   | "Ledger"
   | "Stock"
   | "Delivery"
+  | "CurrentDelivery"
+  | "NewAssignment"
   | "Settings"
   | "Notes";
 
@@ -52,7 +54,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Payments", "Ledger", "Delivery", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "Payments", "Ledger", "Delivery", "Notes"],
-  Delivery: ["Overview", "Delivery", "Notes"]
+  Delivery: ["Overview", "CurrentDelivery", "NewAssignment", "Notes"]
 };
 
 const simpleRoleViews: Record<UserRole, ViewKey[]> = {
@@ -61,7 +63,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Payments"],
   Accounts: ["Overview", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "Payments"],
-  Delivery: ["Overview", "Delivery"]
+  Delivery: ["Overview", "CurrentDelivery", "NewAssignment"]
 };
 
 const labels: Record<ViewKey, string> = {
@@ -77,6 +79,8 @@ const labels: Record<ViewKey, string> = {
   Ledger: "Ledger",
   Stock: "Stock",
   Delivery: "Delivery",
+  CurrentDelivery: "Current Delivery",
+  NewAssignment: "New Assignment",
   Settings: "Settings",
   Notes: "Notes"
 };
@@ -765,13 +769,15 @@ function App() {
               />
             ) : <TwoCol left={<Panel title="Closing Stock" eyebrow="Warehouse and admin"><DataTable headers={["Warehouse","SKU","Product","Avail","Reserved","Blocked"]} rows={snapshot.stockSummary.map((s) => [s.warehouseName, s.productSku, s.productName, s.availableQuantity, s.reservedQuantity, s.blockedQuantity])} /></Panel>} right={<Panel title="Inventory Lots" eyebrow="Traceability"><DataTable headers={["Lot","Order","Warehouse","SKU","Avail","Blocked"]} rows={snapshot.inventoryLots.map((i) => [i.lotId, i.sourceOrderId, i.warehouseId, i.productSku, i.quantityAvailable, i.quantityBlocked])} /></Panel>} />
           ) : null}
-          {activeView === "Delivery" ? (
+          {activeView === "Delivery" || activeView === "CurrentDelivery" || activeView === "NewAssignment" ? (
             isAdminUser ? (
               <TwoCol left={<Panel title="Delivery Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.side === "Purchase").length}</strong><p>Inbound tasks</p></div></div><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.side === "Sales").length}</strong><p>Outbound tasks</p></div></div><div className="list-card"><div><strong>{snapshot.deliveryTasks.filter((item) => item.status !== "Delivered").length}</strong><p>Live tasks</p></div></div></div></Panel>} right={<Panel title="Delivery Details" eyebrow="Admin view"><DataTable headers={["ID","Side","Orders","Assigned","Mode","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.assignedTo, d.mode, d.status])} /></Panel>} />
             ) : isDeliveryOnly ? (
               <DeliveryJobsView
                 snapshot={snapshot}
                 currentUser={currentUser}
+                initialTab={activeView === "NewAssignment" ? "new" : "current"}
+                showInternalTabs={false}
                 onUploadProof={async (file) => uploadFile("/delivery-tasks/upload-proof", "deliveryProof", file, "Delivery proof uploaded.")}
                 onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
               />
@@ -3620,11 +3626,15 @@ function WarehouseOperationsViewV2({
 function DeliveryJobsView({
   snapshot,
   currentUser,
+  initialTab = "current",
+  showInternalTabs = true,
   onUploadProof,
   onUpdateTask
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
+  initialTab?: "current" | "new";
+  showInternalTabs?: boolean;
   onUploadProof: (file: File) => Promise<unknown>;
   onUpdateTask: (id: string, body: {
     linkedOrderIds?: string[];
@@ -3645,9 +3655,13 @@ function DeliveryJobsView({
   const myTasks = snapshot.deliveryTasks.filter((item) => item.assignedTo === currentUser.username || item.assignedTo === currentUser.fullName);
   const [drafts, setDrafts] = useState<Record<string, { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] }>>({});
   const [currentPosition, setCurrentPosition] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [deliveryTab, setDeliveryTab] = useState<"current" | "new">("current");
+  const [deliveryTab, setDeliveryTab] = useState<"current" | "new">(initialTab);
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
+
+  useEffect(() => {
+    setDeliveryTab(initialTab);
+  }, [initialTab]);
 
   function canMarkStop(stop: DeliveryTask["routeStops"][number]) {
     if (!currentPosition || stop.latitude === undefined || stop.longitude === undefined) return true;
@@ -3858,10 +3872,10 @@ function DeliveryJobsView({
             : (newAssignments.length === 0 ? <div className="empty-card">No new assignments.</div> : newAssignments.map((task) => renderTask(task, true)))}
         </div>
       </Panel>
-      <div className="delivery-module-tab-bar">
+      {showInternalTabs ? <div className="delivery-module-tab-bar">
         <button className={deliveryTab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("current")}>Current Delivery</button>
         <button className={deliveryTab === "new" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("new")}>New Assignment</button>
-      </div>
+      </div> : null}
     </section>
   );
 }
