@@ -3684,6 +3684,35 @@ function DeliveryJobsView({
     return warehouseById.get(stop.warehouseId)?.name || stop.warehouseName;
   }
 
+  function liveStopContact(stop: DeliveryTask["routeStops"][number]) {
+    return supplierById.get(stop.supplierId || "")?.mobileNumber || "Pending";
+  }
+
+  function parseProductItems(summary: string) {
+    return summary.split(",").map((item) => item.trim()).filter(Boolean).map((item) => {
+      const match = item.match(/^(.*)\s+x\s+([\d.]+)$/i);
+      return {
+        label: match ? match[1].trim() : item,
+        quantity: match ? Number(match[2]) : 1
+      };
+    });
+  }
+
+  function totalTaskQuantity(task: DeliveryTask) {
+    return task.routeStops.reduce((sum, stop) => sum + parseProductItems(stop.productSummary).reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
+  }
+
+  function approxDistanceKmFromCurrent(stop: DeliveryTask["routeStops"][number]) {
+    if (!currentPosition || stop.latitude === undefined || stop.longitude === undefined) return null;
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const dLat = toRad(stop.latitude - currentPosition.latitude);
+    const dLon = toRad(stop.longitude - currentPosition.longitude);
+    const lat1 = toRad(currentPosition.latitude);
+    const lat2 = toRad(stop.latitude);
+    const a = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   function taskDraft(task: DeliveryTask) {
     return drafts[task.id] || {
       routeHint: task.routeHint || "",
@@ -3765,10 +3794,17 @@ function DeliveryJobsView({
     const nextStop = draft.routeStops.find((stop) => !stop.picked) || draft.routeStops[0];
     const allPicked = draft.routeStops.every((stop) => stop.picked);
     const completedStops = draft.routeStops.filter((stop) => stop.picked);
-    const progressMapUrl = nextStop && !allPicked
-      ? mapsDirectionsUrl([liveStopLocation(nextStop)])
-      : mapsDirectionsUrl([task.to]);
-    const needsCashPickup = task.paymentAction === "Deliver Payment" && draft.routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash");
+    const progressMapUrl = nextStop && !allPicked ? mapsDirectionsUrl([liveStopLocation(nextStop)]) : mapsDirectionsUrl([task.to]);
+    const totalQty = totalTaskQuantity(task);
+    const approxRouteKm = currentPosition ? draft.routeStops.reduce((sum, stop) => sum + (approxDistanceKmFromCurrent(stop) || 0), 0) : null;
+    const itemChecks = nextStop ? parseProductItems(nextStop.productSummary) : [];
+    const itemCheckKey = nextStop ? `${task.id}-${nextStop.orderId}` : "";
+    const itemCheckState = nextStop ? drafts[itemCheckKey as keyof typeof drafts] : undefined;
+    const checkedItems = Array.isArray(itemCheckState) ? itemCheckState as unknown as boolean[] : itemChecks.map(() => false);
+
+    function setCheckedItems(values: boolean[]) {
+      setDrafts((current) => ({ ...current, [itemCheckKey]: values as unknown as { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] } }));
+    }
 
     return <article className="list-card payment-update-card" key={task.id}>
       <div className="payment-update-head">
@@ -3779,92 +3815,110 @@ function DeliveryJobsView({
         <span className="status-pill status-pending">{taskProgressStatus(task, draft)}</span>
       </div>
       <div className="payment-meta-grid">
-        <div><span className="small-label">From</span><strong>{task.from}</strong></div>
-        <div><span className="small-label">To</span><strong>{task.to}</strong></div>
         <div><span className="small-label">Stops</span><strong>{draft.routeStops.length}</strong></div>
+        <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
+        <div><span className="small-label">Route km</span><strong>{approxRouteKm ? approxRouteKm.toFixed(1) : "Pending"}</strong></div>
         <div><span className="small-label">Last action</span><strong>{task.lastActionAt ? new Date(task.lastActionAt).toLocaleString("en-IN") : "Pending"}</strong></div>
       </div>
-      {!compact && nextStop ? <div className="rate-warning-box top-gap">{stepInstruction(nextStop)}</div> : null}
-      {compact ? <div className="stack-list top-gap">
-        {draft.routeStops.length > 1 ? draft.routeStops.map((stop, index) => <article className="list-card" key={`${task.id}-pick-${stop.orderId}`}>
-          <strong>{liveStopLabel(stop)}</strong>
-          <p>{liveStopLocation(stop)}</p>
-          <div className="payment-meta-grid">
-            <div><span className="small-label">Sequence</span><strong>{index === 0 ? "First stop" : `Stop ${index + 1}`}</strong></div>
-            <div><span className="small-label">Cash</span><strong>{stop.paymentRequired && stop.paymentMode === "Cash" ? stop.amountToPay.toFixed(2) : "No"}</strong></div>
-          </div>
-          {index !== 0 ? <button className="ghost-button" type="button" onClick={() => moveStopToFront(task.id, task, stop.orderId)}>Go here first</button> : null}
-        </article>) : null}
-        {needsCashPickup ? <label className="checkbox-line"><input type="checkbox" checked={draft.cashHandoverMarked} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashHandoverMarked: e.target.checked } }))} />Cash picked from accounts for vendor payment</label> : null}
-        <div className="payment-card-actions">
-          {progressMapUrl ? <a className="ghost-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open first stop map</a> : null}
-          {task.status === "Planned" ? <button className="primary-button" type="button" disabled={needsCashPickup && !draft.cashHandoverMarked} onClick={async () => {
-            await onUpdateTask(task.id, {
-              linkedOrderIds: task.linkedOrderIds,
-              assignedTo: task.assignedTo,
-              routeStops: draft.routeStops,
-              pickupAt: task.pickupAt,
-              dropAt: task.dropAt,
-              routeHint: draft.routeHint,
-              paymentAction: task.paymentAction,
-              status: "Picked",
-              cashCollectionRequired: task.cashCollectionRequired,
-              cashHandoverMarked: draft.cashHandoverMarked,
-              weightProofName: draft.weightProofName || undefined,
-              cashProofName: draft.cashProofName || undefined,
-              lastActionAt: new Date().toISOString()
-            });
-            setDeliveryTab("current");
-          }}>Start assignment</button> : null}
-          {routeMapUrl ? <a className="ghost-button" href={routeMapUrl} target="_blank" rel="noreferrer">Full route</a> : null}
-        </div>
+      {compact ? <div className="payment-card-actions top-gap">
+        <button className="primary-button" type="button" onClick={async () => {
+          await onUpdateTask(task.id, {
+            linkedOrderIds: task.linkedOrderIds,
+            assignedTo: task.assignedTo,
+            routeStops: draft.routeStops,
+            pickupAt: task.pickupAt,
+            dropAt: task.dropAt,
+            routeHint: draft.routeHint,
+            paymentAction: task.paymentAction,
+            status: "Picked",
+            cashCollectionRequired: task.cashCollectionRequired,
+            cashHandoverMarked: draft.cashHandoverMarked,
+            weightProofName: draft.weightProofName || undefined,
+            cashProofName: draft.cashProofName || undefined,
+            lastActionAt: new Date().toISOString()
+          });
+          setDeliveryTab("current");
+        }}>Start assignment</button>
       </div> : <>
-        {nextStop && !allPicked ? <article className="list-card top-gap">
-          <strong>{liveStopLabel(nextStop)}</strong>
-          <p>{liveStopLocation(nextStop)}</p>
-          <div className="payment-meta-grid">
-            <div><span className="small-label">Collect</span><strong>{nextStop.productSummary}</strong></div>
-            <div><span className="small-label">Warehouse</span><strong>{liveWarehouseName(nextStop)}</strong></div>
-            <div><span className="small-label">Payment</span><strong>{nextStop.paymentRequired ? `${nextStop.paymentMode || "Pending"} ${nextStop.amountToPay.toFixed(2)}` : "No payment"}</strong></div>
-            <div><span className="small-label">Ref</span><strong>{nextStop.paymentReference || "-"}</strong></div>
+        {!allPicked && nextStop && !nextStop.reached ? <article className="list-card top-gap">
+          <strong>Select vendor to visit</strong>
+          <div className="stack-list top-gap">
+            {draft.routeStops.filter((stop) => !stop.picked).map((stop, index) => <label className="list-card big-checkbox" key={`${task.id}-route-${stop.orderId}`}>
+              <input type="radio" name={`route-${task.id}`} checked={index === 0} onChange={() => moveStopToFront(task.id, task, stop.orderId)} />
+              <span />
+              <div>
+                <strong>{liveStopLabel(stop)}</strong>
+                <p>{liveStopLocation(stop)}</p>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Approx km</span><strong>{approxDistanceKmFromCurrent(stop)?.toFixed(1) || "Pending"}</strong></div>
+                  <div><span className="small-label">Contact</span><strong>{liveStopContact(stop)}</strong></div>
+                </div>
+              </div>
+            </label>)}
           </div>
-          {!nextStop.reached ? <>
-            {needsCashPickup ? <p className="message success top-gap">{draft.cashHandoverMarked ? "Cash picked from accounts." : "Pick cash from accounts before vendor visit."}</p> : null}
-            <div className="payment-card-actions top-gap">
-              {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open next stop map</a> : null}
-              <button className="ghost-button" type="button" disabled={!canMarkStop(nextStop)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { reached: true })}>Reached</button>
-            </div>
-            {!canMarkStop(nextStop) ? <p className="message error">Update your location, then mark reached.</p> : null}
-          </> : <>
-            {nextStop.paymentRequired ? <div className="form-grid top-gap">
-              <label>Reference / UTR<input value={nextStop.paymentReference || ""} onChange={(e) => updateStopDraft(task.id, task, nextStop.orderId, { paymentReference: e.target.value })} /></label>
-              <label>Payment proof<input type="file" accept="image/*,.pdf" onChange={(e) => void uploadStopPaymentProof(task.id, task, nextStop.orderId, e.target.files?.[0] || null)} /></label>
-              <label className="wide-field">Proof name<input value={nextStop.paymentProofName || ""} onChange={(e) => updateStopDraft(task.id, task, nextStop.orderId, { paymentProofName: e.target.value })} /></label>
-            </div> : null}
-            <div className="payment-card-actions top-gap">
-              <button className="ghost-button" type="button" disabled={!canMarkStop(nextStop)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { checked: true })}>Checked</button>
-              {nextStop.paymentRequired ? <button className="ghost-button" type="button" disabled={!nextStop.checked || !canMarkStop(nextStop) || (nextStop.paymentMode === "Cash" && !nextStop.paymentProofName)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { paid: true })}>Paid</button> : null}
-              <button className="primary-button" type="button" disabled={!nextStop.checked || (nextStop.paymentRequired && !nextStop.paid) || !canMarkStop(nextStop)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>Complete this vendor</button>
-            </div>
-            {nextStop.paymentRequired && nextStop.paymentMode === "Cash" && !nextStop.paymentProofName ? <p className="message error">Cash proof is required before payment is marked done.</p> : null}
-          </>}
+          <div className="payment-card-actions top-gap">
+            {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open map</a> : null}
+            <button className="ghost-button" type="button" disabled={!canMarkStop(nextStop)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { reached: true })}>Reached</button>
+          </div>
+        </article> : null}
+        {!allPicked && nextStop && nextStop.reached && !nextStop.checked ? <article className="list-card top-gap">
+          <strong>{liveStopLabel(nextStop)}</strong>
+          <p>Select each product after checking it.</p>
+          <div className="stack-list top-gap">
+            {itemChecks.map((item, index) => <label className="checkbox-line" key={`${item.label}-${index}`}>
+              <input type="checkbox" checked={Boolean(checkedItems[index])} onChange={(e) => {
+                const nextValues = [...checkedItems];
+                nextValues[index] = e.target.checked;
+                setCheckedItems(nextValues);
+              }} />{item.label} x {item.quantity}
+            </label>)}
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="primary-button" type="button" disabled={itemChecks.length > 0 && checkedItems.some((value) => !value)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { checked: true })}>Checked</button>
+          </div>
+        </article> : null}
+        {!allPicked && nextStop && nextStop.checked && nextStop.paymentRequired && nextStop.paymentMode === "Cash" && !nextStop.paid ? <article className="list-card top-gap">
+          <strong>Cash payment</strong>
+          <p>{liveStopLabel(nextStop)}</p>
+          <div className="payment-meta-grid">
+            <div><span className="small-label">Amount</span><strong>{nextStop.amountToPay.toFixed(2)}</strong></div>
+            <div><span className="small-label">Ref</span><strong>{nextStop.paymentReference || "Pending"}</strong></div>
+          </div>
+          <div className="form-grid top-gap">
+            <label>Reference / UTR<input value={nextStop.paymentReference || ""} onChange={(e) => updateStopDraft(task.id, task, nextStop.orderId, { paymentReference: e.target.value })} /></label>
+            <label>Cash proof<input type="file" accept="image/*,.pdf" onChange={(e) => void uploadStopPaymentProof(task.id, task, nextStop.orderId, e.target.files?.[0] || null)} /></label>
+            <label className="wide-field">Proof name<input value={nextStop.paymentProofName || ""} onChange={(e) => updateStopDraft(task.id, task, nextStop.orderId, { paymentProofName: e.target.value })} /></label>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="primary-button" type="button" disabled={!nextStop.paymentProofName} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { paid: true })}>Mark paid</button>
+          </div>
+        </article> : null}
+        {!allPicked && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
+          <strong>Complete pickup</strong>
+          <p>{liveStopLabel(nextStop)}</p>
+          <div className="payment-meta-grid">
+            <div><span className="small-label">Items</span><strong>{nextStop.productSummary}</strong></div>
+            <div><span className="small-label">Payment</span><strong>{nextStop.paymentRequired ? (nextStop.paymentMode === "Cash" ? "Cash paid" : nextStop.paymentReference || "Reference payment") : "No payment"}</strong></div>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="primary-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>Next</button>
+          </div>
         </article> : null}
         {allPicked ? <article className="list-card top-gap">
-          <strong>Return to warehouse</strong>
-          <p>{task.to}</p>
+          <strong>Vehicle summary</strong>
+          <p>All vendor pickups completed.</p>
+          <div className="payment-meta-grid">
+            <div><span className="small-label">Stops</span><strong>{completedStops.length}</strong></div>
+            <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
+          </div>
           <div className="payment-card-actions top-gap">
-            {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open warehouse map</a> : null}
+            {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Return to warehouse</a> : null}
           </div>
         </article> : null}
         {completedStops.length > 0 ? <div className="stack-list top-gap">
           {completedStops.map((stop) => <article className="list-card" key={`${task.id}-${stop.orderId}-done`}>
             <strong>{liveStopLabel(stop)}</strong>
             <p>{stop.productSummary}</p>
-            <div className="payment-meta-grid">
-              <div><span className="small-label">Checked</span><strong>{stop.checked ? "Yes" : "No"}</strong></div>
-              <div><span className="small-label">Paid</span><strong>{stop.paymentRequired ? (stop.paid ? "Yes" : "No") : "N/A"}</strong></div>
-              <div><span className="small-label">Picked</span><strong>{stop.picked ? "Yes" : "No"}</strong></div>
-            </div>
           </article>)}
         </div> : null}
         <form className="form-grid top-gap" onSubmit={async (event) => {
