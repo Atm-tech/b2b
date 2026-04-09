@@ -619,12 +619,12 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
         client
       );
       if (!cart) return;
-      const goodsValue = paidAmount > 0 ? numberValue(cart.total_amount) : numberValue(cart.received_value);
+      const goodsValue = numberValue(cart.total_amount);
       await upsertLedger(side, linkedOrderId, stringValue(cart.supplier_name), goodsValue, paidAmount, client, isoValue(cart.created_at) || now());
       return;
     }
     const receivedRatio = numberValue(order.quantity_ordered) > 0 ? numberValue(order.quantity_received) / numberValue(order.quantity_ordered) : 0;
-    const goodsValue = paidAmount > 0 ? numberValue(order.total_amount) : numberValue(order.total_amount) * receivedRatio;
+    const goodsValue = numberValue(order.total_amount);
     await upsertLedger(side, linkedOrderId, stringValue(order.supplier_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
     return;
   }

@@ -3139,7 +3139,7 @@ function WarehouseOperationsViewV2({
 
   function paidBeforeReceiving(group: PurchaseGroup) {
     const ledger = purchaseLedger(group);
-    return Boolean(ledger && ledger.pendingAmount === 0 && groupPendingQty(group) > 0);
+    return Boolean(ledger && ledger.pendingAmount === 0 && ledger.paidAmount > 0 && groupPendingQty(group) > 0);
   }
 
   function hasPartialFlag(group: PurchaseGroup, received: boolean, billDifference: number) {
@@ -3243,7 +3243,12 @@ function WarehouseOperationsViewV2({
     const inboundTask = inboundTaskForGroup(group.id);
     const needsPickupTask = groupNeedsPickupTask(group);
     const vendorDeliveryCashAtDelivery = groupVendorDeliveryCashAtDelivery(group);
-    const billDifference = Math.max(groupTotal(group) - (ledger?.goodsValue || 0), 0);
+    const receivedValue = group.lines.reduce((sum, line) => {
+      if (line.quantityOrdered <= 0) return sum;
+      return sum + (line.totalAmount * (Math.min(line.quantityReceived, line.quantityOrdered) / line.quantityOrdered));
+    }, 0);
+    const hasAnyReceiptProgress = group.lines.some((line) => line.quantityReceived > 0 || Boolean(receiptByOrderId.get(line.id)));
+    const billDifference = hasAnyReceiptProgress ? Math.max(groupTotal(group) - receivedValue, 0) : 0;
     const pendingLines = group.lines.filter((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0);
     const checkedLineIds = selectedReceiveLines[group.id] || pendingLines.map((line) => line.id);
     return <article className="list-card payment-update-card warehouse-order-card" key={group.id}>
