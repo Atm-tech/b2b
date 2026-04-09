@@ -2332,14 +2332,16 @@ function AccountsPaymentsView({
   onVerify: (paymentId: string, verificationStatus: "Verified" | "Rejected" | "Resolved", verificationNote: string) => Promise<boolean | void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
-  const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified" || item.verificationStatus === "Resolved");
+    const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
+    const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified" || item.verificationStatus === "Resolved");
   const dayCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
   const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
-  const accountOrderOptions = [
-    ...groupPurchaseOrders(snapshot.purchaseOrders).map((group) => ({ id: group.id, side: "Purchase" as const, party: group.lines[0]?.supplierName || "Supplier", pendingAmount: purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id) })),
-    ...Array.from(new Set(snapshot.salesOrders.map((order) => orderPublicId(order)))).map((id) => ({ id, side: "Sales" as const, party: findSalesOrderByPublicId(snapshot.salesOrders, id)?.shopName || "Customer", pendingAmount: snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id) }))
-  ].filter((item) => item.pendingAmount > 0);
+    const accountOrderOptions = [
+      ...groupPurchaseOrders(snapshot.purchaseOrders).map((group) => ({ id: group.id, side: "Purchase" as const, party: group.lines[0]?.supplierName || "Supplier", pendingAmount: purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id) })),
+      ...Array.from(new Set(snapshot.salesOrders.map((order) => orderPublicId(order)))).map((id) => ({ id, side: "Sales" as const, party: findSalesOrderByPublicId(snapshot.salesOrders, id)?.shopName || "Customer", pendingAmount: snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id) }))
+    ].filter((item) => item.pendingAmount > 0);
+    const purchaseOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Purchase");
+    const salesOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Sales");
   const [createForm, setCreateForm] = useState({
     side: (accountOrderOptions[0]?.side || "Purchase") as "Purchase" | "Sales",
     linkedOrderId: accountOrderOptions[0]?.id || "",
@@ -2356,14 +2358,23 @@ function AccountsPaymentsView({
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   return (
     <section className="dashboard-grid">
-      <Panel title="Accounts Summary" eyebrow="Pending and completed">
-        <div className="simple-summary payment-summary-grid">
-          <div className="list-card"><div><strong>{pending.length}</strong><p>Pending payments</p></div></div>
-          <div className="list-card"><div><strong>{completed.length}</strong><p>Completed payments</p></div></div>
-          <div className="list-card"><div><strong>{dayCash}</strong><p>Cash reported today</p></div></div>
-        </div>
-      </Panel>
-      <Panel title="Record Payment" eyebrow="Accounts entry">
+        <Panel title="Accounts Summary" eyebrow="Pending and completed">
+          <div className="simple-summary payment-summary-grid">
+            <div className="list-card"><div><strong>{accountOrderOptions.length}</strong><p>Orders awaiting accounts action</p></div></div>
+            <div className="list-card"><div><strong>{pending.length}</strong><p>Pending payment proofs</p></div></div>
+            <div className="list-card"><div><strong>{completed.length}</strong><p>Completed payments</p></div></div>
+            <div className="list-card"><div><strong>{dayCash}</strong><p>Cash reported today</p></div></div>
+          </div>
+        </Panel>
+        <Panel title="Orders Awaiting Accounts Action" eyebrow="Order-wise pending balance">
+          <DataTable
+            headers={["Side","Order","Party","Pending"]}
+            rows={accountOrderOptions.length === 0
+              ? []
+              : accountOrderOptions.map((item) => [item.side, item.id, item.party, item.pendingAmount.toFixed(2)])}
+          />
+        </Panel>
+        <Panel title="Record Payment" eyebrow="Accounts entry">
         <form className="form-grid" onSubmit={async (event) => {
           event.preventDefault();
           await onCreatePayment({
@@ -2384,11 +2395,11 @@ function AccountsPaymentsView({
             const side = e.target.value as "Purchase" | "Sales";
             const next = accountOrderOptions.find((item) => item.side === side);
             setCreateForm((current) => ({ ...current, side, linkedOrderId: next?.id || "", amount: String(next?.pendingAmount || 0) }));
-          }}><option>Purchase</option><option>Sales</option></select></label>
-          <label>Order<select value={createForm.linkedOrderId} onChange={(e) => {
-            const next = accountOrderOptions.find((item) => item.id === e.target.value && item.side === createForm.side);
-            setCreateForm((current) => ({ ...current, linkedOrderId: e.target.value, amount: String(next?.pendingAmount || current.amount) }));
-          }}>{accountOrderOptions.filter((item) => item.side === createForm.side).map((item) => <option key={`${item.side}-${item.id}`} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
+            }}><option>Purchase</option><option>Sales</option></select></label>
+            <label>Order<select value={createForm.linkedOrderId} onChange={(e) => {
+              const next = accountOrderOptions.find((item) => item.id === e.target.value && item.side === createForm.side);
+              setCreateForm((current) => ({ ...current, linkedOrderId: e.target.value, amount: String(next?.pendingAmount || current.amount) }));
+            }}>{(createForm.side === "Purchase" ? purchaseOrderPendingOptions : salesOrderPendingOptions).map((item) => <option key={`${item.side}-${item.id}`} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
           <label>Amount<input type="number" value={createForm.amount} onChange={(e) => setCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
           <label>Mode<select value={createForm.mode} onChange={(e) => setCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
           {createForm.mode === "Cash" ? <label>Cash timing<select value={createForm.cashTiming} onChange={(e) => setCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
