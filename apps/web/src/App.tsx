@@ -671,32 +671,21 @@ function App() {
             <TwoCol left={<Panel title={currentUser.role === "Sales" ? "Register Customer" : "Register Supplier"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><form className="form-grid" onSubmit={saveStandaloneParty}><label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label><label className={partyFormErrors.name ? "field-error" : ""}>Name<input value={partyForm.name} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, name: false })); setPartyForm((c) => ({ ...c, name: e.target.value })); }} /></label><label className={partyFormErrors.gstNumber ? "field-error" : ""}>GST<input value={partyForm.gstNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.value })); }} placeholder="GST number or N/A" /></label><label>Bank name<input value={partyForm.bankName} onChange={(e) => setPartyForm((c) => ({ ...c, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label><label className={partyFormErrors.bankAccountNumber ? "field-error" : ""}>Bank account<input value={partyForm.bankAccountNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, bankAccountNumber: false })); setPartyForm((c) => ({ ...c, bankAccountNumber: e.target.value })); }} placeholder="Account number or N/A" /></label><label className={partyFormErrors.ifscCode ? "field-error" : ""}>IFSC<input value={partyForm.ifscCode} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, ifscCode: false })); setPartyForm((c) => ({ ...c, ifscCode: e.target.value.toUpperCase() })); }} placeholder="IFSC code or N/A" /></label><label>Mobile<input value={partyForm.mobileNumber} onChange={(e) => setPartyForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">{currentUser.role === "Sales" ? "Save customer" : "Save supplier"}</button></form></Panel>} right={<><Panel title={currentUser.role === "Sales" ? "Update Customer" : "Update Supplier"} eyebrow="Edit details"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}><label>Party<select value={partyEditForm.id} onChange={(e) => { const sourceItems = currentUser.role === "Sales" ? shops : suppliers; const item = sourceItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(currentUser.role === "Sales" ? shops : suppliers)}</select></label><label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label><label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label><label>Bank name<input value={partyEditForm.bankName} onChange={(e) => setPartyEditForm((c) => ({ ...c, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label><label>Bank account<input value={partyEditForm.bankAccountNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, bankAccountNumber: e.target.value }))} placeholder="Account number or N/A" /></label><label>IFSC<input value={partyEditForm.ifscCode} onChange={(e) => setPartyEditForm((c) => ({ ...c, ifscCode: e.target.value.toUpperCase() }))} placeholder="IFSC code or N/A" /></label><label>Mobile<input value={partyEditForm.mobileNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Contact<input value={partyEditForm.contactPerson} onChange={(e) => setPartyEditForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label><label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((c) => ({ ...c, city: e.target.value }))} /></label><label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Update</button></form></Panel><Panel title={currentUser.role === "Sales" ? "Customer Database" : "Supplier Database"} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}><DataTable headers={["Name","GST","Account","IFSC","City"]} rows={(currentUser.role === "Sales" ? shops : suppliers).map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} /></Panel></>} />
           ) : null}
           {activeView === "Purchase" ? (isAdminUser ? <TwoCol left={<Panel title="Purchase Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{countGroupedOrders(snapshot.purchaseOrders)}</strong><p>Total purchase orders</p></div></div><div className="list-card"><div><strong>{countGroupedOrders(snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"))}</strong><p>Open purchase orders</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingPurchasePayments}</strong><p>Pending purchase payments</p></div></div></div></Panel>} right={<Panel title="Purchase Orders" eyebrow="Live status"><DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(snapshot.purchaseOrders, snapshot)} /></Panel>} /> : <>
-            <CatalogOrderView
-            mode="purchase"
-            title="Purchaser Checkout"
-            eyebrow="Supplier procurement"
-            products={applyWarehouseScope ? snapshot.products.filter((product) => product.allowedWarehouseIds.some((id) => warehouseScope.has(id))) : snapshot.products}
-            parties={suppliers}
-            warehouses={warehousesView}
-            paymentMethods={paymentMethods}
-            stockSummary={stockSummaryView}
-            purchaseOrders={purchaseOrdersView}
-            orderForm={purchaseForm}
-            setOrderForm={setPurchaseForm}
-            onCreateParty={createPartyRecord}
-            onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
-            rightPanel={null}
-          />
-            <TwoCol
-              left={<Panel title="My Purchase List" eyebrow="Live status">
-                <DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(purchaseOrdersView.filter((p) => p.purchaserId === currentUser.id || p.purchaserName === currentUser.fullName), snapshot)} />
-              </Panel>}
-              right={<PurchaseCartEditor
-                snapshot={snapshot}
-                currentUser={currentUser}
-                onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
-              />}
+            <PurchaserPurchaseWorkspace
+              snapshot={snapshot}
+              currentUser={currentUser}
+              products={applyWarehouseScope ? snapshot.products.filter((product) => product.allowedWarehouseIds.some((id) => warehouseScope.has(id))) : snapshot.products}
+              suppliers={suppliers}
+              warehouses={warehousesView}
+              paymentMethods={paymentMethods}
+              stockSummary={stockSummaryView}
+              purchaseOrders={purchaseOrdersView}
+              orderForm={purchaseForm}
+              setOrderForm={setPurchaseForm}
+              onCreateParty={createPartyRecord}
+              onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
+              onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
+              onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
             />
           </>) : null}
           {activeView === "Sales" ? (isAdminUser ? <TwoCol left={<Panel title="Sales Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders)}</strong><p>Total sales carts</p></div></div><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed"))}</strong><p>Open sales carts</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Pending sales payments</p></div></div></div></Panel>} right={<Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel>} /> : <CatalogOrderView
@@ -2017,6 +2006,91 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   );
 
   return rightPanel ? <TwoCol left={mainPanel} right={rightPanel} /> : <section>{mainPanel}</section>;
+}
+
+function PurchaserPurchaseWorkspace({
+  snapshot,
+  currentUser,
+  products,
+  suppliers,
+  warehouses,
+  paymentMethods,
+  stockSummary,
+  purchaseOrders,
+  orderForm,
+  setOrderForm,
+  onCreateParty,
+  onUploadProof,
+  onSubmit,
+  onUpdateCart
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  products: AppSnapshot["products"];
+  suppliers: Counterparty[];
+  warehouses: AppSnapshot["warehouses"];
+  paymentMethods: AppSnapshot["settings"]["paymentMethods"];
+  stockSummary: AppSnapshot["stockSummary"];
+  purchaseOrders: AppSnapshot["purchaseOrders"];
+  orderForm: any;
+  setOrderForm: React.Dispatch<React.SetStateAction<any>>;
+  onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
+  onUploadProof: (file: File) => Promise<unknown>;
+  onSubmit: CatalogOrderViewProps["onSubmit"];
+  onUpdateCart: (orderId: string, body: {
+    paymentMode: PaymentMode;
+    cashTiming?: string;
+    deliveryMode: "Dealer Delivery" | "Self Collection";
+    note: string;
+    status: PurchaseOrder["status"];
+    lines: Array<{
+      id: string;
+      quantityOrdered: number;
+      rate: number;
+      taxableAmount: number;
+      gstRate: "NA" | 0 | 5 | 18;
+      gstAmount: number;
+      taxMode: "NA" | "Exclusive" | "Inclusive";
+    }>;
+  }) => Promise<boolean | void>;
+}) {
+  const [tab, setTab] = useState<"current" | "update" | "summary">("current");
+  const myOrders = purchaseOrders.filter((order) => order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName);
+
+  return (
+    <section className="module-stack">
+      {tab === "current" ? <CatalogOrderView
+        mode="purchase"
+        title="Current Purchase"
+        eyebrow="Create supplier order"
+        products={products}
+        parties={suppliers}
+        warehouses={warehouses}
+        paymentMethods={paymentMethods}
+        stockSummary={stockSummary}
+        purchaseOrders={purchaseOrders}
+        orderForm={orderForm}
+        setOrderForm={setOrderForm}
+        onCreateParty={onCreateParty}
+        onUploadProof={onUploadProof}
+        onSubmit={onSubmit}
+        rightPanel={null}
+      /> : null}
+      {tab === "update" ? <PurchaseCartEditor
+        snapshot={snapshot}
+        currentUser={currentUser}
+        onUpdateCart={onUpdateCart}
+      /> : null}
+      {tab === "summary" ? <Panel title="Order Summary" eyebrow="Your purchase orders">
+        <DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(myOrders, snapshot)} />
+      </Panel> : null}
+      <div className="purchase-module-tab-bar">
+        <button className={tab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("current")}>Current Purchase</button>
+        <button className={tab === "update" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("update")}>Update Order</button>
+        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}>Order Summary</button>
+      </div>
+    </section>
+  );
 }
 
 function PurchaseCartEditor({
@@ -3466,11 +3540,15 @@ function WarehouseOperationsViewV2({
                 warehouseId: first.warehouseId,
                 warehouseName: warehouse?.name || first.warehouseId,
                 amountToPay: purchasePaymentStatus(snapshot, group.id) === "Completed" ? 0 : (purchaseLedger(group)?.pendingAmount || groupTotal(group)),
-                  paymentRequired: purchasePaymentStatus(snapshot, group.id) !== "Completed",
-                  latitude: supplier?.latitude,
-                  longitude: supplier?.longitude,
-                  locationLabel: supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", "),
-                  reached: false,
+                paymentRequired: purchasePaymentStatus(snapshot, group.id) !== "Completed",
+                paymentMode: first.paymentMode,
+                cashTiming: first.cashTiming,
+                paymentReference: "",
+                paymentProofName: "",
+                latitude: supplier?.latitude,
+                longitude: supplier?.longitude,
+                locationLabel: supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", "),
+                reached: false,
                 paid: purchasePaymentStatus(snapshot, group.id) === "Completed",
                 picked: false
               };
@@ -3586,6 +3664,27 @@ function DeliveryJobsView({
     return warehouseById.get(stop.warehouseId)?.name || stop.warehouseName;
   }
 
+  function updateStopDraft(taskId: string, task: DeliveryTask, orderId: string, updates: Partial<DeliveryTask["routeStops"][number]>) {
+    setDrafts((current) => {
+      const draft = current[taskId] || { routeHint: task.routeHint || "", weightProofName: task.weightProofName || "", cashProofName: task.cashProofName || "", cashHandoverMarked: task.cashHandoverMarked, status: task.status, routeStops: task.routeStops || [] };
+      return {
+        ...current,
+        [taskId]: {
+          ...draft,
+          cashHandoverMarked: draft.routeStops.some((stop) => stop.orderId === orderId ? Boolean(updates.paid ?? stop.paid) : stop.paid),
+          routeStops: draft.routeStops.map((stop) => stop.orderId === orderId ? { ...stop, ...updates } : stop)
+        }
+      };
+    });
+  }
+
+  async function uploadStopPaymentProof(taskId: string, task: DeliveryTask, orderId: string, file: File | null) {
+    if (!file) return;
+    const uploaded = await onUploadProof(file);
+    if (!uploaded || typeof uploaded !== "object" || !("fileName" in uploaded)) return;
+    updateStopDraft(taskId, task, orderId, { paymentProofName: String((uploaded as { fileName: string }).fileName) });
+  }
+
   return (
     <section className="dashboard-grid">
       <Panel title="Delivery Summary" eyebrow="Route and handover">
@@ -3626,16 +3725,33 @@ function DeliveryJobsView({
                     <p>{stop.productSummary}</p>
                     <div className="payment-meta-grid">
                       <div><span className="small-label">Pay</span><strong>{stop.paymentRequired ? stop.amountToPay.toFixed(2) : "No"}</strong></div>
+                      <div><span className="small-label">MOP</span><strong>{stop.paymentRequired ? `${stop.paymentMode || "Pending"}${stop.paymentMode === "Cash" && stop.cashTiming ? ` / ${stop.cashTiming}` : ""}` : "Not needed"}</strong></div>
                       <div><span className="small-label">Warehouse</span><strong>{liveWarehouseName(stop)}</strong></div>
                       <div><span className="small-label">Reached</span><strong>{stop.reached ? "Yes" : "No"}</strong></div>
                       <div><span className="small-label">Picked</span><strong>{stop.picked ? "Yes" : "No"}</strong></div>
+                      <div><span className="small-label">Proof</span><strong>{stop.paymentProofName || "Pending"}</strong></div>
                     </div>
+                  {stop.paymentRequired ? <div className="form-grid top-gap">
+                    <label>
+                      Reference / UTR
+                      <input value={stop.paymentReference || ""} onChange={(e) => updateStopDraft(task.id, task, stop.orderId, { paymentReference: e.target.value })} />
+                    </label>
+                    <label>
+                      Payment proof
+                      <input type="file" accept="image/*,.pdf" onChange={(e) => void uploadStopPaymentProof(task.id, task, stop.orderId, e.target.files?.[0] || null)} />
+                    </label>
+                    <label className="wide-field">
+                      Proof name
+                      <input value={stop.paymentProofName || ""} onChange={(e) => updateStopDraft(task.id, task, stop.orderId, { paymentProofName: e.target.value })} />
+                    </label>
+                  </div> : null}
                   <div className="payment-card-actions">
-                    <button className="ghost-button" type="button" disabled={!canMarkStop(stop)} onClick={() => setDrafts((current) => ({ ...current, [task.id]: { ...draft, routeStops: draft.routeStops.map((item) => item.orderId === stop.orderId ? { ...item, reached: true } : item) } }))}>Reached</button>
-                    {stop.paymentRequired ? <button className="ghost-button" type="button" disabled={!stop.reached || !canMarkStop(stop)} onClick={() => setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashHandoverMarked: true, routeStops: draft.routeStops.map((item) => item.orderId === stop.orderId ? { ...item, paid: true } : item) } }))}>Paid</button> : null}
+                    <button className="ghost-button" type="button" disabled={!canMarkStop(stop)} onClick={() => updateStopDraft(task.id, task, stop.orderId, { reached: true })}>Reached</button>
+                    {stop.paymentRequired ? <button className="ghost-button" type="button" disabled={!stop.reached || !canMarkStop(stop) || (stop.paymentMode === "Cash" && !stop.paymentProofName)} onClick={() => updateStopDraft(task.id, task, stop.orderId, { paid: true })}>Paid</button> : null}
                     <button className="ghost-button" type="button" disabled={!stop.reached || (stop.paymentRequired && !stop.paid) || !canMarkStop(stop)} onClick={() => setDrafts((current) => ({ ...current, [task.id]: { ...draft, routeStops: draft.routeStops.map((item) => item.orderId === stop.orderId ? { ...item, picked: true } : item), status: "Picked" } }))}>Picked</button>
                     {liveStopLocation(stop) ? <a className="ghost-button" href={mapsDirectionsUrl([liveStopLocation(stop)])} target="_blank" rel="noreferrer">Map</a> : null}
                   </div>
+                  {stop.paymentRequired && stop.paymentMode === "Cash" && !stop.paymentProofName ? <p className="message error">Cash proof is required for this vendor before marking payment done.</p> : null}
                   {!canMarkStop(stop) ? <p className="message error">Wrong supplier location. Update your location and retry.</p> : null}
                 </article>)}
               </div> : null}

@@ -274,6 +274,10 @@ export type DeliveryRouteStop = {
   warehouseName: string;
   amountToPay: number;
   paymentRequired: boolean;
+  paymentMode?: PaymentMode;
+  cashTiming?: CashTiming;
+  paymentReference?: string;
+  paymentProofName?: string;
   latitude?: number;
   longitude?: number;
   locationLabel?: string;
