@@ -818,6 +818,7 @@ function App() {
                 onUploadProof={async (file) => uploadFile("/receipt-checks/upload-proof", "receiptProof", file, "Weighing proof uploaded.")}
                 onUploadPaymentProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Cash proof uploaded.")}
                 onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
+                onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Inbound docket received.")}
                 onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
                 onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
@@ -834,6 +835,7 @@ function App() {
                 onUploadProof={async (file) => uploadFile("/receipt-checks/upload-proof", "receiptProof", file, "Weighing proof uploaded.")}
                 onUploadPaymentProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Cash proof uploaded.")}
                 onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
+                onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
                 onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
                 onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
@@ -3169,6 +3171,7 @@ function WarehouseOperationsViewV2({
   onUploadProof,
   onUploadPaymentProof,
   onReceive,
+  onUpdateTask,
   onUpdateSalesOrder,
   onCreateDeliveryTask,
   onCreateConsignment,
@@ -3179,6 +3182,21 @@ function WarehouseOperationsViewV2({
   onUploadProof: (file: File) => Promise<unknown>;
   onUploadPaymentProof: (file: File) => Promise<unknown>;
   onReceive: (body: { purchaseOrderId: string; warehouseId: string; receivedQuantity: number; actualWeightKg: number; containerWeightKg?: number; weighingProofName?: string; cashProofName?: string; note: string; confirmPartial: boolean }) => Promise<boolean | void>;
+  onUpdateTask: (id: string, body: {
+    linkedOrderIds: string[];
+    assignedTo: string;
+    routeStops?: DeliveryTask["routeStops"];
+    pickupAt?: string;
+    dropAt?: string;
+    routeHint?: string;
+    paymentAction: DeliveryTask["paymentAction"];
+    status: DeliveryTask["status"];
+    cashCollectionRequired: boolean;
+    cashHandoverMarked: boolean;
+    weightProofName?: string;
+    cashProofName?: string;
+    lastActionAt?: string;
+  }) => Promise<boolean | void>;
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; containerWeightKg?: number; weighingProofName?: string }) => Promise<boolean | void>;
   onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<boolean | void>;
@@ -3189,11 +3207,14 @@ function WarehouseOperationsViewV2({
   const [activeTab, setActiveTab] = useState<"home" | "in" | "out">(screen === "in" ? "in" : screen === "out" ? "out" : "home");
   const [expandedReceive, setExpandedReceive] = useState<Record<string, boolean>>({});
   const [expandedReceiveVendor, setExpandedReceiveVendor] = useState<Record<string, boolean>>({});
+  const [expandedReceiveDocketSummary, setExpandedReceiveDocketSummary] = useState<Record<string, boolean>>({});
   const [expandedSend, setExpandedSend] = useState<Record<string, boolean>>({});
   const [expandedSendStop, setExpandedSendStop] = useState<Record<string, boolean>>({});
   const [expandedReceiveSummary, setExpandedReceiveSummary] = useState<Record<string, boolean>>({});
   const [expandedSendSummary, setExpandedSendSummary] = useState<Record<string, boolean>>({});
   const [selectedReceiveLines, setSelectedReceiveLines] = useState<Record<string, string[]>>({});
+  const [receivingVendorKeys, setReceivingVendorKeys] = useState<Record<string, boolean>>({});
+  const [finalizingReceiveDockets, setFinalizingReceiveDockets] = useState<Record<string, boolean>>({});
   const [selectedInboundGroups, setSelectedInboundGroups] = useState<string[]>([]);
   const [selectedOutboundGroups, setSelectedOutboundGroups] = useState<string[]>([]);
   const [inboundAssignedTo, setInboundAssignedTo] = useState("d");
@@ -3312,11 +3333,15 @@ function WarehouseOperationsViewV2({
     .filter((item) => item.task.status === "Planned")
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const receivingInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status !== "Planned" && item.groups.some((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed")))
+    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered")
     .sort((left, right) => {
+      const leftCompleted = left.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
+      const rightCompleted = right.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
       const leftReceived = left.groups.some((group) => group.lines.some((line) => line.quantityReceived > 0));
       const rightReceived = right.groups.some((group) => group.lines.some((line) => line.quantityReceived > 0));
-      return Number(rightReceived) - Number(leftReceived) || new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime();
+      return Number(leftCompleted) - Number(rightCompleted)
+        || Number(rightReceived) - Number(leftReceived)
+        || new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime();
     });
   const directReceiveGroups = pendingReceiveGroups
     .filter((group) => !groupNeedsPickupTask(group))
@@ -3427,9 +3452,10 @@ function WarehouseOperationsViewV2({
     setIncomingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { receivedQuantity: "0", actualWeightKg: "0", containerWeightKg: "0", weighingProofName: "", cashProofName: "", note: "" }), cashProofName: fileName } }));
   }
 
-  function renderReceiveGroupLines(group: PurchaseGroup, received: boolean) {
+  function renderReceiveGroupLines(group: PurchaseGroup, received: boolean, vendorKey?: string, onCompleted?: () => void) {
     const pendingLines = group.lines.filter((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0);
     const checkedLineIds = selectedReceiveLines[group.id] || pendingLines.map((line) => line.id);
+    const isSubmitting = vendorKey ? Boolean(receivingVendorKeys[vendorKey]) : false;
     return <>
       {group.lines.map((line) => {
         const pendingQty = Math.max(line.quantityOrdered - line.quantityReceived, 0);
@@ -3468,7 +3494,11 @@ function WarehouseOperationsViewV2({
       })}
       {!received && pendingLines.length > 0 ? <div className="payment-card-actions">
         <span className="small-label">{checkedLineIds.length} checked product(s)</span>
-        <button className="primary-button" type="button" onClick={async () => {
+        <button className="primary-button" type="button" disabled={isSubmitting || checkedLineIds.length === 0} onClick={async () => {
+          if (vendorKey) {
+            setReceivingVendorKeys((current) => ({ ...current, [vendorKey]: true }));
+          }
+          try {
           let vendorCashProofName = "";
           for (const line of pendingLines.filter((line) => checkedLineIds.includes(line.id))) {
             const pendingQty = Math.max(line.quantityOrdered - line.quantityReceived, 0);
@@ -3497,7 +3527,16 @@ function WarehouseOperationsViewV2({
           if (vendorCashProofName) {
             window.alert("Cash proof linked. Payment will be marked completed with this receipt.");
           }
-        }}>Receive checked products</button>
+          if (vendorKey) {
+            setExpandedReceiveVendor((current) => ({ ...current, [vendorKey]: false }));
+          }
+          onCompleted?.();
+          } finally {
+            if (vendorKey) {
+              setReceivingVendorKeys((current) => ({ ...current, [vendorKey]: false }));
+            }
+          }
+        }}>{isSubmitting ? "Receiving..." : "Receive checked products"}</button>
       </div> : null}
     </>;
   }
@@ -3566,8 +3605,12 @@ function WarehouseOperationsViewV2({
     const groups = purchaseGroups.filter((group) => task.linkedOrderIds.includes(group.id));
     if (groups.length === 0) return null;
     const expanded = expandedReceive[task.id] ?? false;
+    const summaryExpanded = expandedReceiveDocketSummary[task.id] ?? false;
     const totalPendingQty = groups.reduce((sum, group) => sum + groupPendingQty(group), 0);
     const totalPendingWeight = groups.reduce((sum, group) => sum + groupWeight(group, true), 0);
+    const totalQty = groups.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantityOrdered, 0), 0);
+    const totalWeight = groups.reduce((sum, group) => sum + groupWeight(group, false), 0);
+    const totalAmount = groups.reduce((sum, group) => sum + groupTotal(group), 0);
     const anyReceived = groups.some((group) => group.lines.some((line) => line.quantityReceived > 0 || line.status === "Partially Received"));
     const allReceived = groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
     const docketStatus = allReceived ? "Received" : anyReceived ? "Partially Received" : task.status;
@@ -3612,10 +3655,52 @@ function WarehouseOperationsViewV2({
             </button>
             {vendorExpanded ? <div className="stack-list top-gap">
               {paidBeforeReceiving(group) ? <p className="message success">Payment already settled. Kept on top until receiving is completed.</p> : null}
-              {renderReceiveGroupLines(group, received)}
+              {renderReceiveGroupLines(group, received, vendorKey, () => {
+                const isNowComplete = group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0);
+                if (isNowComplete) {
+                  setExpandedReceiveVendor((current) => ({ ...current, [vendorKey]: false }));
+                }
+              })}
             </div> : null}
           </article>;
         })}
+        {allReceived ? <article className="list-card warehouse-summary-card">
+          <strong>Docket Summary</strong>
+          <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
+            <div><span className="small-label">Total weight</span><strong>{totalWeight.toFixed(2)} kg</strong></div>
+            <div><span className="small-label">Total amount</span><strong>{totalAmount.toFixed(2)}</strong></div>
+            <div><span className="small-label">Vendors</span><strong>{groups.length}</strong></div>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => setExpandedReceiveDocketSummary((current) => ({ ...current, [task.id]: !summaryExpanded }))}>{summaryExpanded ? "Hide final check" : "Open final check"}</button>
+          </div>
+          {summaryExpanded ? <div className="payment-card-actions top-gap">
+            <button className="primary-button" type="button" disabled={Boolean(finalizingReceiveDockets[task.id])} onClick={async () => {
+              setFinalizingReceiveDockets((current) => ({ ...current, [task.id]: true }));
+              try {
+                await onUpdateTask(task.id, {
+                  linkedOrderIds: task.linkedOrderIds,
+                  assignedTo: task.assignedTo,
+                  routeStops: task.routeStops,
+                  pickupAt: task.pickupAt,
+                  dropAt: task.dropAt,
+                  routeHint: task.routeHint,
+                  paymentAction: task.paymentAction,
+                  status: "Delivered",
+                  cashCollectionRequired: task.cashCollectionRequired,
+                  cashHandoverMarked: task.cashHandoverMarked,
+                  weightProofName: task.weightProofName || undefined,
+                  cashProofName: task.cashProofName || undefined,
+                  lastActionAt: new Date().toISOString()
+                });
+                setExpandedReceive((current) => ({ ...current, [task.id]: false }));
+              } finally {
+                setFinalizingReceiveDockets((current) => ({ ...current, [task.id]: false }));
+              }
+            }}>{finalizingReceiveDockets[task.id] ? "Finalizing..." : "Final check and receive"}</button>
+          </div> : null}
+        </article> : null}
       </div> : null}
     </article>;
   }
