@@ -371,15 +371,27 @@ app.post("/purchase-orders/cart", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Purchaser", "Accounts"]);
+  const currentUser = await requireRole(req, ["Purchaser", "Admin"]);
+  const lines = requiredArray(req.body?.lines, "Cart lines").map((line) => {
+    const rawGstRate = optionalString(line?.gstRate);
+    const parsedGstRate: "NA" | 0 | 5 | 18 | undefined = rawGstRate?.toUpperCase() === "NA" ? "NA" : parseOptionalGstRate(line?.gstRate);
+    return {
+    id: requiredString(line?.id, "Cart line"),
+    quantityOrdered: requiredNumber(line?.quantityOrdered ?? line?.quantity, "Quantity"),
+    rate: requiredNumber(line?.rate, "Rate"),
+    taxableAmount: optionalNumber(line?.taxableAmount),
+    gstRate: parsedGstRate,
+    gstAmount: optionalNumber(line?.gstAmount),
+    taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined
+  };});
   return updatePurchaseOrder(req.params.id, {
-    rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
     deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Dealer Delivery" | "Self Collection",
     note: optionalString(req.body?.note) || "",
-    status: requiredString(req.body?.status, "Status") as any
-  });
+    status: requiredString(req.body?.status, "Status") as any,
+    lines
+  }, currentUser);
 }));
 
 app.post("/sales-orders", async (req, res) => wrap(res, async () => {
@@ -772,6 +784,13 @@ function requiredStringArray(value: unknown, label: string) {
     throw new Error(`${label} must contain at least one item.`);
   }
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function requiredArray(value: unknown, label: string) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must contain at least one item.`);
+  }
+  return value;
 }
 
 function normalizeSlabs(value: unknown, fallbackRate = 0) {

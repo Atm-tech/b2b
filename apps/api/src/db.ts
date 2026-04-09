@@ -1145,6 +1145,53 @@ export async function createPurchaseCart(payload: Omit<Parameters<typeof createP
   return getSnapshot();
 }
 
+function currentUserHasRole(currentUser: CurrentUser, role: UserRole) {
+  return currentUser.role === role || currentUser.roles.includes(role);
+}
+
+async function assertPurchaseCartEditable(orderId: string, currentUser: CurrentUser, client?: DbClient) {
+  const linesResult = await query<Record<string, unknown>>(
+    `SELECT *
+     FROM purchase_orders
+     WHERE cart_id = $1 OR id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [orderId],
+    client
+  );
+  if (linesResult.rows.length === 0) throw new Error("Purchase order not found.");
+  const publicOrderId = stringValue(linesResult.rows[0].cart_id) || stringValue(linesResult.rows[0].id);
+  const isAdmin = currentUserHasRole(currentUser, "Admin");
+  if (!isAdmin) {
+    const purchaserId = numberValue(linesResult.rows[0].purchaser_id);
+    if (currentUser.id !== purchaserId) {
+      throw new Error("Only the purchaser or admin can edit this purchase cart.");
+    }
+  }
+  const ledger = await one<Record<string, unknown>>(
+    "SELECT paid_amount FROM ledger_entries WHERE side = 'Purchase' AND linked_order_id = $1",
+    [publicOrderId],
+    client
+  );
+  if (!isAdmin && numberValue(ledger?.paid_amount) > 0) {
+    throw new Error("Purchase cart cannot be edited after payment is completed. Only admin can edit it now.");
+  }
+  const purchaseTasks = await query<Record<string, unknown>>(
+    `SELECT id, status
+     FROM delivery_tasks
+     WHERE side = 'Purchase'
+       AND (linked_order_id = $1 OR linked_order_ids_json::text LIKE $2)`,
+    [publicOrderId, `%${publicOrderId}%`],
+    client
+  );
+  if (!isAdmin && purchaseTasks.rows.some((row) => stringValue(row.status) !== "Planned")) {
+    throw new Error("Purchase cart cannot be edited after pickup starts. Only admin can edit it now.");
+  }
+  return {
+    publicOrderId,
+    lines: linesResult.rows
+  };
+}
+
 export async function createSalesOrder(payload: {
   cartId?: string;
   skipFinancials?: boolean;
@@ -1695,25 +1742,80 @@ export async function updateCounterparty(counterpartyId: string, payload: {
 }
 
 export async function updatePurchaseOrder(orderId: string, payload: {
-  rate: number;
   paymentMode: PaymentMode;
   cashTiming?: PurchaseOrder["cashTiming"];
   deliveryMode: PurchaseOrder["deliveryMode"];
   note: string;
   status: PurchaseOrder["status"];
-}) {
+  lines: Array<{
+    id: string;
+    quantityOrdered: number;
+    rate: number;
+    taxableAmount?: number;
+    gstRate?: PurchaseOrder["gstRate"];
+    gstAmount?: number;
+    taxMode?: PurchaseOrder["taxMode"];
+  }>;
+}, currentUser: CurrentUser) {
   await ready;
-  const order = await one<Record<string, unknown>>("SELECT * FROM purchase_orders WHERE id = $1", [orderId]);
-  if (!order) throw new Error("Purchase order not found.");
-  const quantityOrdered = numberValue(order.quantity_ordered);
-  const totalAmount = quantityOrdered * payload.rate;
-  await query(
-    `UPDATE purchase_orders
-     SET rate = $1, total_amount = $2, payment_mode = $3, cash_timing = $4, delivery_mode = $5, note = $6, status = $7
-     WHERE id = $8`,
-    [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, payload.note.trim(), payload.status, orderId]
-  );
-  await recalculateLedger("Purchase", stringValue(order.cart_id) || orderId);
+  const editable = await assertPurchaseCartEditable(orderId, currentUser);
+  const lineMap = new Map(editable.lines.map((line) => [stringValue(line.id), line]));
+  if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
+  await withTransaction(async (client) => {
+    for (const line of payload.lines) {
+      const existing = lineMap.get(line.id);
+      if (!existing) throw new Error("Purchase cart line not found.");
+      if (line.quantityOrdered <= 0) throw new Error("Quantity must be greater than zero.");
+      if (line.rate <= 0) throw new Error("Rate must be greater than zero.");
+      if (numberValue(existing.quantity_received) > 0 && !currentUserHasRole(currentUser, "Admin")) {
+        throw new Error("Purchase cart cannot be edited after receiving starts. Only admin can edit it now.");
+      }
+      const product = await one<Record<string, unknown>>("SELECT default_weight_kg FROM products WHERE sku = $1", [stringValue(existing.product_sku)], client);
+      if (!product) throw new Error("Product not found.");
+      const isNonGstBill = line.gstRate === "NA" || line.taxMode === "NA";
+      const gstRate = isNonGstBill ? 0 : line.gstRate ?? 0;
+      const gstAmount = isNonGstBill ? 0 : line.gstAmount ?? 0;
+      const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
+      const taxableAmount = line.taxableAmount ?? (line.quantityOrdered * line.rate);
+      const totalAmount = taxableAmount + gstAmount;
+      const expectedWeightKg = line.quantityOrdered * numberValue(product.default_weight_kg);
+      await query(
+        `UPDATE purchase_orders
+         SET quantity_ordered = $1,
+             rate = $2,
+             taxable_amount = $3,
+             gst_rate = $4,
+             gst_amount = $5,
+             tax_mode = $6,
+             total_amount = $7,
+             expected_weight_kg = $8,
+             payment_mode = $9,
+             cash_timing = $10,
+             delivery_mode = $11,
+             note = $12,
+             status = $13
+         WHERE id = $14`,
+        [
+          line.quantityOrdered,
+          line.rate,
+          taxableAmount,
+          gstRate,
+          gstAmount,
+          taxMode,
+          totalAmount,
+          expectedWeightKg,
+          payload.paymentMode,
+          payload.cashTiming || null,
+          payload.deliveryMode,
+          payload.note.trim(),
+          payload.status,
+          line.id
+        ],
+        client
+      );
+    }
+    await recalculateLedger("Purchase", editable.publicOrderId, client);
+  });
   return getSnapshot();
 }
 

@@ -254,6 +254,50 @@ function mapsDirectionsUrl(stops: string[]) {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+function calculateTaxPreview(amountText: string, gstRateText: string, taxMode: TaxModeInput) {
+  const amount = Math.max(0, Number(amountText || 0));
+  if (gstRateText === "NA" || taxMode === "NA") {
+    return {
+      taxableAmount: amount.toFixed(2),
+      gstAmount: "0.00",
+      totalAmount: amount.toFixed(2)
+    };
+  }
+  const gstRate = Number(gstRateText || 0);
+  const divisor = 1 + gstRate / 100;
+  const taxableAmount = taxMode === "Inclusive" && divisor > 0 ? amount / divisor : amount;
+  const gstAmount = taxMode === "Inclusive" ? amount - taxableAmount : taxableAmount * (gstRate / 100);
+  return {
+    taxableAmount: taxableAmount.toFixed(2),
+    gstAmount: gstAmount.toFixed(2),
+    totalAmount: (taxableAmount + gstAmount).toFixed(2)
+  };
+}
+
+function purchaseCartEditState(snapshot: AppSnapshot, orderId: string, currentUser: AppUser) {
+  const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
+  if (lines.length === 0) return { editable: false, reason: "Purchase cart not found." };
+  const isAdmin = currentUser.role === "Admin" || currentUser.roles.includes("Admin");
+  const ownsCart = lines.some((line) => line.purchaserId === currentUser.id || line.purchaserName === currentUser.fullName);
+  if (!isAdmin && !ownsCart) return { editable: false, reason: "Only the purchaser or admin can edit this purchase cart." };
+  const ledger = purchaseLedgerByOrder(snapshot, orderId);
+  if (!isAdmin && (ledger?.paidAmount || 0) > 0) {
+    return { editable: false, reason: "Payment is completed. Only admin can edit this purchase cart now." };
+  }
+  if (!isAdmin && lines.some((line) => line.quantityReceived > 0)) {
+    return { editable: false, reason: "Receiving has started. Only admin can edit this purchase cart now." };
+  }
+  const pickupStarted = snapshot.deliveryTasks.some((task) =>
+    task.side === "Purchase"
+    && [task.linkedOrderId, ...task.linkedOrderIds].includes(orderId)
+    && task.status !== "Planned"
+  );
+  if (!isAdmin && pickupStarted) {
+    return { editable: false, reason: "Pickup has started. Only admin can edit this purchase cart now." };
+  }
+  return { editable: true, reason: "" };
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [sessionToken, setSessionToken] = useState("");
@@ -306,6 +350,12 @@ function App() {
       setActiveView(nextViews[0]);
     }
   }, [activeView, currentUser, simpleMode]);
+
+  useEffect(() => {
+    if (!message) return;
+    const timeout = window.setTimeout(() => setMessage(""), 2400);
+    return () => window.clearTimeout(timeout);
+  }, [message]);
 
   async function refresh(user = currentUser) {
     const token = window.localStorage.getItem(TOKEN_KEY) || sessionToken;
@@ -588,7 +638,7 @@ function App() {
         </div>
       </section> : null}
 
-      {message ? <p className="message success">{message}</p> : null}
+      {message ? <div className="app-toast success">{message}</div> : null}
       {error ? <p className="message error">{error}</p> : null}
 
       <section className={simpleMode ? "workspace-shell simple-workspace" : "workspace-shell"}>
@@ -638,9 +688,16 @@ function App() {
             onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
             rightPanel={null}
           />
-            <Panel title="My Purchase List" eyebrow="Live status">
-              <DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(purchaseOrdersView.filter((p) => p.purchaserId === currentUser.id || p.purchaserName === currentUser.fullName), snapshot)} />
-            </Panel>
+            <TwoCol
+              left={<Panel title="My Purchase List" eyebrow="Live status">
+                <DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(purchaseOrdersView.filter((p) => p.purchaserId === currentUser.id || p.purchaserName === currentUser.fullName), snapshot)} />
+              </Panel>}
+              right={<PurchaseCartEditor
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
+              />}
+            />
           </>) : null}
           {activeView === "Sales" ? (isAdminUser ? <TwoCol left={<Panel title="Sales Summary" eyebrow="Admin view"><div className="simple-summary payment-summary-grid"><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders)}</strong><p>Total sales carts</p></div></div><div className="list-card"><div><strong>{countGroupedOrders(snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed"))}</strong><p>Open sales carts</p></div></div><div className="list-card"><div><strong>{snapshot.metrics.pendingSalesPayments}</strong><p>Pending sales payments</p></div></div></div></Panel>} right={<Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel>} /> : <CatalogOrderView
             mode="sales"
@@ -1780,7 +1837,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                   <label className="wide-field">
                     {isPurchase ? "Pickup" : "Delivery"} address for current run
-                    <input value={liveAddressText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationAddress: e.target.value, location: current.location ? { ...current.location, address: e.target.value, label: [e.target.value, current.locationCity || ""].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryAddress || selectedParty?.address || "Enter current address"} />
+                    <div className="inline-input-action">
+                      <input value={liveAddressText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationAddress: e.target.value, location: current.location ? { ...current.location, address: e.target.value, label: [e.target.value, current.locationCity || ""].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryAddress || selectedParty?.address || "Enter current address"} />
+                      <button type="button" className="ghost-button" onClick={markCurrentLocation}>Mark current location</button>
+                    </div>
                   </label>
                   <label>
                     {isPurchase ? "Pickup" : "Delivery"} city
@@ -1935,7 +1995,6 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 {orderForm.note ? <div className="cart-line"><div><span className="small-label">Note</span><strong>{orderForm.note}</strong></div></div> : null}
                 <div className="cart-actions">
                   <button type="button" className="ghost-button danger-button" onClick={clearCartDraft}>Clear cart</button>
-                  <button type="button" className="ghost-button" onClick={markCurrentLocation}>Mark current location</button>
                   <button type="button" className="ghost-button" onClick={() => setCartStep("payment")}>Back</button>
                   <button
                     type="button"
@@ -1958,6 +2017,238 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   );
 
   return rightPanel ? <TwoCol left={mainPanel} right={rightPanel} /> : <section>{mainPanel}</section>;
+}
+
+function PurchaseCartEditor({
+  snapshot,
+  currentUser,
+  onUpdateCart
+}: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  onUpdateCart: (orderId: string, body: {
+    paymentMode: PaymentMode;
+    cashTiming?: string;
+    deliveryMode: "Dealer Delivery" | "Self Collection";
+    note: string;
+    status: PurchaseOrder["status"];
+    lines: Array<{
+      id: string;
+      quantityOrdered: number;
+      rate: number;
+      taxableAmount: number;
+      gstRate: "NA" | 0 | 5 | 18;
+      gstAmount: number;
+      taxMode: "NA" | "Exclusive" | "Inclusive";
+    }>;
+  }) => Promise<boolean | void>;
+}) {
+  const editableGroups = groupPurchaseOrders(
+    snapshot.purchaseOrders.filter((order) =>
+      currentUser.role === "Admin"
+      || currentUser.roles.includes("Admin")
+      || order.purchaserId === currentUser.id
+      || order.purchaserName === currentUser.fullName
+    )
+  );
+  const [selectedOrderId, setSelectedOrderId] = useState(editableGroups[0]?.id || "");
+  const [draft, setDraft] = useState<{
+    paymentMode: PaymentMode;
+    cashTiming: string;
+    deliveryMode: "Dealer Delivery" | "Self Collection";
+    note: string;
+    status: PurchaseOrder["status"];
+    lines: Array<{
+      id: string;
+      productSku: string;
+      quantityOrdered: string;
+      rate: string;
+      gstRate: GstRateInput;
+      gstAmount: string;
+      taxableAmount: string;
+      taxMode: TaxModeInput;
+    }>;
+  } | null>(null);
+
+  const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
+  const editState = selectedGroup ? purchaseCartEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No purchase carts available." };
+
+  useEffect(() => {
+    if (!selectedGroup) {
+      setDraft(null);
+      return;
+    }
+    const first = selectedGroup.lines[0];
+    setSelectedOrderId((current) => current || selectedGroup.id);
+    setDraft({
+      paymentMode: first.paymentMode,
+      cashTiming: first.cashTiming || "",
+      deliveryMode: first.deliveryMode,
+      note: first.note || "",
+      status: first.status,
+      lines: selectedGroup.lines.map((line) => ({
+        id: line.id,
+        productSku: line.productSku,
+        quantityOrdered: String(line.quantityOrdered),
+        rate: String(line.rate),
+        gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
+        gstAmount: String(line.gstAmount),
+        taxableAmount: String(line.taxableAmount),
+        taxMode: line.taxMode === "NA" ? "NA" : (line.taxMode || "Exclusive")
+      }))
+    });
+  }, [selectedGroup?.id]);
+
+  function updateDraftLine(lineId: string, updates: Partial<{
+    quantityOrdered: string;
+    rate: string;
+    gstRate: GstRateInput;
+    taxMode: TaxModeInput;
+  }>) {
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        lines: current.lines.map((line) => {
+          if (line.id !== lineId) return line;
+          const quantityOrdered = updates.quantityOrdered ?? line.quantityOrdered;
+          const rate = updates.rate ?? line.rate;
+          const gstRate = updates.gstRate ?? line.gstRate;
+          const taxMode = gstRate === "NA" ? "NA" : (updates.taxMode ?? (line.taxMode === "NA" ? "Exclusive" : line.taxMode));
+          const totals = calculateTaxPreview(String(Math.max(0, Number(quantityOrdered || 0)) * Math.max(0, Number(rate || 0))), gstRate, taxMode);
+          return {
+            ...line,
+            quantityOrdered,
+            rate,
+            gstRate,
+            taxMode,
+            taxableAmount: totals.taxableAmount,
+            gstAmount: totals.gstAmount
+          };
+        })
+      };
+    });
+  }
+
+  return (
+    <Panel title="Edit Purchase Cart" eyebrow="Purchaser until payment or pickup starts">
+      {editableGroups.length === 0 ? <div className="empty-card">No purchase carts available for edit.</div> : <>
+        <form
+          className="form-grid"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!selectedGroup || !draft || !editState.editable) return;
+            await onUpdateCart(selectedGroup.id, {
+              paymentMode: draft.paymentMode,
+              cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
+              deliveryMode: draft.deliveryMode,
+              note: draft.note,
+              status: draft.status,
+              lines: draft.lines.map((line) => ({
+                id: line.id,
+                quantityOrdered: Number(line.quantityOrdered || 0),
+                rate: Number(line.rate || 0),
+                taxableAmount: Number(line.taxableAmount || 0),
+                gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 18,
+                gstAmount: Number(line.gstAmount || 0),
+                taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
+              }))
+            });
+          }}
+        >
+          <label className="wide-field">
+            Purchase cart
+            <select value={selectedGroup?.id || ""} onChange={(e) => setSelectedOrderId(e.target.value)}>
+              {editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.supplierName || "Supplier"}`}</option>)}
+            </select>
+          </label>
+          {selectedGroup ? <>
+            <div className="message-chip-grid wide-field">
+              <span className="status-pill">{selectedGroup.lines[0]?.supplierName || "Supplier"}</span>
+              <span className="status-pill">{selectedGroup.lines.length} product(s)</span>
+              <span className="status-pill">{purchaseWorkflowStatus(snapshot, selectedGroup.id)}</span>
+            </div>
+            {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
+            <label>
+              Payment Method
+              <select value={draft?.paymentMode || ""} onChange={(e) => setDraft((current) => current ? { ...current, paymentMode: e.target.value as PaymentMode } : current)} disabled={!editState.editable}>
+                <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
+              </select>
+            </label>
+            {draft?.paymentMode === "Cash" ? <label>
+              Cash Timing
+              <select value={draft.cashTiming} onChange={(e) => setDraft((current) => current ? { ...current, cashTiming: e.target.value } : current)} disabled={!editState.editable}>
+                <option value="">Select</option><option>In Hand</option><option>At Delivery</option>
+              </select>
+            </label> : null}
+            <label>
+              Delivery Mode
+              <select value={draft?.deliveryMode || "Dealer Delivery"} onChange={(e) => setDraft((current) => current ? { ...current, deliveryMode: e.target.value as "Dealer Delivery" | "Self Collection" } : current)} disabled={!editState.editable}>
+                <option>Dealer Delivery</option><option>Self Collection</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <input value={draft?.status || ""} readOnly />
+            </label>
+            <label className="wide-field">
+              Note
+              <input value={draft?.note || ""} onChange={(e) => setDraft((current) => current ? { ...current, note: e.target.value } : current)} disabled={!editState.editable} />
+            </label>
+            <div className="stack-list wide-field">
+              {draft?.lines.map((line) => {
+                const total = Number(line.taxableAmount || 0) + Number(line.gstAmount || 0);
+                return (
+                  <article className="list-card" key={line.id}>
+                    <div className="payment-update-head">
+                      <div>
+                        <strong>{line.productSku}</strong>
+                        <p>{line.id}</p>
+                      </div>
+                      <span className="status-pill">{total.toFixed(2)}</span>
+                    </div>
+                    <div className="cart-edit-grid top-gap">
+                      <label>
+                        Qty
+                        <input type="number" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.id, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
+                      </label>
+                      <label>
+                        Rate
+                        <input type="number" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.id, { rate: e.target.value })} disabled={!editState.editable} />
+                      </label>
+                      <label>
+                        Bill Type
+                        <select value={line.gstRate === "NA" ? "NA" : "GST"} onChange={(e) => updateDraftLine(line.id, e.target.value === "NA" ? { gstRate: "NA", taxMode: "NA" } : { gstRate: line.gstRate === "NA" ? "0" : line.gstRate, taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode })} disabled={!editState.editable}>
+                          <option value="GST">GST Bill</option><option value="NA">Non GST Bill</option>
+                        </select>
+                      </label>
+                      <label>
+                        GST
+                        <select value={line.gstRate} onChange={(e) => updateDraftLine(line.id, { gstRate: e.target.value as GstRateInput })} disabled={!editState.editable}>
+                          <option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="18">18%</option>
+                        </select>
+                      </label>
+                      <label>
+                        Calculation
+                        <select value={line.taxMode} onChange={(e) => updateDraftLine(line.id, { taxMode: e.target.value as TaxModeInput })} disabled={!editState.editable || line.gstRate === "NA"}>
+                          <option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option>
+                        </select>
+                      </label>
+                      <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
+                      <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="payment-card-actions wide-field">
+              <button className="primary-button" type="submit" disabled={!editState.editable}>Update purchase cart</button>
+            </div>
+          </> : null}
+        </form>
+      </>}
+    </Panel>
+  );
 }
 
 function PurchaserPaymentsView({
