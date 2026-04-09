@@ -3656,6 +3656,7 @@ function DeliveryJobsView({
   const [drafts, setDrafts] = useState<Record<string, { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] }>>({});
   const [currentPosition, setCurrentPosition] = useState<{ latitude: number; longitude: number } | null>(null);
   const [deliveryTab, setDeliveryTab] = useState<"current" | "new">(initialTab);
+  const [startedStops, setStartedStops] = useState<Record<string, boolean>>({});
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
 
@@ -3799,8 +3800,10 @@ function DeliveryJobsView({
     const approxRouteKm = currentPosition ? draft.routeStops.reduce((sum, stop) => sum + (approxDistanceKmFromCurrent(stop) || 0), 0) : null;
     const itemChecks = nextStop ? parseProductItems(nextStop.productSummary) : [];
     const itemCheckKey = nextStop ? `${task.id}-${nextStop.orderId}` : "";
+    const startKey = nextStop ? `${task.id}-${nextStop.orderId}-started` : "";
     const itemCheckState = nextStop ? drafts[itemCheckKey as keyof typeof drafts] : undefined;
     const checkedItems = Array.isArray(itemCheckState) ? itemCheckState as unknown as boolean[] : itemChecks.map(() => false);
+    const currentStopStarted = startKey ? Boolean(startedStops[startKey]) : false;
 
     function setCheckedItems(values: boolean[]) {
       setDrafts((current) => ({ ...current, [itemCheckKey]: values as unknown as { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] } }));
@@ -3856,10 +3859,12 @@ function DeliveryJobsView({
               {index !== 0 ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => moveStopToFront(task.id, task, stop.orderId)}>Choose this vendor first</button></div> : null}
             </article>)}
           </div>
-          <div className="payment-card-actions top-gap">
+          {!currentStopStarted ? <div className="payment-card-actions top-gap">
+            <button className="primary-button" type="button" onClick={() => setStartedStops((current) => ({ ...current, [startKey]: true }))}>Start</button>
+          </div> : <div className="payment-card-actions top-gap">
             {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open map</a> : null}
             <button className="ghost-button" type="button" disabled={!canMarkStop(nextStop)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { reached: true })}>Reached</button>
-          </div>
+          </div>}
         </article> : null}
         {!allPicked && nextStop && nextStop.reached && !nextStop.checked ? <article className="list-card top-gap">
           <strong>{liveStopLabel(nextStop)}</strong>
@@ -3928,6 +3933,20 @@ function DeliveryJobsView({
                 weightProofName: draft.weightProofName || undefined,
                 cashProofName: draft.cashProofName || undefined,
                 lastActionAt: new Date().toISOString()
+              });
+              setDrafts((current) => ({
+                ...current,
+                [task.id]: {
+                  ...draft,
+                  status: "Handed Over"
+                }
+              }));
+              setStartedStops((current) => {
+                const nextState = { ...current };
+                Object.keys(nextState).filter((key) => key.startsWith(`${task.id}-`)).forEach((key) => {
+                  delete nextState[key];
+                });
+                return nextState;
               });
             }}>Submit to warehouse</button>
           </div>
