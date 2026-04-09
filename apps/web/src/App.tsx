@@ -3645,7 +3645,7 @@ function DeliveryJobsView({
   const myTasks = snapshot.deliveryTasks.filter((item) => item.assignedTo === currentUser.username || item.assignedTo === currentUser.fullName);
   const [drafts, setDrafts] = useState<Record<string, { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] }>>({});
   const [currentPosition, setCurrentPosition] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [deliveryTab, setDeliveryTab] = useState<"current" | "new" | "other">("current");
+  const [deliveryTab, setDeliveryTab] = useState<"current" | "new">("current");
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
 
@@ -3727,8 +3727,6 @@ function DeliveryJobsView({
     return draft.status !== "Planned" && draft.status !== "Handed Over" && draft.status !== "Delivered";
   }) || null;
   const newAssignments = sortedTasks.filter((task) => taskDraft(task).status === "Planned");
-  const otherTasks = sortedTasks.filter((task) => task.id !== activeTask?.id && !newAssignments.some((item) => item.id === task.id));
-
   function renderTask(task: DeliveryTask, compact = false) {
     const draft = taskDraft(task);
     const weightUrl = draft.weightProofName ? `${API_BASE}/uploads/delivery-proofs/${draft.weightProofName}` : "";
@@ -3857,15 +3855,12 @@ function DeliveryJobsView({
         <div className="stack-list payment-update-list">
           {deliveryTab === "current"
             ? (activeTask ? renderTask(activeTask) : <div className="empty-card">No current active delivery. Start from New Assignment.</div>)
-            : deliveryTab === "new"
-              ? (newAssignments.length === 0 ? <div className="empty-card">No new assignments.</div> : newAssignments.map((task) => renderTask(task, true)))
-              : (otherTasks.length === 0 ? <div className="empty-card">No other pending deliveries.</div> : otherTasks.map((task) => renderTask(task, true)))}
+            : (newAssignments.length === 0 ? <div className="empty-card">No new assignments.</div> : newAssignments.map((task) => renderTask(task, true)))}
         </div>
       </Panel>
       <div className="delivery-module-tab-bar">
         <button className={deliveryTab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("current")}>Current Delivery</button>
         <button className={deliveryTab === "new" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("new")}>New Assignment</button>
-        <button className={deliveryTab === "other" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("other")}>Other / Pending</button>
       </div>
     </section>
   );
