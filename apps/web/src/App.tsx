@@ -3843,18 +3843,18 @@ function DeliveryJobsView({
         {!allPicked && nextStop && !nextStop.reached ? <article className="list-card top-gap">
           <strong>Select vendor to visit</strong>
           <div className="stack-list top-gap">
-            {draft.routeStops.filter((stop) => !stop.picked).map((stop, index) => <label className="list-card big-checkbox" key={`${task.id}-route-${stop.orderId}`}>
-              <input type="radio" name={`route-${task.id}`} checked={index === 0} onChange={() => moveStopToFront(task.id, task, stop.orderId)} />
-              <span />
+            {draft.routeStops.filter((stop) => !stop.picked).map((stop, index) => <article className="list-card" key={`${task.id}-route-${stop.orderId}`}>
               <div>
                 <strong>{liveStopLabel(stop)}</strong>
                 <p>{liveStopLocation(stop)}</p>
                 <div className="payment-meta-grid">
                   <div><span className="small-label">Approx km</span><strong>{approxDistanceKmFromCurrent(stop)?.toFixed(1) || "Pending"}</strong></div>
                   <div><span className="small-label">Contact</span><strong>{liveStopContact(stop)}</strong></div>
+                  <div><span className="small-label">Selected</span><strong>{index === 0 ? "Yes" : "No"}</strong></div>
                 </div>
               </div>
-            </label>)}
+              {index !== 0 ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => moveStopToFront(task.id, task, stop.orderId)}>Choose this vendor first</button></div> : null}
+            </article>)}
           </div>
           <div className="payment-card-actions top-gap">
             {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Open map</a> : null}
@@ -3913,6 +3913,23 @@ function DeliveryJobsView({
           </div>
           <div className="payment-card-actions top-gap">
             {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Return to warehouse</a> : null}
+            <button className="ghost-button" type="button" onClick={async () => {
+              await onUpdateTask(task.id, {
+                linkedOrderIds: task.linkedOrderIds,
+                assignedTo: task.assignedTo,
+                routeStops: draft.routeStops,
+                pickupAt: task.pickupAt,
+                dropAt: task.dropAt,
+                routeHint: draft.routeHint,
+                paymentAction: task.paymentAction,
+                status: "Handed Over",
+                cashCollectionRequired: task.cashCollectionRequired,
+                cashHandoverMarked: draft.cashHandoverMarked,
+                weightProofName: draft.weightProofName || undefined,
+                cashProofName: draft.cashProofName || undefined,
+                lastActionAt: new Date().toISOString()
+              });
+            }}>Submit to warehouse</button>
           </div>
         </article> : null}
         {completedStops.length > 0 ? <div className="stack-list top-gap">
@@ -3921,36 +3938,11 @@ function DeliveryJobsView({
             <p>{stop.productSummary}</p>
           </article>)}
         </div> : null}
-        <form className="form-grid top-gap" onSubmit={async (event) => {
-          event.preventDefault();
-          await onUpdateTask(task.id, {
-            linkedOrderIds: task.linkedOrderIds,
-            assignedTo: task.assignedTo,
-            routeStops: draft.routeStops,
-            pickupAt: task.pickupAt,
-            dropAt: task.dropAt,
-            routeHint: draft.routeHint,
-            paymentAction: task.paymentAction,
-            status: allPicked ? "Handed Over" : draft.status,
-            cashCollectionRequired: task.cashCollectionRequired,
-            cashHandoverMarked: draft.cashHandoverMarked,
-            weightProofName: draft.weightProofName || undefined,
-            cashProofName: draft.cashProofName || undefined,
-            lastActionAt: new Date().toISOString()
-          });
-        }}>
-          <label className="wide-field">Route hint<input value={draft.routeHint} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, routeHint: e.target.value } }))} placeholder="Best route / sequence" /></label>
-          <label>Status<select value={draft.status} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, status: e.target.value as DeliveryTask["status"] } }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label>
-          <label className="checkbox-line"><input type="checkbox" checked={draft.cashHandoverMarked} onChange={(e) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashHandoverMarked: e.target.checked } }))} />Cash handover marked</label>
-          <label>Weight proof<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setDrafts((current) => ({ ...current, [task.id]: { ...draft, weightProofName: String((uploaded as { fileName: string }).fileName) } })); }} /></label>
-          <label>Cash proof<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setDrafts((current) => ({ ...current, [task.id]: { ...draft, cashProofName: String((uploaded as { fileName: string }).fileName) } })); }} /></label>
-          <div className="payment-card-actions wide-field">
-            <button className="primary-button" type="submit">{allPicked ? "Handed over to warehouse" : "Update task"}</button>
-            {routeMapUrl ? <a className="ghost-button" href={routeMapUrl} target="_blank" rel="noreferrer">Open route map</a> : null}
-            {weightUrl ? <a className="ghost-button" href={weightUrl} target="_blank" rel="noreferrer">Weight proof</a> : null}
-            {cashUrl ? <a className="ghost-button" href={cashUrl} target="_blank" rel="noreferrer">Cash proof</a> : null}
-          </div>
-        </form>
+        {routeMapUrl || weightUrl || cashUrl ? <div className="payment-card-actions wide-field top-gap">
+          {routeMapUrl ? <a className="ghost-button" href={routeMapUrl} target="_blank" rel="noreferrer">Open route map</a> : null}
+          {weightUrl ? <a className="ghost-button" href={weightUrl} target="_blank" rel="noreferrer">Weight proof</a> : null}
+          {cashUrl ? <a className="ghost-button" href={cashUrl} target="_blank" rel="noreferrer">Cash proof</a> : null}
+        </div> : null}
       </>}
     </article>;
   }
