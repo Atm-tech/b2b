@@ -273,9 +273,9 @@ function App() {
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [partyFormErrors, setPartyFormErrors] = useState({ name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
-  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as GstRateInput, gstAmount: "0", taxMode: "Exclusive" as TaxModeInput, deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "", location: null as null | { latitude: number; longitude: number; label?: string } });
+  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", productSku: "", warehouseId: "", quantityOrdered: "0", rate: "0", previousRate: "0", taxableAmount: "0", gstRate: "0" as GstRateInput, gstAmount: "0", taxMode: "Exclusive" as TaxModeInput, deliveryMode: "" as "Dealer Delivery" | "Self Collection" | "", paymentMode: "" as PaymentMode | "", cashTiming: "", note: "", locationAddress: "", locationCity: "", location: null as null | { latitude: number; longitude: number; label?: string; address?: string; city?: string } });
   const [purchaseEditForm, setPurchaseEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Dealer Delivery" as "Dealer Delivery" | "Self Collection", note: "", status: "Order Placed - Pending Delivery" });
-  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as GstRateInput, gstAmount: "0", taxMode: "Exclusive" as TaxModeInput, paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0", stockApprovalRequested: false, availableStockAtOrder: "0", location: null as null | { latitude: number; longitude: number; label?: string } });
+  const [salesForm, setSalesForm] = useState({ shopId: "", productSku: "", warehouseId: "", quantity: "0", rate: "0", taxableAmount: "0", gstRate: "0" as GstRateInput, gstAmount: "0", taxMode: "Exclusive" as TaxModeInput, paymentMode: "" as PaymentMode | "", cashTiming: "", deliveryMode: "" as "Self Collection" | "Delivery" | "", note: "", priceApprovalRequested: false, minimumAllowedRate: "0", stockApprovalRequested: false, availableStockAtOrder: "0", locationAddress: "", locationCity: "", location: null as null | { latitude: number; longitude: number; label?: string; address?: string; city?: string } });
   const [salesEditForm, setSalesEditForm] = useState({ id: "", rate: "0", paymentMode: "Cash" as PaymentMode, cashTiming: "", deliveryMode: "Delivery" as "Self Collection" | "Delivery", note: "", status: "Booked" });
   const [paymentForm, setPaymentForm] = useState({ side: "Purchase" as "Purchase" | "Sales", linkedOrderId: "", amount: "0", mode: "NEFT" as PaymentMode, cashTiming: "", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved", verificationNote: "" });
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
@@ -839,7 +839,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     setPartySearch(party.name);
     setPartySuggestionOpen(false);
     setCartErrors((current) => ({ ...current, supplierId: false }));
-    setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: party.id }) : ({ ...current, shopId: party.id }));
+    setOrderForm((current: any) => isPurchase ? ({
+      ...current,
+      supplierId: party.id,
+      locationAddress: party.deliveryAddress || party.address || "",
+      locationCity: party.deliveryCity || party.city || ""
+    }) : ({
+      ...current,
+      shopId: party.id,
+      locationAddress: party.deliveryAddress || party.address || "",
+      locationCity: party.deliveryCity || party.city || ""
+    }));
   }
 
   function setVoiceSearch() {
@@ -1112,13 +1122,15 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           gstRate: "0",
           gstAmount: "0",
           taxMode: "Exclusive",
-          deliveryMode: "",
-          paymentMode: "",
-          cashTiming: "",
-          note: "",
-          location: null
-        }
-      : {
+            deliveryMode: "",
+            paymentMode: "",
+            cashTiming: "",
+            note: "",
+            locationAddress: "",
+            locationCity: "",
+            location: null
+          }
+        : {
           ...current,
           shopId: "",
           productSku: "",
@@ -1130,11 +1142,13 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           gstAmount: "0",
           taxMode: "Exclusive",
           deliveryMode: "",
-          paymentMode: "",
-          cashTiming: "",
-          note: "",
-          location: null,
-          priceApprovalRequested: false,
+            paymentMode: "",
+            cashTiming: "",
+            note: "",
+            locationAddress: "",
+            locationCity: "",
+            location: null,
+            priceApprovalRequested: false,
           minimumAllowedRate: "0",
           stockApprovalRequested: false,
           availableStockAtOrder: "0"
@@ -1176,9 +1190,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       (position) => {
         const latitude = Number(position.coords.latitude.toFixed(6));
         const longitude = Number(position.coords.longitude.toFixed(6));
+        const currentAddress = String(orderForm.locationAddress || "").trim();
+        const currentCity = String(orderForm.locationCity || "").trim();
         setOrderForm((current: any) => ({
           ...current,
-          location: { latitude, longitude, label: `${latitude},${longitude}` }
+          location: {
+            latitude,
+            longitude,
+            address: currentAddress,
+            city: currentCity,
+            label: [currentAddress, currentCity].filter(Boolean).join(", ") || `${latitude},${longitude}`
+          }
         }));
         showCartToast(isPurchase ? "Supplier pickup location saved" : "Shop delivery location saved");
       },
@@ -1319,13 +1341,16 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     }
     const created = await onCreateParty({ ...partyDraft, type: partyType });
     if (!created) return;
-    setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: created.id }) : ({ ...current, shopId: created.id }));
+    setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: created.id, locationAddress: created.deliveryAddress || created.address || "", locationCity: created.deliveryCity || created.city || "" }) : ({ ...current, shopId: created.id, locationAddress: created.deliveryAddress || created.address || "", locationCity: created.deliveryCity || created.city || "" }));
     setPartyDraft({ name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
     setPartyDraftErrors({ name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
     setFlowStep("catalog");
   }
 
   const selectedPartyId = isPurchase ? orderForm.supplierId : orderForm.shopId;
+  const selectedParty = parties.find((item) => item.id === selectedPartyId);
+  const liveAddressText = String(orderForm.locationAddress || selectedParty?.deliveryAddress || selectedParty?.address || "");
+  const liveCityText = String(orderForm.locationCity || selectedParty?.deliveryCity || selectedParty?.city || "");
   const selectedProduct = getSelectedProduct();
   const cartProducts = cartLines.map((line) => ({ line, product: products.find((item) => item.sku === line.productSku) })).filter((item): item is { line: CartLine; product: AppSnapshot["products"][number] } => Boolean(item.product));
   const cartTaxable = cartLines.reduce((sum, line) => sum + Number(line.taxableAmount || 0), 0);
@@ -1352,7 +1377,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <h3>Select existing {partyLabel}</h3>
                 <div className="form-grid top-gap">
                   <label className="wide-field supplier-search-field">Search saved {isPurchase ? "supplier" : "customer"}<div className="search-box"><input value={partySearch} onChange={(e) => { setPartySearch(e.target.value); setPartySuggestionOpen(true); }} onFocus={() => setPartySuggestionOpen(true)} onBlur={() => window.setTimeout(() => setPartySuggestionOpen(false), 120)} placeholder={`Type saved ${isPurchase ? "supplier" : "customer"} name, GST, city, or mobile`} />{partySuggestionOpen ? <div className="search-suggestion-list">{partySuggestions.length > 0 ? partySuggestions.map((party) => <button key={party.id} type="button" className="search-suggestion-item" onMouseDown={() => selectSavedParty(party)}><strong>{party.name}</strong><span>{party.gstNumber || "GST pending"} / {party.mobileNumber || "Mobile pending"} / {party.city || "City pending"}</span></button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved {isPurchase ? "supplier" : "customer"} found</strong><span>Create one first.</span></div>}</div> : null}</div></label>
-                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value }) : ({ ...current, shopId: e.target.value }))}>{renderOptions(parties)}</select></label>
+                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => { const party = parties.find((item) => item.id === e.target.value); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" }) : ({ ...current, shopId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" })); }}>{renderOptions(parties)}</select></label>
                 </div>
                 <div className="flow-action-row">
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("landing")}>Back</button>
@@ -1704,6 +1729,18 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       {isPurchase ? <><option>Dealer Delivery</option><option>Self Collection</option></> : <><option>Delivery</option><option>Self Collection</option></>}
                     </select>
                   </label>
+                  <label className="wide-field">
+                    Saved {isPurchase ? "party" : "customer"} address
+                    <input value={[selectedParty?.address, selectedParty?.city].filter(Boolean).join(", ")} readOnly />
+                  </label>
+                  <label className="wide-field">
+                    {isPurchase ? "Pickup" : "Delivery"} address for current run
+                    <input value={liveAddressText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationAddress: e.target.value, location: current.location ? { ...current.location, address: e.target.value, label: [e.target.value, current.locationCity || ""].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryAddress || selectedParty?.address || "Enter current address"} />
+                  </label>
+                  <label>
+                    {isPurchase ? "Pickup" : "Delivery"} city
+                    <input value={liveCityText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationCity: e.target.value, location: current.location ? { ...current.location, city: e.target.value, label: [current.locationAddress || "", e.target.value].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryCity || selectedParty?.city || "City"} />
+                  </label>
                   <label className="checkbox-line wide-field">
                     <input type="checkbox" checked={billTaxOverride.enabled} onChange={(e) => {
                       const enabled = e.target.checked;
@@ -1842,7 +1879,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   {billTaxOverride.enabled ? <div><span className="small-label">Bill tax override</span><strong>{billTaxOverride.gstRate === "NA" ? "Non GST / Final Amount" : `${billTaxOverride.gstRate}% / ${billTaxOverride.taxMode}`}</strong></div> : null}
                   {advancePayment.enabled ? <div><span className="small-label">{isPurchase ? "Advance given" : "Advance taken"}</span><strong>{Number(advancePayment.amount || 0).toFixed(2)} / {advancePayment.mode}{advancePayment.mode === "Cash" ? " / cash photo attached" : ""}</strong></div> : null}
                   <div><span className="small-label">Delivery mode</span><strong>{orderForm.deliveryMode}</strong></div>
-                  <div><span className="small-label">{isPurchase ? "Pickup location" : "Delivery location"}</span><strong>{orderForm.location?.label || (parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.locationLabel) || "Not marked"}</strong></div>
+                  <div><span className="small-label">{isPurchase ? "Pickup location" : "Delivery location"}</span><strong>{orderForm.location?.label || [liveAddressText, liveCityText].filter(Boolean).join(", ") || selectedParty?.locationLabel || "Not marked"}</strong></div>
                 </div>
                 <div className="stack-list top-gap">
                   {cartProducts.map(({ line, product }) => <article className="list-card" key={line.productSku}>
@@ -2825,7 +2862,7 @@ function WarehouseOperationsViewV2({
 
   function supplierAddress(group: PurchaseGroup) {
     const supplier = supplierById.get(group.lines[0]?.supplierId || "");
-    return supplier?.locationLabel || [supplier?.address, supplier?.city].filter(Boolean).join(", ") || group.lines[0]?.supplierName || "";
+    return supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ") || group.lines[0]?.supplierName || "";
   }
 
   function sortGroupsForInboundTag(groups: PurchaseGroup[]) {
@@ -2834,7 +2871,7 @@ function WarehouseOperationsViewV2({
 
   function customerAddress(order: SalesOrder) {
     const customer = customerById.get(order.shopId);
-    return customer?.locationLabel || [customer?.address, customer?.city].filter(Boolean).join(", ") || order.shopName || "";
+    return customer?.locationLabel || [customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ") || order.shopName || "";
   }
 
   function sortOrdersForOutboundTag(orders: SalesOrder[]) {
@@ -3088,11 +3125,11 @@ function WarehouseOperationsViewV2({
                 warehouseId: first.warehouseId,
                 warehouseName: warehouse?.name || first.warehouseId,
                 amountToPay: purchasePaymentStatus(snapshot, group.id) === "Completed" ? 0 : (purchaseLedger(group)?.pendingAmount || groupTotal(group)),
-                paymentRequired: purchasePaymentStatus(snapshot, group.id) !== "Completed",
-                latitude: supplier?.latitude,
-                longitude: supplier?.longitude,
-                locationLabel: supplier?.locationLabel || [supplier?.address, supplier?.city].filter(Boolean).join(", "),
-                reached: false,
+                  paymentRequired: purchasePaymentStatus(snapshot, group.id) !== "Completed",
+                  latitude: supplier?.latitude,
+                  longitude: supplier?.longitude,
+                  locationLabel: supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", "),
+                  reached: false,
                 paid: purchasePaymentStatus(snapshot, group.id) === "Completed",
                 picked: false
               };
@@ -3201,7 +3238,7 @@ function DeliveryJobsView({
 
   function liveStopLocation(stop: DeliveryTask["routeStops"][number]) {
     const supplier = supplierById.get(stop.supplierId || "");
-    return supplier?.locationLabel || [supplier?.address, supplier?.city].filter(Boolean).join(", ") || stop.locationLabel || liveStopLabel(stop);
+    return supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ") || stop.locationLabel || liveStopLabel(stop);
   }
 
   function liveWarehouseName(stop: DeliveryTask["routeStops"][number]) {

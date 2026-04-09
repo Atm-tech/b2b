@@ -73,6 +73,8 @@ export type Counterparty = {
   mobileNumber: string;
   address: string;
   city: string;
+  deliveryAddress?: string;
+  deliveryCity?: string;
   contactPerson: string;
   latitude?: number;
   longitude?: number;

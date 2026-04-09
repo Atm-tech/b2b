@@ -81,6 +81,8 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS location_label TEXT;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS delivery_address TEXT NOT NULL DEFAULT '';
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS delivery_city TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
@@ -282,12 +284,14 @@ async function mapCounterparties(client?: DbClient): Promise<Counterparty[]> {
     name: stringValue(row.name),
     gstNumber: stringValue(row.gst_number),
     bankName: stringValue(row.bank_name),
-    bankAccountNumber: stringValue(row.bank_account_number),
-    ifscCode: stringValue(row.ifsc_code),
-    mobileNumber: stringValue(row.mobile_number),
-    address: stringValue(row.address),
-    city: stringValue(row.city),
-    contactPerson: stringValue(row.contact_person),
+      bankAccountNumber: stringValue(row.bank_account_number),
+      ifscCode: stringValue(row.ifsc_code),
+      mobileNumber: stringValue(row.mobile_number),
+      address: stringValue(row.address),
+      city: stringValue(row.city),
+      deliveryAddress: row.delivery_address ? stringValue(row.delivery_address) : undefined,
+      deliveryCity: row.delivery_city ? stringValue(row.delivery_city) : undefined,
+      contactPerson: stringValue(row.contact_person),
     latitude: row.latitude === null || row.latitude === undefined ? undefined : numberValue(row.latitude),
     longitude: row.longitude === null || row.longitude === undefined ? undefined : numberValue(row.longitude),
     locationLabel: row.location_label ? stringValue(row.location_label) : undefined,
@@ -652,12 +656,19 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
   await upsertLedger(side, linkedOrderId, stringValue(order.shop_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
 }
 
-async function updateCounterpartyLocation(counterpartyId: string, location: { latitude: number; longitude: number; label?: string }, client?: DbClient) {
+async function updateCounterpartyLocation(counterpartyId: string, location: { latitude: number; longitude: number; label?: string; address?: string; city?: string }, client?: DbClient) {
   await query(
     `UPDATE counterparties
-     SET latitude = $1, longitude = $2, location_label = $3
-     WHERE id = $4`,
-    [location.latitude, location.longitude, location.label?.trim() || `${location.latitude.toFixed(6)},${location.longitude.toFixed(6)}`, counterpartyId],
+     SET latitude = $1, longitude = $2, location_label = $3, delivery_address = $4, delivery_city = $5
+     WHERE id = $6`,
+    [
+      location.latitude,
+      location.longitude,
+      location.label?.trim() || `${location.latitude.toFixed(6)},${location.longitude.toFixed(6)}`,
+      location.address?.trim() || "",
+      location.city?.trim() || "",
+      counterpartyId
+    ],
     client
   );
 }
@@ -954,6 +965,7 @@ async function ensureProductNameUnique(name: string, sku: string) {
 
 export async function createCounterparty(payload: Omit<Counterparty, "id" | "createdBy" | "createdAt">, currentUser: CurrentUser) {
   await ready;
+  const deliveryPayload = payload as typeof payload & { deliveryAddress?: string; deliveryCity?: string };
   const name = payload.name.trim();
   const gstNumber = payload.gstNumber.trim();
   const bankName = payload.bankName.trim();
@@ -962,9 +974,9 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
   validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
   await ensureCounterpartyUnique(payload.type, name, gstNumber, bankAccountNumber, ifscCode);
   await query(
-    `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, contact_person, latitude, longitude, location_label, created_by, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
+    `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, delivery_address, delivery_city, contact_person, latitude, longitude, location_label, created_by, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), deliveryPayload.deliveryAddress?.trim() || payload.address.trim(), deliveryPayload.deliveryCity?.trim() || payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
   );
   return getSnapshot();
 }
@@ -1056,7 +1068,7 @@ export async function createPurchaseOrder(payload: {
   paymentMode: PaymentMode;
   cashTiming?: PurchaseOrder["cashTiming"];
   note: string;
-  location?: { latitude: number; longitude: number; label?: string };
+  location?: { latitude: number; longitude: number; label?: string; address?: string; city?: string };
   operationDate?: string;
   advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
@@ -1153,7 +1165,7 @@ export async function createSalesOrder(payload: {
   cashTiming?: SalesOrder["cashTiming"];
   deliveryMode: SalesOrder["deliveryMode"];
   note: string;
-  location?: { latitude: number; longitude: number; label?: string };
+  location?: { latitude: number; longitude: number; label?: string; address?: string; city?: string };
   operationDate?: string;
   advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
@@ -1659,6 +1671,8 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   mobileNumber: string;
   address: string;
   city: string;
+  deliveryAddress?: string;
+  deliveryCity?: string;
   contactPerson: string;
 }) {
   await ready;
@@ -1671,12 +1685,12 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   const ifscCode = payload.ifscCode.trim().toUpperCase();
   validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
   await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, bankAccountNumber, ifscCode, counterpartyId);
-  await query(
-    `UPDATE counterparties
-     SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, contact_person = $9
-     WHERE id = $10`,
-    [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.contactPerson.trim(), counterpartyId]
-  );
+    await query(
+      `UPDATE counterparties
+       SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, delivery_address = $9, delivery_city = $10, contact_person = $11
+       WHERE id = $12`,
+      [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.deliveryAddress?.trim() || "", payload.deliveryCity?.trim() || "", payload.contactPerson.trim(), counterpartyId]
+    );
   return getSnapshot();
 }
 

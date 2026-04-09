@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS counterparties (
   mobile_number TEXT NOT NULL DEFAULT '',
   address TEXT NOT NULL DEFAULT '',
   city TEXT NOT NULL DEFAULT '',
+  delivery_address TEXT NOT NULL DEFAULT '',
+  delivery_city TEXT NOT NULL DEFAULT '',
   contact_person TEXT NOT NULL DEFAULT '',
   latitude DOUBLE PRECISION,
   longitude DOUBLE PRECISION,
