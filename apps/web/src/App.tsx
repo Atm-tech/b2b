@@ -781,6 +781,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [search, setSearch] = useState("");
   const [partySearch, setPartySearch] = useState("");
   const [activeDivision, setActiveDivision] = useState("");
+  const [activeDepartment, setActiveDepartment] = useState("");
+  const [activeSection, setActiveSection] = useState("");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [partySuggestionOpen, setPartySuggestionOpen] = useState(false);
@@ -810,16 +812,53 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
   const divisions = Array.from(new Set(products.map((item) => item.division).filter(Boolean)));
   const showingCategoryLanding = activeDivision === "";
+  function productMatchScore(product: AppSnapshot["products"][number], query: string) {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return 0;
+    const fields = {
+      exactName: product.name.toLowerCase(),
+      startsName: product.name.toLowerCase(),
+      exactSku: product.sku.toLowerCase(),
+      brand: (product.brand || "").toLowerCase(),
+      shortName: (product.shortName || "").toLowerCase(),
+      barcode: (product.barcode || "").toLowerCase(),
+      division: (product.division || "").toLowerCase(),
+      department: (product.department || "").toLowerCase(),
+      section: (product.section || "").toLowerCase()
+    };
+    if (fields.exactName === normalized) return 1000;
+    if (fields.exactSku === normalized || fields.barcode === normalized) return 950;
+    if (fields.startsName.startsWith(normalized)) return 900;
+    if (fields.shortName.startsWith(normalized)) return 850;
+    if (fields.brand.startsWith(normalized)) return 800;
+    if (fields.exactName.includes(normalized)) return 700;
+    if (fields.shortName.includes(normalized)) return 650;
+    if (fields.brand.includes(normalized)) return 600;
+    if (fields.department.includes(normalized)) return 500;
+    if (fields.section.includes(normalized)) return 450;
+    if (fields.division.includes(normalized)) return 400;
+    return 0;
+  }
   const filteredProducts = products.filter((product) => {
     const matchesDivision = activeDivision === "" || product.division === activeDivision;
+    const matchesDepartment = activeDepartment === "" || product.department === activeDepartment;
+    const matchesSection = activeSection === "" || product.section === activeSection;
     const haystack = [product.name, product.division, product.department, product.section, product.brand, product.shortName, product.articleName, product.itemName, product.barcode, product.size].join(" ").toLowerCase();
     const matchesSearch = search.trim() === "" || haystack.includes(search.trim().toLowerCase());
-    return matchesDivision && matchesSearch;
+    return matchesDivision && matchesDepartment && matchesSection && matchesSearch;
+  }).sort((left, right) => {
+    const query = search.trim();
+    const scoreDiff = productMatchScore(right, query) - productMatchScore(left, query);
+    if (scoreDiff !== 0) return scoreDiff;
+    return left.name.localeCompare(right.name, "en-IN");
   });
   const searchSuggestions = search.trim() === ""
     ? []
     : products
-        .filter((product) => [product.name, product.brand, product.shortName, product.barcode, product.division, product.department, product.section].join(" ").toLowerCase().includes(search.trim().toLowerCase()))
+        .map((product) => ({ product, score: productMatchScore(product, search) }))
+        .filter((item) => item.score > 0)
+        .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name, "en-IN"))
+        .map((item) => item.product)
         .slice(0, 6);
   const partySuggestions = parties
     .filter((party) => {
@@ -832,6 +871,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   function applySearchSuggestion(product: AppSnapshot["products"][number]) {
     setSearch("");
     setActiveDivision(product.division || "");
+    setActiveDepartment(product.department || "");
+    setActiveSection(product.section || "");
     setSuggestionOpen(false);
   }
 
@@ -874,6 +915,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
         const matchedProduct = products.find((product) => [product.name, product.brand, product.shortName, product.barcode].join(" ").toLowerCase().includes(transcript.toLowerCase()));
         if (matchedProduct) {
           setActiveDivision(matchedProduct.division || "");
+          setActiveDepartment(matchedProduct.department || "");
+          setActiveSection(matchedProduct.section || "");
         }
       }
     };
@@ -1154,6 +1197,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
           availableStockAtOrder: "0"
         });
     setActiveDivision("");
+    setActiveDepartment("");
+    setActiveSection("");
     setSearch("");
     setPartySearch("");
     setCartOpen(false);
@@ -1453,7 +1498,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     .map((item) => item[0]?.toUpperCase() || "")
                     .join("") || "CT";
                   return (
-                    <button key={division} type="button" className="category-card" onClick={() => setActiveDivision(division)}>
+                    <button key={division} type="button" className="category-card" onClick={() => { setActiveDivision(division); setActiveDepartment(""); setActiveSection(""); }}>
                       <div className="category-card-thumb">{initials}</div>
                       <div className="category-card-copy">
                         <strong>{division}</strong>
@@ -1466,14 +1511,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               </div>
             </div> : <>
             <div className="catalog-subhead">
-              <button className="ghost-button" type="button" onClick={() => { setActiveDivision(""); setSearch(""); }}>Back to categories</button>
-              <div className="chip-row chip-row-scroll">
-                <button type="button" className={activeDivision === "" ? "chip-button active" : "chip-button"} onClick={() => setActiveDivision("")}>All</button>
-                {divisions.map((division) => (
-                  <button key={division} type="button" className={division === activeDivision ? "chip-button active" : "chip-button"} onClick={() => setActiveDivision(division)}>
-                    {division}
-                  </button>
-                ))}
+                <button className="ghost-button" type="button" onClick={() => { setActiveDivision(""); setActiveDepartment(""); setActiveSection(""); setSearch(""); }}>Back to categories</button>
+                <div className="chip-row chip-row-scroll">
+                  <button type="button" className={activeDivision === "" ? "chip-button active" : "chip-button"} onClick={() => { setActiveDivision(""); setActiveDepartment(""); setActiveSection(""); }}>All</button>
+                  {divisions.map((division) => (
+                    <button key={division} type="button" className={division === activeDivision ? "chip-button active" : "chip-button"} onClick={() => { setActiveDivision(division); setActiveDepartment(""); setActiveSection(""); }}>
+                      {division}
+                    </button>
+                  ))}
               </div>
             </div>
 
