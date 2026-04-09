@@ -1010,6 +1010,24 @@ async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gs
   }
 }
 
+async function normalizeDeliveryAssignee(assignedTo: string, client?: PoolClient) {
+  const trimmed = assignedTo.trim();
+  const deliveryUsers = await query<Record<string, unknown>>(
+    "SELECT username, full_name FROM users WHERE active = TRUE AND (role = 'Delivery' OR roles_json::text LIKE '%Delivery%') ORDER BY id ASC",
+    [],
+    client
+  );
+  if (deliveryUsers.rows.length === 0) return trimmed;
+  const match = deliveryUsers.rows.find((row) => {
+    const username = stringValue(row.username);
+    const fullName = stringValue(row.full_name);
+    return username === trimmed || fullName === trimmed;
+  });
+  if (match) return stringValue(match.username);
+  if (!trimmed || trimmed.toLowerCase() === "delivery") return stringValue(deliveryUsers.rows[0].username);
+  return trimmed;
+}
+
 export async function updateSettings(payload: { paymentMethods: PaymentMethodSetting[]; deliveryCharge: { model: "Fixed" | "Per Km"; amount: number } }) {
   await ready;
   await query(
@@ -1519,6 +1537,7 @@ export async function createDeliveryTask(payload: {
   const createdAt = operationalDate(payload.operationDate);
   const linkedOrderIds = payload.linkedOrderIds && payload.linkedOrderIds.length > 0 ? payload.linkedOrderIds : [payload.linkedOrderId.trim()];
   await withTransaction(async (client) => {
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
     let taskMode = payload.mode;
     if (payload.side === "Purchase") {
       const purchaseModes = await query<Record<string, unknown>>(
@@ -1546,7 +1565,7 @@ export async function createDeliveryTask(payload: {
         taskMode,
         payload.from.trim(),
         payload.to.trim(),
-        payload.assignedTo.trim(),
+        assignedTo,
         payload.pickupAt || null,
         payload.dropAt || null,
         payload.routeHint?.trim() || null,
@@ -1596,10 +1615,11 @@ export async function createDeliveryConsignment(payload: {
   const id = makeId("CON");
   const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
     await query(
       `INSERT INTO delivery_consignments (id, docket_ids_json, warehouse_id, assigned_to, total_weight_kg, status, created_by, created_at)
        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)`,
-      [id, JSON.stringify(docketIds), payload.warehouseId, payload.assignedTo.trim(), totalWeightKg, payload.status || "Ready", currentUser.fullName, createdAt],
+      [id, JSON.stringify(docketIds), payload.warehouseId, assignedTo, totalWeightKg, payload.status || "Ready", currentUser.fullName, createdAt],
       client
     );
     await query(
@@ -1787,6 +1807,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
 }) {
   await ready;
   await withTransaction(async (client) => {
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
     const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1", [taskId], client);
     if (!task) throw new Error("Delivery task not found.");
     await query(
@@ -1794,10 +1815,10 @@ export async function updateDeliveryTask(taskId: string, payload: {
        SET linked_order_ids_json = $1::jsonb, assigned_to = $2, pickup_at = $3, drop_at = $4, route_hint = $5, route_json = $6::jsonb, payment_action = $7,
            status = $8, cash_collection_required = $9, cash_handover_marked = $10, weight_proof_name = $11, cash_proof_name = $12, last_action_at = $13
        WHERE id = $14`,
-      [
-        JSON.stringify(payload.linkedOrderIds || []),
-        payload.assignedTo.trim(),
-        payload.pickupAt || null,
+        [
+          JSON.stringify(payload.linkedOrderIds || []),
+          assignedTo,
+          payload.pickupAt || null,
         payload.dropAt || null,
         payload.routeHint?.trim() || null,
         JSON.stringify(payload.routeStops || []),
@@ -1856,12 +1877,12 @@ export async function updateDeliveryTask(taskId: string, payload: {
                proof_name = COALESCE($2, proof_name),
                verified_by = $3
            WHERE id = $4`,
-          [
-            `Cash delivered to supplier by ${payload.assignedTo.trim()} and proof uploaded.`,
-            payload.cashProofName.trim(),
-            payload.assignedTo.trim(),
-            stringValue(payment.id)
-          ],
+            [
+              `Cash delivered to supplier by ${assignedTo} and proof uploaded.`,
+              payload.cashProofName.trim(),
+              assignedTo,
+              stringValue(payment.id)
+            ],
           client
         );
         await recalculateLedger("Purchase", linkedOrderId, client);

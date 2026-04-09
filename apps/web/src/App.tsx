@@ -2435,7 +2435,7 @@ function AccountsPaymentsView({
                 {payment.verificationStatus === "Disputed" ? <button className="ghost-button" type="button" onClick={() => void onVerify(payment.id, "Resolved", "Resolved after enquiry by accounts")}>Resolve dispute</button> : null}
               </div>
               {payment.side === "Purchase" && payment.mode === "Cash" && !purchaseCashTask && purchaseOrder && purchaseOrder.deliveryMode === "Self Collection" ? <div className="form-grid top-gap">
-                <label>Delivery guy<select value={deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "delivery"} onChange={(e) => setDeliveryAssignments((current) => ({ ...current, [payment.id]: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+                <label>Delivery guy<select value={deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "d"} onChange={(e) => setDeliveryAssignments((current) => ({ ...current, [payment.id]: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
                 <div className="payment-card-actions wide-field">
                   <button className="ghost-button" type="button" onClick={() => void onCreateDeliveryTask({
                     side: "Purchase",
@@ -2444,7 +2444,7 @@ function AccountsPaymentsView({
                     mode: purchaseOrder.deliveryMode,
                     from: "Accounts Cash",
                     to: purchaseOrder.supplierName,
-                    assignedTo: deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "delivery",
+                    assignedTo: deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "d",
                     paymentAction: "Deliver Payment",
                     cashCollectionRequired: true,
                     status: "Planned"
@@ -2616,7 +2616,7 @@ function WarehouseOperationsView({
             assignedTo: consignmentDraft.assignedTo,
             status: "Ready"
           });
-          setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" });
+          setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: deliveryUsers[0]?.username || "d" });
         }}>
           <label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label>
           <label>Delivery user<input value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))} /></label>
@@ -2677,29 +2677,40 @@ function WarehouseOperationsViewV2({
   const [expandedReceiveSummary, setExpandedReceiveSummary] = useState<Record<string, boolean>>({});
   const [expandedSendSummary, setExpandedSendSummary] = useState<Record<string, boolean>>({});
   const [selectedReceiveLines, setSelectedReceiveLines] = useState<Record<string, string[]>>({});
-  const [selectedInboundGroups, setSelectedInboundGroups] = useState<string[]>([]);
-  const [inboundAssignedTo, setInboundAssignedTo] = useState("delivery");
+    const [selectedInboundGroups, setSelectedInboundGroups] = useState<string[]>([]);
+    const [inboundAssignedTo, setInboundAssignedTo] = useState("d");
   const [receiptsMode, setReceiptsMode] = useState<"receipt" | "tag">("receipt");
   const [dispatchesMode, setDispatchesMode] = useState<"dispatch" | "tag">("dispatch");
   const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; containerWeightKg: string; weighingProofName: string; cashProofName: string; note: string }>>({});
   const [outgoingDrafts, setOutgoingDrafts] = useState<Record<string, { containerWeightKg: string; weighingProofName: string; assignedTo: string }>>({});
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
   const [sendSummaryDrafts, setSendSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
-  const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: "delivery" });
-  const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
+    const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: "d" });
+    const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
+    const defaultDeliveryUsername = deliveryUsers[0]?.username || "d";
   const openDockets = snapshot.deliveryDockets.filter((item) => item.status !== "Delivered" && !item.consignmentId);
-  const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
-  const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
+    const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
+    const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
   const receiptByOrderId = new Map(snapshot.receiptChecks.map((item) => [item.purchaseOrderId, item]));
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const customerById = new Map(snapshot.counterparties.filter((item) => item.type === "Shop").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
 
-  useEffect(() => {
-    if (screen === "in") setActiveTab("in");
-    else if (screen === "out") setActiveTab("out");
-    else setActiveTab("home");
-  }, [screen]);
+    useEffect(() => {
+      if (screen === "in") setActiveTab("in");
+      else if (screen === "out") setActiveTab("out");
+      else setActiveTab("home");
+    }, [screen]);
+    useEffect(() => {
+      if (!deliveryUsers.some((user) => user.username === inboundAssignedTo)) {
+        setInboundAssignedTo(defaultDeliveryUsername);
+      }
+    }, [defaultDeliveryUsername, deliveryUsers, inboundAssignedTo]);
+    useEffect(() => {
+      if (!deliveryUsers.some((user) => user.username === consignmentDraft.assignedTo)) {
+        setConsignmentDraft((current) => ({ ...current, assignedTo: defaultDeliveryUsername }));
+      }
+    }, [consignmentDraft.assignedTo, defaultDeliveryUsername, deliveryUsers]);
 
   const purchaseGroups: PurchaseGroup[] = Array.from(snapshot.purchaseOrders.reduce((groups, order) => {
     const key = orderPublicId(order);
@@ -2823,7 +2834,7 @@ function WarehouseOperationsViewV2({
     if (side === "incoming") {
       setIncomingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { receivedQuantity: "0", actualWeightKg: "0", containerWeightKg: "0", weighingProofName: "", cashProofName: "", note: "" }), weighingProofName: fileName } }));
     } else {
-      setOutgoingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { containerWeightKg: "0", weighingProofName: "", assignedTo: deliveryUsers[0]?.username || "delivery" }), weighingProofName: fileName } }));
+      setOutgoingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultDeliveryUsername }), weighingProofName: fileName } }));
     }
   }
 
@@ -2967,7 +2978,7 @@ function WarehouseOperationsViewV2({
     const summaryExpanded = expandedSendSummary[order.id] ?? false;
     const summaryDraft = sendSummaryDrafts[order.id] || { proofName: "" };
     const paymentPending = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === orderPublicId(order))?.pendingAmount ?? order.totalAmount;
-    const draft = outgoingDrafts[order.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: deliveryUsers[0]?.username || "delivery" };
+    const draft = outgoingDrafts[order.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultDeliveryUsername };
     const needsAccountsCheck = paymentPending > 0;
     return <article className="list-card payment-update-card warehouse-order-card" key={order.id}>
       <button className="warehouse-order-row" type="button" onClick={() => setExpandedSend((current) => ({ ...current, [order.id]: !expanded }))}>
