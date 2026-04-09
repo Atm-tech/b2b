@@ -3215,6 +3215,7 @@ function WarehouseOperationsViewV2({
   const [selectedReceiveLines, setSelectedReceiveLines] = useState<Record<string, string[]>>({});
   const [receivingVendorKeys, setReceivingVendorKeys] = useState<Record<string, boolean>>({});
   const [finalizingReceiveDockets, setFinalizingReceiveDockets] = useState<Record<string, boolean>>({});
+  const [processingSendKeys, setProcessingSendKeys] = useState<Record<string, boolean>>({});
   const [selectedInboundGroups, setSelectedInboundGroups] = useState<string[]>([]);
   const [selectedOutboundGroups, setSelectedOutboundGroups] = useState<string[]>([]);
   const [inboundAssignedTo, setInboundAssignedTo] = useState("d");
@@ -3719,6 +3720,7 @@ function WarehouseOperationsViewV2({
     const draft = outgoingDrafts[group.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultDeliveryUsername };
     const needsAccountsCheck = paymentPending > 0 && first.paymentMode !== "Cash";
     const totalWeight = group.lines.reduce((sum, line) => sum + (snapshot.deliveryDockets.find((item) => item.salesOrderId === line.id)?.weightKg || 0), 0);
+    const isProcessing = Boolean(processingSendKeys[group.id]);
     return <article className="list-card payment-update-card warehouse-order-card" key={group.id}>
       <button className="warehouse-order-row" type="button" onClick={() => setExpandedSend((current) => ({ ...current, [group.id]: !expanded }))}>
         <div className="warehouse-order-main">
@@ -3740,9 +3742,28 @@ function WarehouseOperationsViewV2({
         <label>Delivery guy<select value={draft.assignedTo} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, assignedTo: e.target.value } }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
         <div className="payment-card-actions wide-field">
           {mode === "check-out" ? <>
-            <button className="ghost-button" type="button" onClick={() => Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: line.note || "Packed by warehouse", status: "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })))}>Ready for dispatch</button>
-            <button className="primary-button" type="button" disabled={needsAccountsCheck} onClick={() => Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: `${line.note || ""} Handed over by warehouse.`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })))}>Finalize delivered</button>
-          </> : <button className="primary-button" type="button" disabled={needsAccountsCheck} onClick={() => void onCreateDeliveryTask({
+            <button className="ghost-button" type="button" disabled={isProcessing} onClick={async () => {
+              setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
+              try {
+                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: line.note || "Packed by warehouse", status: "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
+                setExpandedSend((current) => ({ ...current, [group.id]: false }));
+              } finally {
+                setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
+              }
+            }}>{isProcessing ? "Updating..." : "Ready for dispatch"}</button>
+            <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
+              setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
+              try {
+                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: `${line.note || ""} Handed over by warehouse.`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
+                setExpandedSend((current) => ({ ...current, [group.id]: false }));
+              } finally {
+                setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
+              }
+            }}>{isProcessing ? "Updating..." : "Finalize delivered"}</button>
+          </> : <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
+            setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
+            try {
+              await onCreateDeliveryTask({
             side: "Sales",
             linkedOrderId: group.id,
             linkedOrderIds: [group.id],
@@ -3772,7 +3793,12 @@ function WarehouseOperationsViewV2({
               picked: false
             }],
             status: "Planned"
-          })}>Tag delivery guy</button>}
+          });
+              setExpandedSend((current) => ({ ...current, [group.id]: false }));
+            } finally {
+              setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
+            }
+          }}>{isProcessing ? "Tagging..." : "Tag delivery guy"}</button>}
         </div>
         {needsAccountsCheck ? <p className="message error wide-field">Accounts check required before outbound handover because customer payment is still pending.</p> : null}
         <div className="payment-card-actions wide-field">
