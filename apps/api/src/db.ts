@@ -110,6 +110,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE delivery_dockets ADD COLUMN IF NOT EXISTS container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE delivery_dockets ADD COLUMN IF NOT EXISTS weighing_proof_name TEXT;
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS route_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS consignment_id TEXT;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
     UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
@@ -481,6 +482,7 @@ async function mapDeliveryTasks(client?: DbClient): Promise<DeliveryTask[]> {
     side: stringValue(row.side) as DeliveryTask["side"],
     linkedOrderId: stringValue(row.linked_order_id),
     linkedOrderIds: Array.isArray(row.linked_order_ids_json) ? (row.linked_order_ids_json as string[]) : [],
+    consignmentId: row.consignment_id ? stringValue(row.consignment_id) : undefined,
     mode: stringValue(row.mode) as DeliveryTask["mode"],
     from: stringValue(row.source_location),
     to: stringValue(row.destination_location),
@@ -1255,7 +1257,6 @@ export async function createSalesOrder(payload: {
   const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
   const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
     const totalAmount = taxableAmount + gstAmount;
-    const docketWeightKg = numberValue(product?.default_weight_kg) * payload.quantity;
     await query(
       `INSERT INTO sales_orders (
         id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
@@ -1279,12 +1280,6 @@ export async function createSalesOrder(payload: {
       }
       return;
     }
-    await query(
-      `INSERT INTO delivery_dockets (id, sales_order_id, shop_id, product_sku, warehouse_id, quantity, weight_kg, consignment_id, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9)`,
-      [makeId("DCK"), id, payload.shopId, payload.productSku, payload.warehouseId, payload.quantity, docketWeightKg, payload.deliveryMode === "Delivery" ? "Pending Packing" : "Ready", createdAt],
-      client
-    );
     if (!payload.skipFinancials) {
       await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
     }
@@ -1318,6 +1313,99 @@ export async function createSalesCart(payload: Omit<Parameters<typeof createSale
   await withTransaction(async (client) => {
     await insertAdvancePayment("Sales", cartId, payload.advancePayment, currentUser, createdAt, client);
     await recalculateLedger("Sales", cartId, client);
+  });
+  return getSnapshot();
+}
+
+export async function createSalesDockets(payload: {
+  linkedOrderIds: string[];
+  operationDate?: string;
+}, currentUser: CurrentUser) {
+  await ready;
+  const linkedOrderIds = payload.linkedOrderIds.map((item) => item.trim()).filter(Boolean);
+  if (linkedOrderIds.length === 0) throw new Error("Select at least one sales order or cart.");
+  const createdAt = operationalDate(payload.operationDate);
+  await withTransaction(async (client) => {
+    const orders = await query<Record<string, unknown>>(
+      `SELECT so.*, p.default_weight_kg
+       FROM sales_orders so
+       LEFT JOIN products p ON p.sku = so.product_sku
+       WHERE so.cart_id = ANY($1::text[]) OR so.id = ANY($1::text[])
+       ORDER BY so.created_at ASC`,
+      [linkedOrderIds],
+      client
+    );
+    if (orders.rows.length === 0) throw new Error("Sales order not found.");
+    for (const order of orders.rows) {
+      const deliveryMode = stringValue(order.delivery_mode) as SalesOrder["deliveryMode"];
+      if (deliveryMode !== "Delivery") continue;
+      const status = stringValue(order.status) as SalesOrder["status"];
+      if (status === "Delivered" || status === "Closed") continue;
+      const existing = await one<{ id: string }>(
+        "SELECT id FROM delivery_dockets WHERE sales_order_id = $1",
+        [stringValue(order.id)],
+        client
+      );
+      if (existing?.id) continue;
+      await query(
+        `INSERT INTO delivery_dockets (
+          id, sales_order_id, shop_id, product_sku, warehouse_id, quantity, weight_kg, consignment_id, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'Ready', $8)`,
+        [
+          makeId("DCK"),
+          stringValue(order.id),
+          stringValue(order.shop_id),
+          stringValue(order.product_sku),
+          stringValue(order.warehouse_id),
+          numberValue(order.quantity),
+          numberValue(order.default_weight_kg) * numberValue(order.quantity),
+          createdAt
+        ],
+        client
+      );
+      await query(
+        `UPDATE sales_orders
+         SET status = 'Ready for Dispatch',
+             note = CASE
+               WHEN POSITION('Warehouse docket created' IN COALESCE(note, '')) > 0 THEN note
+               WHEN TRIM(COALESCE(note, '')) = '' THEN $1
+               ELSE CONCAT(note, ' | ', $1)
+             END
+         WHERE id = $2`,
+        [`Warehouse docket created by ${currentUser.fullName}.`, stringValue(order.id)],
+        client
+      );
+    }
+  });
+  return getSnapshot();
+}
+
+export async function clearSalesOperationalData() {
+  await ready;
+  await withTransaction(async (client) => {
+    await query(
+      `DELETE FROM note_records
+       WHERE entity_type = 'Sales Order'
+          OR entity_id LIKE 'SO-%'
+          OR entity_id LIKE 'SCART-%'`,
+      [],
+      client
+    );
+    await query("DELETE FROM delivery_tasks WHERE side = 'Sales'", [], client);
+    await query("DELETE FROM delivery_consignments", [], client);
+    await query("DELETE FROM delivery_dockets", [], client);
+    await query("DELETE FROM payments WHERE side = 'Sales'", [], client);
+    await query("DELETE FROM ledger_entries WHERE side = 'Sales'", [], client);
+    await query("DELETE FROM sales_orders", [], client);
+    await query(
+      `UPDATE inventory_lots
+       SET quantity_available = quantity_available + quantity_reserved,
+           quantity_reserved = 0,
+           status = CASE WHEN quantity_blocked > 0 THEN 'Blocked' ELSE 'Available' END
+       WHERE quantity_reserved > 0`,
+      [],
+      client
+    );
   });
   return getSnapshot();
 }
@@ -1579,6 +1667,7 @@ export async function createDeliveryTask(payload: {
   side: DeliveryTask["side"];
   linkedOrderId: string;
   linkedOrderIds?: string[];
+  consignmentId?: string;
   mode: DeliveryTask["mode"];
   from: string;
   to: string;
@@ -1616,15 +1705,16 @@ export async function createDeliveryTask(payload: {
     }
     await query(
       `INSERT INTO delivery_tasks (
-        id, side, linked_order_id, linked_order_ids_json, mode, source_location, destination_location, assigned_to,
+        id, side, linked_order_id, linked_order_ids_json, consignment_id, mode, source_location, destination_location, assigned_to,
         pickup_at, drop_at, route_hint, route_json, payment_action, cash_collection_required, cash_handover_marked,
         weight_proof_name, cash_proof_name, last_action_at, status, created_at
-      ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         makeId("DL"),
         payload.side,
         payload.linkedOrderId.trim(),
         JSON.stringify(linkedOrderIds),
+        payload.consignmentId?.trim() || null,
         taskMode,
         payload.from.trim(),
         payload.to.trim(),
@@ -1649,6 +1739,29 @@ export async function createDeliveryTask(payload: {
         `UPDATE purchase_orders
          SET status = 'Pickup Assigned'
          WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+    }
+    if (payload.side === "Sales" && payload.consignmentId?.trim()) {
+      await query(
+        `UPDATE delivery_consignments
+         SET assigned_to = $1, status = 'Out for Delivery'
+         WHERE id = $2`,
+        [assignedTo, payload.consignmentId.trim()],
+        client
+      );
+      await query(
+        `UPDATE delivery_dockets
+         SET status = 'Out for Delivery'
+         WHERE consignment_id = $1`,
+        [payload.consignmentId.trim()],
+        client
+      );
+      await query(
+        `UPDATE sales_orders
+         SET status = 'Out for Delivery'
+         WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
         [linkedOrderIds],
         client
       );
@@ -1912,6 +2025,7 @@ export async function updateReceiptCheck(grcNumber: string, payload: {
 
 export async function updateDeliveryTask(taskId: string, payload: {
   linkedOrderIds?: string[];
+  consignmentId?: string;
   assignedTo: string;
   routeStops?: DeliveryTask["routeStops"];
   pickupAt?: string;
@@ -1932,25 +2046,26 @@ export async function updateDeliveryTask(taskId: string, payload: {
     if (!task) throw new Error("Delivery task not found.");
     await query(
       `UPDATE delivery_tasks
-       SET linked_order_ids_json = $1::jsonb, assigned_to = $2, pickup_at = $3, drop_at = $4, route_hint = $5, route_json = $6::jsonb, payment_action = $7,
-           status = $8, cash_collection_required = $9, cash_handover_marked = $10, weight_proof_name = $11, cash_proof_name = $12, last_action_at = $13
-       WHERE id = $14`,
+       SET linked_order_ids_json = $1::jsonb, consignment_id = $2, assigned_to = $3, pickup_at = $4, drop_at = $5, route_hint = $6, route_json = $7::jsonb, payment_action = $8,
+           status = $9, cash_collection_required = $10, cash_handover_marked = $11, weight_proof_name = $12, cash_proof_name = $13, last_action_at = $14
+       WHERE id = $15`,
         [
           JSON.stringify(payload.linkedOrderIds || []),
+          payload.consignmentId?.trim() || null,
           assignedTo,
           payload.pickupAt || null,
-        payload.dropAt || null,
-        payload.routeHint?.trim() || null,
-        JSON.stringify(payload.routeStops || []),
-        payload.paymentAction || "None",
-        payload.status,
-        payload.cashCollectionRequired,
-        payload.cashHandoverMarked || false,
-        payload.weightProofName?.trim() || null,
-        payload.cashProofName?.trim() || null,
-        payload.lastActionAt || now(),
-        taskId
-      ],
+          payload.dropAt || null,
+          payload.routeHint?.trim() || null,
+          JSON.stringify(payload.routeStops || []),
+          payload.paymentAction || "None",
+          payload.status,
+          payload.cashCollectionRequired,
+          payload.cashHandoverMarked || false,
+          payload.weightProofName?.trim() || null,
+          payload.cashProofName?.trim() || null,
+          payload.lastActionAt || now(),
+          taskId
+        ],
       client
     );
     const side = stringValue(task.side) as DeliveryTask["side"];
@@ -1972,6 +2087,44 @@ export async function updateDeliveryTask(taskId: string, payload: {
         [purchaseStatus, linkedOrderIds],
         client
       );
+    }
+    if (side === "Sales") {
+      const consignmentId = payload.consignmentId?.trim() || stringValue(task.consignment_id);
+      if (consignmentId) {
+        const consignmentStatus =
+          payload.status === "Delivered"
+            ? "Delivered"
+            : payload.status === "Planned"
+              ? "Ready"
+              : "Out for Delivery";
+        const docketStatus =
+          payload.status === "Delivered"
+            ? "Delivered"
+            : "Out for Delivery";
+        await query(
+          `UPDATE delivery_consignments
+           SET assigned_to = $1, status = $2
+           WHERE id = $3`,
+          [assignedTo, consignmentStatus, consignmentId],
+          client
+        );
+        await query(
+          `UPDATE delivery_dockets
+           SET status = $1
+           WHERE consignment_id = $2`,
+          [docketStatus, consignmentId],
+          client
+        );
+      }
+      if (payload.status === "Delivered") {
+        await query(
+          `UPDATE sales_orders
+           SET status = 'Delivered'
+           WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+          [linkedOrderIds],
+          client
+        );
+      }
     }
     if (
       side === "Purchase" &&

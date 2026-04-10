@@ -7,8 +7,10 @@ import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, 
 import {
   authenticate,
   bulkCreateProducts,
+  clearSalesOperationalData,
   createSessionForUser,
   createCounterparty,
+  createSalesDockets,
   createDeliveryConsignment,
   createDeliveryTask,
   createNote,
@@ -467,6 +469,11 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
   });
 }));
 
+app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async () => {
+  await requireRole(_req, ["Admin"]);
+  return clearSalesOperationalData();
+}));
+
 app.post("/payments", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
@@ -588,6 +595,7 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
     side: requiredString(req.body?.side, "Side") as DeliveryTask["side"],
     linkedOrderId: linkedOrderIds[0],
     linkedOrderIds,
+    consignmentId: optionalString(req.body?.consignmentId),
     mode: requiredString(req.body?.mode, "Mode") as DeliveryTask["mode"],
     from: requiredString(req.body?.from, "From"),
     to: requiredString(req.body?.to, "To"),
@@ -612,6 +620,7 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return updateDeliveryTask(req.params.id, {
     linkedOrderIds,
+    consignmentId: optionalString(req.body?.consignmentId),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
     routeStops: Array.isArray(req.body?.routeStops) ? req.body.routeStops : [],
     pickupAt: optionalString(req.body?.pickupAt),
@@ -625,6 +634,14 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
     cashProofName: optionalString(req.body?.cashProofName),
     lastActionAt: optionalString(req.body?.lastActionAt)
   });
+}));
+
+app.post("/delivery-dockets", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Warehouse Manager"]);
+  return createSalesDockets({
+    linkedOrderIds: requiredStringArray(req.body?.linkedOrderIds, "Sales orders"),
+    operationDate: optionalString(req.body?.operationDate)
+  }, currentUser);
 }));
 
 app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {

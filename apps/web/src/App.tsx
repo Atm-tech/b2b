@@ -4,6 +4,7 @@ import type {
   AppSnapshot,
   AppUser,
   Counterparty,
+  DeliveryConsignment,
   DeliveryTask,
   NoteRecord,
   PaymentMode,
@@ -821,6 +822,7 @@ function App() {
                 onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
                 onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Inbound docket received.")}
                 onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
+                onCreateDockets={(body) => post("/delivery-dockets", body, "Outbound dockets created.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
                 onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
                 screen="in"
@@ -838,6 +840,7 @@ function App() {
                 onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
                 onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
                 onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
+                onCreateDockets={(body) => post("/delivery-dockets", body, "Outbound dockets created.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
                 onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
                 screen="out"
@@ -3262,6 +3265,7 @@ function WarehouseOperationsViewV2({
   onReceive,
   onUpdateTask,
   onUpdateSalesOrder,
+  onCreateDockets,
   onCreateDeliveryTask,
   onCreateConsignment,
   screen = "full"
@@ -3273,6 +3277,7 @@ function WarehouseOperationsViewV2({
   onReceive: (body: { purchaseOrderId: string; warehouseId: string; receivedQuantity: number; actualWeightKg: number; containerWeightKg?: number; weighingProofName?: string; cashProofName?: string; note: string; confirmPartial: boolean }) => Promise<boolean | void>;
   onUpdateTask: (id: string, body: {
     linkedOrderIds: string[];
+    consignmentId?: string;
     assignedTo: string;
     routeStops?: DeliveryTask["routeStops"];
     pickupAt?: string;
@@ -3287,7 +3292,8 @@ function WarehouseOperationsViewV2({
     lastActionAt?: string;
   }) => Promise<boolean | void>;
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; containerWeightKg?: number; weighingProofName?: string }) => Promise<boolean | void>;
-  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
+  onCreateDockets: (body: { linkedOrderIds: string[] }) => Promise<boolean | void>;
+  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; consignmentId?: string; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<boolean | void>;
   screen?: "full" | "in" | "out";
 }) {
@@ -3321,13 +3327,15 @@ function WarehouseOperationsViewV2({
     const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: "d" });
     const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
     const defaultDeliveryUsername = deliveryUsers[0]?.username || "d";
-  const openDockets = snapshot.deliveryDockets.filter((item) => item.status !== "Delivered" && !item.consignmentId);
-    const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
-    const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
+  const openDockets = snapshot.deliveryDockets.filter((item) => item.status === "Ready" && !item.consignmentId);
+  const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
+  const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
   const receiptByOrderId = new Map(snapshot.receiptChecks.map((item) => [item.purchaseOrderId, item]));
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const customerById = new Map(snapshot.counterparties.filter((item) => item.type === "Shop").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
+  const docketBySalesOrderId = new Map(snapshot.deliveryDockets.map((item) => [item.salesOrderId, item]));
+  const consignmentById = new Map(snapshot.deliveryConsignments.map((item) => [item.id, item]));
 
     useEffect(() => {
       if (screen === "in") setActiveTab("in");
@@ -3449,20 +3457,23 @@ function WarehouseOperationsViewV2({
     .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const outboundTaskDockets = snapshot.deliveryTasks
-    .filter((task) => task.side === "Sales" && task.mode === "Delivery")
+    .filter((task) => task.side === "Sales" && task.mode === "Delivery" && task.consignmentId)
     .map((task) => ({
       task,
-      groups: outgoingGroups.filter((group) => task.linkedOrderIds.includes(group.id))
+      consignment: consignmentById.get(task.consignmentId || "")
     }))
-    .filter((item) => item.groups.length > 0);
+    .filter((item): item is { task: DeliveryTask; consignment: DeliveryConsignment } => Boolean(item.consignment));
   const activeOutboundDockets = outboundTaskDockets
     .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered")
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const plannedOutboundDockets = outboundTaskDockets
     .filter((item) => item.task.status === "Planned")
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+  const bundleReadyConsignments = snapshot.deliveryConsignments
+    .filter((item) => item.status === "Ready")
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   const directOutboundGroups = outgoingGroups
-    .filter((group) => !snapshot.deliveryTasks.some((task) => task.side === "Sales" && task.linkedOrderIds.includes(group.id)))
+    .filter((group) => group.lines[0].deliveryMode === "Self Collection" || group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
 
   function inboundTaskForGroup(groupId: string) {
@@ -3522,6 +3533,15 @@ function WarehouseOperationsViewV2({
 
   function sortOrdersForOutboundTag(groups: SalesGroup[]) {
     return [...groups].sort((left, right) => customerAddressForGroup(left).localeCompare(customerAddressForGroup(right), "en-IN"));
+  }
+
+  function consignmentGroups(consignment: DeliveryConsignment) {
+    const salesOrderIds = new Set(
+      consignment.docketIds
+        .map((docketId) => snapshot.deliveryDockets.find((item) => item.id === docketId)?.salesOrderId)
+        .filter(Boolean) as string[]
+    );
+    return outgoingGroups.filter((group) => group.lines.some((line) => salesOrderIds.has(line.id)));
   }
 
   async function uploadWeighingProof(draftKey: string, file: File | null, side: "incoming" | "outgoing") {
@@ -3838,12 +3858,16 @@ function WarehouseOperationsViewV2({
               setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
               try {
                 await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: line.note || (isSelfCollection ? "Ready for customer pickup" : "Packed by warehouse"), status: isSelfCollection ? "Self Pickup" : "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
+                if (!isSelfCollection) {
+                  await onCreateDockets({ linkedOrderIds: [group.id] });
+                  setOutboundStep("bundle");
+                }
                 setExpandedSend((current) => ({ ...current, [group.id]: false }));
               } finally {
                 setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
               }
-            }}>{isProcessing ? "Updating..." : (isSelfCollection ? "Ready for pickup" : "Ready for dispatch")}</button>
-            <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
+            }}>{isProcessing ? "Updating..." : (isSelfCollection ? "Ready for pickup" : "Create docket")}</button>
+            {isSelfCollection ? <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
               setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
               try {
                 await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: `${line.note || ""} ${isSelfCollection ? "Collected by customer." : "Handed over by warehouse."}`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
@@ -3851,46 +3875,8 @@ function WarehouseOperationsViewV2({
               } finally {
                 setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
               }
-            }}>{isProcessing ? "Updating..." : (isSelfCollection ? "Customer collected" : "Handed over for delivery")}</button>
-          </> : !isSelfCollection ? <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
-            setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
-            try {
-              await onCreateDeliveryTask({
-            side: "Sales",
-            linkedOrderId: group.id,
-            linkedOrderIds: [group.id],
-            mode: first.deliveryMode,
-            from: first.warehouseId,
-            to: first.shopName,
-            assignedTo: draft.assignedTo,
-            paymentAction: paymentPending > 0 ? "Collect Payment" : "None",
-            cashCollectionRequired: paymentPending > 0 && first.paymentMode === "Cash",
-            routeStops: [{
-              orderId: group.id,
-              supplierId: first.shopId,
-              supplierName: first.shopName,
-              productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", "),
-              warehouseId: first.warehouseId,
-              warehouseName: warehouseById.get(first.warehouseId)?.name || first.warehouseId,
-              amountToPay: paymentPending,
-              paymentRequired: paymentPending > 0,
-              paymentMode: first.paymentMode,
-              cashTiming: first.cashTiming,
-              latitude: customerById.get(first.shopId)?.latitude,
-              longitude: customerById.get(first.shopId)?.longitude,
-              locationLabel: customerAddress(first),
-              reached: false,
-              checked: false,
-              paid: paymentPending <= 0,
-              picked: false
-            }],
-            status: "Planned"
-          });
-              setExpandedSend((current) => ({ ...current, [group.id]: false }));
-            } finally {
-              setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
-            }
-          }}>{isProcessing ? "Tagging..." : "Tag delivery guy"}</button> : <p className="message success wide-field">Self collection order. Customer will collect directly from warehouse, so no delivery tagging is needed.</p>}
+            }}>{isProcessing ? "Updating..." : "Customer collected"}</button> : <p className="message success wide-field">Delivery orders must move to bundle after docket creation. Delivery boy tagging happens only from bundled consignments.</p>}
+          </> : !isSelfCollection ? <p className="message success wide-field">This order is already inside a bundled outbound flow.</p> : <p className="message success wide-field">Self collection order. Customer will collect directly from warehouse, so no delivery tagging is needed.</p>}
         </div>
         {needsAccountsCheck ? <p className="message error wide-field">Accounts check required before outbound handover because customer payment is still pending.</p> : null}
         <div className="payment-card-actions wide-field">
@@ -3920,7 +3906,8 @@ function WarehouseOperationsViewV2({
   }
 
   function renderSendTaskDocket(task: DeliveryTask, mode: "check-out" | "tag-out") {
-    const groups = outgoingGroups.filter((group) => task.linkedOrderIds.includes(group.id));
+    const consignment = task.consignmentId ? consignmentById.get(task.consignmentId) : undefined;
+    const groups = consignment ? consignmentGroups(consignment) : outgoingGroups.filter((group) => task.linkedOrderIds.includes(group.id));
     if (groups.length === 0) return null;
     const expanded = expandedSend[task.id] ?? false;
     const totalQty = groups.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantity, 0), 0);
@@ -3928,12 +3915,13 @@ function WarehouseOperationsViewV2({
     return <article className="list-card payment-update-card warehouse-order-card" key={task.id}>
       <button className="warehouse-order-row" type="button" onClick={() => setExpandedSend((current) => ({ ...current, [task.id]: !expanded }))}>
         <div className="warehouse-order-main">
-          <strong>{task.id}</strong>
+          <strong>{consignment ? `${consignment.id} / ${task.id}` : task.id}</strong>
           <span>{groups.length} stop(s)</span>
         </div>
         <div className="warehouse-order-meta">
           <span>{totalQty} qty</span>
           <span>{totalAmount.toFixed(2)}</span>
+          {consignment ? <span>{consignment.totalWeightKg.toFixed(2)} kg</span> : null}
           <span>{new Date(task.createdAt).toLocaleString("en-IN")}</span>
         </div>
         <span className="status-pill status-pending">{task.status}</span>
@@ -4120,14 +4108,15 @@ function WarehouseOperationsViewV2({
             </>}
           </div>
           <div className="payment-card-actions top-gap">
-            <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button>
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
           </div>
         </Panel> : outboundStep === "tag" ? <>
-          <Panel title="Tag Out Delivery Boy" eyebrow="Assign outgoing dockets">
+          <Panel title="Tag Out Delivery Boy" eyebrow="Assign bundled consignments">
             <form className="form-grid" onSubmit={async (event) => {
               event.preventDefault();
-              const chosenGroups = sortOrdersForOutboundTag(directOutboundGroups.filter((group) => selectedOutboundGroups.includes(group.id) && group.lines[0].deliveryMode === "Delivery"));
-              if (chosenGroups.length === 0) return;
+              const selectedConsignment = bundleReadyConsignments.find((item) => selectedOutboundGroups.includes(item.id));
+              const chosenGroups = selectedConsignment ? sortOrdersForOutboundTag(consignmentGroups(selectedConsignment).filter((group) => group.lines[0].deliveryMode === "Delivery")) : [];
+              if (!selectedConsignment || chosenGroups.length === 0) return;
               const routeStops = chosenGroups.map((group) => {
                 const first = group.lines[0];
                 const customer = customerById.get(first.shopId);
@@ -4156,6 +4145,7 @@ function WarehouseOperationsViewV2({
                 side: "Sales",
                 linkedOrderId: chosenGroups[0].id,
                 linkedOrderIds: chosenGroups.map((group) => group.id),
+                consignmentId: selectedConsignment.id,
                 mode: "Delivery",
                 from: chosenGroups[0].lines[0].warehouseId,
                 to: routeStops.map((stop) => stop.supplierName).join(", "),
@@ -4171,42 +4161,46 @@ function WarehouseOperationsViewV2({
             }}>
               <label>Delivery guy<select value={outboundAssignedTo} onChange={(e) => setOutboundAssignedTo(e.target.value)}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
               <div className="wide-field stack-list warehouse-order-list">
-                {sortOrdersForOutboundTag(directOutboundGroups.filter((group) => group.lines[0].deliveryMode === "Delivery")).length === 0 ? <div className="empty-card">No outbound delivery orders waiting for tagging.</div> : sortOrdersForOutboundTag(directOutboundGroups.filter((group) => group.lines[0].deliveryMode === "Delivery")).map((group) => {
-                  const first = group.lines[0];
-                  const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
-                  const needsAccountsCheck = pendingAmount > 0 && first.paymentMode !== "Cash";
-                  return <label className="list-card big-checkbox" key={group.id}>
-                    <input type="checkbox" disabled={needsAccountsCheck} checked={selectedOutboundGroups.includes(group.id)} onChange={(e) => setSelectedOutboundGroups((current) => e.target.checked ? [...new Set([...current, group.id])] : current.filter((item) => item !== group.id))} />
+                {bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments waiting for delivery tagging.</div> : bundleReadyConsignments.map((consignment) => {
+                  const groups = sortOrdersForOutboundTag(consignmentGroups(consignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
+                  const needsAccountsCheck = groups.some((group) => {
+                    const first = group.lines[0];
+                    const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
+                    return pendingAmount > 0 && first.paymentMode !== "Cash";
+                  });
+                  const totalQty = groups.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantity, 0), 0);
+                  return <label className="list-card big-checkbox" key={consignment.id}>
+                    <input type="checkbox" disabled={needsAccountsCheck} checked={selectedOutboundGroups.includes(consignment.id)} onChange={(e) => setSelectedOutboundGroups((current) => e.target.checked ? [consignment.id] : current.filter((item) => item !== consignment.id))} />
                     <span />
                     <div>
-                      <strong>{group.id}</strong>
-                      <p>{first.shopName} · {customerAddress(first)} · {group.lines.length} products · {group.lines.reduce((sum, line) => sum + line.quantity, 0)} qty · {pendingAmount.toFixed(2)} pending</p>
+                      <strong>{consignment.id}</strong>
+                      <p>{groups.length} stop(s) - {totalQty} qty - {consignment.totalWeightKg.toFixed(2)} kg</p>
+                      <p>{groups.map((group) => group.lines[0]?.shopName || group.id).join(", ")}</p>
                       {needsAccountsCheck ? <span className="small-label">Accounts clearance required before tagging</span> : null}
                     </div>
                   </label>;
                 })}
               </div>
               <div className="payment-card-actions wide-field">
-                <span className="small-label">{selectedOutboundGroups.length} outbound order(s) selected</span>
-                <span className="small-label">{sortOrdersForOutboundTag(directOutboundGroups.filter((group) => selectedOutboundGroups.includes(group.id) && group.lines[0].deliveryMode === "Delivery")).reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)} qty selected</span>
+                <span className="small-label">{selectedOutboundGroups.length} bundled consignment selected</span>
+                <span className="small-label">{bundleReadyConsignments.filter((item) => selectedOutboundGroups.includes(item.id)).reduce((sum, item) => sum + item.totalWeightKg, 0).toFixed(2)} kg selected</span>
                 <button className="primary-button" type="submit">Tag outbound delivery</button>
               </div>
             </form>
           </Panel>
           <div className="payment-card-actions">
-            <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button>
             <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("planned")}>Go to planned</button>
           </div>
         </> : outboundStep === "planned" ? <Panel title="Planned Outbound Dockets" eyebrow="Tagged and waiting">
             <div className="warehouse-order-list">
-              {plannedOutboundDockets.map((item) => renderSendTaskDocket(item.task, "tag-out"))}
+              {plannedOutboundDockets.length === 0 ? <div className="empty-card">No outbound delivery tasks planned yet.</div> : plannedOutboundDockets.map((item) => renderSendTaskDocket(item.task, "tag-out"))}
             </div>
             <div className="payment-card-actions top-gap">
               <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button>
-              <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
+              <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Go to check</button>
             </div>
-          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle multiple shop dockets"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo, status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" }); setOutboundStep("planned"); }}><label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Delivery user<select value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit">Create consignment</button></div></form><div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button><button className="ghost-button" type="button" onClick={() => setOutboundStep("planned")}>Go to planned</button></div></Panel> : null}
-      </> : null}
+          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo, status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" }); setOutboundStep("tag"); }}><label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Delivery user<select value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit">Create consignment</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button><button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
     </section>
   );
 }

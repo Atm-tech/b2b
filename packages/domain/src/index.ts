@@ -292,6 +292,7 @@ export type DeliveryTask = {
   side: "Purchase" | "Sales";
   linkedOrderId: string;
   linkedOrderIds: string[];
+  consignmentId?: string;
   mode: "Dealer Delivery" | "Self Collection" | "Delivery";
   from: string;
   to: string;
