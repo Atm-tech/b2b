@@ -53,13 +53,20 @@ export const databasePath =
   process.env.DATABASE_URL ||
   `postgresql://${postgresUser}:${postgresPassword}@${postgresHost}:${postgresPort}/${postgresDatabase}`;
 
+const databaseUrl = process.env.DATABASE_URL;
+const sslEnabled =
+  process.env.PGSSLMODE === "require" ||
+  process.env.PGSSL === "true" ||
+  Boolean(databaseUrl && /render\.com/i.test(databaseUrl));
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  host: process.env.DATABASE_URL ? undefined : postgresHost,
-  port: process.env.DATABASE_URL ? undefined : postgresPort,
-  database: process.env.DATABASE_URL ? undefined : postgresDatabase,
-  user: process.env.DATABASE_URL ? undefined : postgresUser,
-  password: process.env.DATABASE_URL ? undefined : postgresPassword,
+  connectionString: databaseUrl,
+  host: databaseUrl ? undefined : postgresHost,
+  port: databaseUrl ? undefined : postgresPort,
+  database: databaseUrl ? undefined : postgresDatabase,
+  user: databaseUrl ? undefined : postgresUser,
+  password: databaseUrl ? undefined : postgresPassword,
+  ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
   max: Number(process.env.PGPOOL_MAX || 10),
   idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30_000)
 });
@@ -1220,7 +1227,7 @@ export async function createSalesOrder(payload: {
   const settings = await mapSettings();
   const id = makeId("SO");
   const createdAt = operationalDate(payload.operationDate);
-  const needsPriceApproval = Boolean(payload.priceApprovalRequested) && typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
+  const needsPriceApproval = typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
   const priceApprovalNote = needsPriceApproval
     ? `Admin approval requested: sales rate ${payload.rate} is below last purchase price ${payload.minimumAllowedRate} for ${payload.productSku}. Requested by ${currentUser.fullName}.`
     : "";
@@ -1235,11 +1242,8 @@ export async function createSalesOrder(payload: {
     );
     const availableQuantity = stock?.availableQuantity ?? 0;
     const needsStockApproval = availableQuantity < payload.quantity;
-    if (needsStockApproval && !payload.stockApprovalRequested) {
-      throw new Error(`Not enough stock available. Available ${availableQuantity}, requested ${payload.quantity}.`);
-    }
     const stockApprovalNote = needsStockApproval
-      ? `Admin approval requested: sales quantity ${payload.quantity} exceeds available stock ${availableQuantity} for ${payload.productSku} at ${payload.warehouseId}. Requested by ${currentUser.fullName}.`
+      ? `Admin approval requested: sales quantity ${payload.quantity} exceeds available stock ${availableQuantity} for ${payload.productSku} at ${payload.warehouseId}. Demand raised by ${currentUser.fullName} for purchaser follow-up.`
       : "";
     const approvalNotes = [priceApprovalNote, stockApprovalNote].filter(Boolean);
     const needsApproval = needsPriceApproval || needsStockApproval;

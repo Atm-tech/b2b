@@ -777,7 +777,7 @@ function App() {
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, salesForm.priceApprovalRequested || salesForm.stockApprovalRequested ? "Sales cart sent for admin approval." : "Sales cart created.")}
+            onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, lines.some((line) => Boolean(line.priceApprovalRequested) || Boolean(line.stockApprovalRequested)) ? "Sales cart booked as draft demand for review." : "Sales cart created.")}
             rightPanel={null}
           />) : null}
           {activeView === "Payments" ? (
@@ -1096,7 +1096,18 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     setCartLines((current) => current.map((line) => {
       if (line.productSku !== productSku) return line;
       const totals = calculateLineTotals(quantity, line.rate, line.gstRate, line.taxMode);
-      return { ...line, quantity, taxableAmount: totals.taxableAmount, gstAmount: totals.gstAmount };
+      if (isPurchase) {
+        return { ...line, quantity, taxableAmount: totals.taxableAmount, gstAmount: totals.gstAmount };
+      }
+      const availableStockAtOrder = getLineAvailableStock(line.productSku, orderForm.warehouseId || "");
+      return {
+        ...line,
+        quantity,
+        taxableAmount: totals.taxableAmount,
+        gstAmount: totals.gstAmount,
+        availableStockAtOrder: String(availableStockAtOrder),
+        stockApprovalRequested: Number(quantity || 0) > availableStockAtOrder
+      };
     }));
   }
 
@@ -1220,7 +1231,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       }
     } else if (ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate && !ratePopup.confirmHighRate) {
       setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
-      showCartToast("Cannot sell below last purchase price. Request admin approval.");
+      showCartToast("Rate is below last purchase price. Continue to book it as a draft demand.");
       return;
     }
     setOrderForm((current: any) => {
@@ -1244,6 +1255,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
         availableStockAtOrder: "0",
         note: lineNote
       };
+      if (!isPurchase) {
+        const availableStockAtOrder = getLineAvailableStock(ratePopup.product.sku, current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "");
+        cartLine.availableStockAtOrder = String(availableStockAtOrder);
+        cartLine.stockApprovalRequested = nextQuantity > availableStockAtOrder;
+      }
       setCartLines((lines) => {
         const exists = lines.some((line) => line.productSku === cartLine.productSku);
         return exists ? lines.map((line) => line.productSku === cartLine.productSku ? cartLine : line) : [...lines, cartLine];
@@ -1482,6 +1498,23 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     return stockSummary.find((item) => item.productSku === sku && item.warehouseId === warehouseId)?.availableQuantity ?? 0;
   }
 
+  function getLineAvailableStock(sku: string, warehouseId: string) {
+    return warehouseId ? getWarehouseStock(sku, warehouseId) : getAvailableStock(sku);
+  }
+
+  function updateSalesCartStockState(nextWarehouseId: string) {
+    if (isPurchase) return;
+    setCartLines((current) => current.map((line) => {
+      const availableStockAtOrder = getLineAvailableStock(line.productSku, nextWarehouseId);
+      const requestedQuantity = Number(line.quantity || 0);
+      return {
+        ...line,
+        availableStockAtOrder: String(availableStockAtOrder),
+        stockApprovalRequested: requestedQuantity > availableStockAtOrder
+      };
+    }));
+  }
+
   function buildStockApprovalNote(productSku: string, requestedQuantity: number, availableQuantity: number, warehouseId: string) {
     return `Admin approval requested: sales quantity ${requestedQuantity} exceeds available stock ${availableQuantity} for ${productSku} at ${warehouseId}.`;
   }
@@ -1520,6 +1553,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   const selectedPartyId = isPurchase ? orderForm.supplierId : orderForm.shopId;
   const selectedParty = parties.find((item) => item.id === selectedPartyId);
+  const selectedWarehouse = warehouses.find((item) => item.id === orderForm.warehouseId) || null;
   const liveAddressText = String(orderForm.locationAddress || selectedParty?.deliveryAddress || selectedParty?.address || "");
   const liveCityText = String(orderForm.locationCity || selectedParty?.deliveryCity || selectedParty?.city || "");
   const selectedProduct = getSelectedProduct();
@@ -1652,6 +1686,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               {filteredProducts.map((product) => {
                 const selected = cartLines.some((line) => line.productSku === product.sku);
                 const availableStock = getAvailableStock(product.sku);
+                const warehouseStock = getWarehouseStock(product.sku, orderForm.warehouseId || "");
                 const cardQuantity = cartLines.find((line) => line.productSku === product.sku)?.quantity || 1;
                 const initials = product.name
                   .split(" ")
@@ -1678,6 +1713,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     </div>
                     <div className="product-footer">
                       <span>{product.allowedWarehouseIds.join(", ")}</span>
+                      {!isPurchase && orderForm.warehouseId ? <span>{`Dispatch stock ${warehouseStock} at ${orderForm.warehouseId}`}</span> : null}
                       <span>{isPurchase ? `MRP ${product.mrp ?? 0}` : `Stock ${availableStock} · MRP ${product.mrp ?? 0}`}</span>
                     </div>
                     </div>
@@ -1721,6 +1757,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <span className="small-label">Division</span>
                     <strong>{ratePopup.product.division || "General"}</strong>
                   </div>
+                  {!isPurchase ? <div>
+                    <span className="small-label">Available Qty</span>
+                    <strong>{orderForm.warehouseId ? `${getWarehouseStock(ratePopup.product.sku, orderForm.warehouseId)} at ${selectedWarehouse?.name || orderForm.warehouseId}` : `${getAvailableStock(ratePopup.product.sku)} total`}</strong>
+                  </div> : null}
                 </div>
                 <div className="cart-edit-grid">
                   <label className={Number(ratePopup.quantity || 0) <= 0 ? "field-error" : ""}>
@@ -1771,7 +1811,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   Entered rate is higher than the last purchase rate. This will be reported to admin and added to the purchase-order notes for warehouse and accounts.
                 </div> : null}
                 {!isPurchase && ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate ? <div className="rate-warning-box">
-                  Entered sales rate is below the last purchase price. You can request admin approval. Until admin approves, this product in this order will remain pending.
+                  Entered sales rate is below the last purchase price. You can still book it now. The line will go in draft for review.
                 </div> : null}
                 <div className="cart-actions">
                   <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Cancel</button>
@@ -1812,8 +1852,19 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
                       <div><span className="small-label">Line total</span><strong>{getCartLineTotal(line).toFixed(2)}</strong></div>
                     </div>
+                    {!isPurchase ? <div className="cart-line top-gap">
+                      <div>
+                        <span className="small-label">Available Qty</span>
+                        <strong>{getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}</strong>
+                      </div>
+                      <div>
+                        <span className="small-label">Stock Scope</span>
+                        <strong>{orderForm.warehouseId ? (selectedWarehouse?.name || orderForm.warehouseId) : "All warehouses"}</strong>
+                      </div>
+                    </div> : null}
                     {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
-                    {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}.</div> : null}
+                    {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}. This line will be booked as draft.</div> : null}
+                    {!isPurchase && Number(line.quantity || 0) > getLineAvailableStock(line.productSku, orderForm.warehouseId || "") ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. This line will be booked as draft demand.</div> : null}
                     {billTaxOverride.enabled ? <div className="message success top-gap">Whole bill tax override is active for all products in this cart.</div> : null}
                   </article>)}
                 </div>
@@ -1844,7 +1895,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                   <label className={cartErrors.warehouseId ? "field-error" : ""}>
                     {isPurchase ? "Delivery To" : "Dispatch From"}
-                    <select value={orderForm.warehouseId} onChange={(e) => { setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => isPurchase ? ({ ...current, warehouseId: e.target.value }) : ({ ...current, warehouseId: e.target.value, stockApprovalRequested: false, availableStockAtOrder: "0" })); }}>
+                    <select value={orderForm.warehouseId} onChange={(e) => { const nextWarehouseId = e.target.value; setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => isPurchase ? ({ ...current, warehouseId: nextWarehouseId }) : ({ ...current, warehouseId: nextWarehouseId, stockApprovalRequested: false, availableStockAtOrder: "0" })); if (!isPurchase) updateSalesCartStockState(nextWarehouseId); }}>
                       {renderWarehouseOptions(warehouses)}
                     </select>
                   </label>
@@ -1858,6 +1909,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <span className="small-label">{isPurchase ? "Warehouse" : "Customer"}</span>
                     <strong>{isPurchase ? (warehouses.find((item) => item.id === orderForm.warehouseId)?.name || "Select destination") : (parties.find((item) => item.id === orderForm.shopId)?.name || "Select customer")}</strong>
                   </div>
+                  {!isPurchase ? <div>
+                    <span className="small-label">Dispatch stock</span>
+                    <strong>{orderForm.warehouseId ? `${cartLines.reduce((sum, line) => sum + getLineAvailableStock(line.productSku, orderForm.warehouseId || ""), 0)} units visible` : "Select warehouse"}</strong>
+                  </div> : null}
                   <div>
                     <span className="small-label">Total</span>
                     <strong>{cartTotal.toFixed(2)}</strong>
