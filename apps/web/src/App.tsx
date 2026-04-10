@@ -1504,6 +1504,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     return warehouseId ? getWarehouseStock(sku, warehouseId) : getAvailableStock(sku);
   }
 
+  function getWarehouseName(warehouseId: string) {
+    return warehouses.find((item) => item.id === warehouseId)?.name || warehouseId;
+  }
+
+  function getWarehouseLabel(warehouseId: string) {
+    return getWarehouseName(warehouseId).replace(/\s+(warehouse|yard)$/i, "").trim() || warehouseId;
+  }
+
   function updateSalesCartStockState(nextWarehouseId: string) {
     if (isPurchase) return;
     setCartLines((current) => current.map((line) => {
@@ -1723,10 +1731,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <span>{`MRP ${product.mrp ?? 0}`}</span>
                     </div>
                     <div className="product-footer stacked">
-                      {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`Selected ${orderForm.warehouseId}: ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}
+                      {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`${getWarehouseLabel(orderForm.warehouseId)} stock ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}
                       <div className="product-stock-chips">
                         {stockedWarehouses.length > 0
-                          ? stockedWarehouses.map((item) => <span key={`${product.sku}-${item.warehouseId}`} className={orderForm.warehouseId === item.warehouseId ? "stock-chip active" : "stock-chip"}>{`${item.availableQuantity} ${item.warehouseId}`}</span>)
+                          ? stockedWarehouses.map((item) => <span key={`${product.sku}-${item.warehouseId}`} className={orderForm.warehouseId === item.warehouseId ? "stock-chip active" : "stock-chip"}>{`${getWarehouseLabel(item.warehouseId)} ${item.availableQuantity}`}</span>)
                           : <span className="stock-chip empty">No stock</span>}
                       </div>
                       <span>{isPurchase ? `MRP ${product.mrp ?? 0}` : `Stock ${availableStock} · MRP ${product.mrp ?? 0}`}</span>
@@ -1775,7 +1783,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </div>
                   {!isPurchase ? <div>
                     <span className="small-label">Available Qty</span>
-                    <strong>{orderForm.warehouseId ? `${getWarehouseStock(ratePopup.product.sku, orderForm.warehouseId)} at ${selectedWarehouse?.name || orderForm.warehouseId}` : `${getAvailableStock(ratePopup.product.sku)} total`}</strong>
+                    <strong>{orderForm.warehouseId ? `${getWarehouseStock(ratePopup.product.sku, orderForm.warehouseId)} at ${getWarehouseLabel(orderForm.warehouseId)}` : `${getAvailableStock(ratePopup.product.sku)} total`}</strong>
                   </div> : null}
                 </div>
                 <div className="cart-edit-grid">
@@ -1853,7 +1861,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 </div>
                 {cartStep === "cart" ? <>
                 <div className="stack-list">
-                  {cartProducts.map(({ line, product }) => <article className="list-card" key={line.productSku}>
+                  {cartProducts.map(({ line, product }) => <article className="list-card cart-product-line" key={line.productSku}>
                     <div className="payment-update-head">
                       <div><strong>{product.name}</strong><p>{product.division} / {product.section}</p></div>
                       <button type="button" className="ghost-button danger-button" onClick={() => setCartLines((current) => current.filter((item) => item.productSku !== line.productSku))}>Remove</button>
@@ -1874,8 +1882,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                         <strong>{getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}</strong>
                       </div>
                       <div>
-                        <span className="small-label">Stock Scope</span>
-                        <strong>{orderForm.warehouseId ? (selectedWarehouse?.name || orderForm.warehouseId) : "All warehouses"}</strong>
+                        <span className="small-label">Warehouse</span>
+                        <strong>{orderForm.warehouseId ? getWarehouseLabel(orderForm.warehouseId) : "All"}</strong>
                       </div>
                     </div> : null}
                     {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
@@ -1972,18 +1980,18 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     </select>
                   </label>
                   <label className="wide-field">
-                    Saved {isPurchase ? "party" : "customer"} address
+                    Saved address
                     <input value={[selectedParty?.address, selectedParty?.city].filter(Boolean).join(", ")} readOnly />
                   </label>
                   <label className="wide-field">
-                    {isPurchase ? "Pickup" : "Delivery"} address for current run
+                    Run address
                     <div className="inline-input-action">
                       <input value={liveAddressText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationAddress: e.target.value, location: current.location ? { ...current.location, address: e.target.value, label: [e.target.value, current.locationCity || ""].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryAddress || selectedParty?.address || "Enter current address"} />
                       <button type="button" className="ghost-button" onClick={markCurrentLocation}>Mark current location</button>
                     </div>
                   </label>
                   <label>
-                    {isPurchase ? "Pickup" : "Delivery"} city
+                    City
                     <input value={liveCityText} onChange={(e) => setOrderForm((current: any) => ({ ...current, locationCity: e.target.value, location: current.location ? { ...current.location, city: e.target.value, label: [current.locationAddress || "", e.target.value].filter(Boolean).join(", ") || current.location.label } : current.location }))} placeholder={selectedParty?.deliveryCity || selectedParty?.city || "City"} />
                   </label>
                   <label className="checkbox-line wide-field">
@@ -2073,10 +2081,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     {advancePayment.proofName ? <a className="ghost-button" href={`${API_BASE}/uploads/payment-proofs/${advancePayment.proofName}`} target="_blank" rel="noreferrer">Show advance proof</a> : null}
                   </> : null}
                 </div>
-                <div className="cart-line">
+                <div className="cart-line cart-line-summary">
                   <div>
                     <span className="small-label">{isPurchase ? "Supplier" : "Customer"}</span>
                     <strong>{parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.name || `Select ${isPurchase ? "supplier" : "customer"}`}</strong>
+                  </div>
+                  <div>
+                    <span className="small-label">Warehouse</span>
+                    <strong>{orderForm.warehouseId ? getWarehouseLabel(orderForm.warehouseId) : "Select"}</strong>
                   </div>
                   <div>
                     <span className="small-label">Total</span>
@@ -2102,17 +2114,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </button>
                 </div>
                 </> : <>
-                <div className="cart-line">
+                <div className="cart-line cart-line-summary">
                   <div>
                     <span className="small-label">{isPurchase ? "Supplier" : "Customer"}</span>
                     <strong>{parties.find((item) => item.id === (isPurchase ? orderForm.supplierId : orderForm.shopId))?.name || "-"}</strong>
                   </div>
                   <div>
-                    <span className="small-label">{isPurchase ? "Delivery To" : "Dispatch From"}</span>
-                    <strong>{warehouses.find((item) => item.id === orderForm.warehouseId)?.name || "-"}</strong>
+                    <span className="small-label">Warehouse</span>
+                    <strong>{orderForm.warehouseId ? getWarehouseLabel(orderForm.warehouseId) : "-"}</strong>
                   </div>
                 </div>
-                <div className="payment-meta-grid">
+                <div className="payment-meta-grid cart-summary-grid">
                   <div><span className="small-label">Products</span><strong>{cartLines.length}</strong></div>
                   <div><span className="small-label">Quantity</span><strong>{cartLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0)}</strong></div>
                   <div><span className="small-label">Total weight</span><strong>{totalWeightKg.toFixed(2)} kg</strong></div>
@@ -2127,7 +2139,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <div><span className="small-label">{isPurchase ? "Pickup location" : "Delivery location"}</span><strong>{orderForm.location?.label || [liveAddressText, liveCityText].filter(Boolean).join(", ") || selectedParty?.locationLabel || "Not marked"}</strong></div>
                 </div>
                 <div className="stack-list top-gap">
-                  {cartProducts.map(({ line, product }) => <article className="list-card" key={line.productSku}>
+                  {cartProducts.map(({ line, product }) => <article className="list-card cart-summary-line" key={line.productSku}>
                     <strong>{product.name}</strong>
                     <p>{line.quantity} x {Number(line.rate || 0).toFixed(2)} = {getCartLineTotal(line).toFixed(2)} · {line.gstRate === "NA" ? "Non GST / Final Amount" : `${line.gstRate}% / ${line.taxMode}`}</p>
                   </article>)}
