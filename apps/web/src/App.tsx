@@ -773,6 +773,7 @@ function App() {
             warehouses={warehousesView}
             paymentMethods={paymentMethods}
             stockSummary={stockSummaryView}
+            purchaseOrders={purchaseOrdersView}
             orderForm={salesForm}
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
@@ -1212,9 +1213,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   function confirmProductRate() {
     if (!ratePopup) return;
-    const nextRate = Number(ratePopup.rate || 0);
-    const nextQuantity = Number(ratePopup.quantity || 0);
-    const lineTotals = calculateLineTotals(ratePopup.quantity, ratePopup.rate, ratePopup.gstRate, ratePopup.taxMode);
+    const popup = ratePopup;
+    const nextRate = Number(popup.rate || 0);
+    const nextQuantity = Number(popup.quantity || 0);
+    const lineTotals = calculateLineTotals(popup.quantity, popup.rate, popup.gstRate, popup.taxMode);
     if (nextRate <= 0) {
       showCartToast("Enter product rate");
       return;
@@ -1224,64 +1226,62 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       return;
     }
     if (isPurchase) {
-      if (ratePopup.lastRate > 0 && nextRate > ratePopup.lastRate && !ratePopup.confirmHighRate) {
+      if (popup.lastRate > 0 && nextRate > popup.lastRate && !popup.confirmHighRate) {
         setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
         showCartToast("Rate is higher than last purchase rate. Tap sure and continue.");
         return;
       }
-    } else if (ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate && !ratePopup.confirmHighRate) {
+    } else if (popup.lastRate > 0 && nextRate < popup.lastRate && !popup.confirmHighRate) {
       setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
       showCartToast("Rate is below last purchase price. Continue to book it as a draft demand.");
       return;
     }
-    setOrderForm((current: any) => {
-      const quantityText = String(ratePopup.quantity);
-      const quantityFields = isPurchase ? { quantityOrdered: quantityText } : { quantity: quantityText, stockApprovalRequested: false, availableStockAtOrder: "0" };
-      const lineNote = !isPurchase && ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate
-        ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${ratePopup.lastRate} for ${ratePopup.product.sku}.`
-        : current.note;
-      const cartLine: CartLine = {
-        productSku: ratePopup.product.sku,
-        quantity: quantityText,
-        rate: String(nextRate),
-        previousRate: String(ratePopup.lastRate || 0),
-        taxableAmount: lineTotals.taxableAmount,
-        gstRate: ratePopup.gstRate,
-        gstAmount: lineTotals.gstAmount,
-        taxMode: ratePopup.taxMode,
-        priceApprovalRequested: !isPurchase && ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate,
-        minimumAllowedRate: String(ratePopup.lastRate || 0),
-        stockApprovalRequested: false,
-        availableStockAtOrder: "0",
-        note: lineNote
-      };
-      if (!isPurchase) {
-        const availableStockAtOrder = getLineAvailableStock(ratePopup.product.sku, current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "");
-        cartLine.availableStockAtOrder = String(availableStockAtOrder);
-        cartLine.stockApprovalRequested = nextQuantity > availableStockAtOrder;
-      }
-      setCartLines((lines) => {
-        const exists = lines.some((line) => line.productSku === cartLine.productSku);
-        return exists ? lines.map((line) => line.productSku === cartLine.productSku ? cartLine : line) : [...lines, cartLine];
-      });
-      return {
-        ...current,
-        ...quantityFields,
-        productSku: ratePopup.product.sku,
-        rate: String(nextRate),
-        previousRate: String(ratePopup.lastRate || 0),
-        warehouseId: current.warehouseId || ratePopup.product.allowedWarehouseIds[0] || "",
-        taxableAmount: lineTotals.taxableAmount,
-        gstRate: ratePopup.gstRate,
-        gstAmount: lineTotals.gstAmount,
-        taxMode: ratePopup.taxMode,
-        ...(isPurchase ? {} : {
-          priceApprovalRequested: ratePopup.lastRate > 0 && nextRate < ratePopup.lastRate,
-          minimumAllowedRate: String(ratePopup.lastRate || 0),
-          note: lineNote
-        })
-      };
+    const quantityText = String(popup.quantity);
+    const resolvedWarehouseId = orderForm.warehouseId || popup.product.allowedWarehouseIds[0] || "";
+    const lineNote = !isPurchase && popup.lastRate > 0 && nextRate < popup.lastRate
+      ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${popup.lastRate} for ${popup.product.sku}.`
+      : orderForm.note;
+    const cartLine: CartLine = {
+      productSku: popup.product.sku,
+      quantity: quantityText,
+      rate: String(nextRate),
+      previousRate: String(popup.lastRate || 0),
+      taxableAmount: lineTotals.taxableAmount,
+      gstRate: popup.gstRate,
+      gstAmount: lineTotals.gstAmount,
+      taxMode: popup.taxMode,
+      priceApprovalRequested: !isPurchase && popup.lastRate > 0 && nextRate < popup.lastRate,
+      minimumAllowedRate: String(popup.lastRate || 0),
+      stockApprovalRequested: false,
+      availableStockAtOrder: "0",
+      note: lineNote
+    };
+    if (!isPurchase) {
+      const availableStockAtOrder = getLineAvailableStock(popup.product.sku, resolvedWarehouseId);
+      cartLine.availableStockAtOrder = String(availableStockAtOrder);
+      cartLine.stockApprovalRequested = nextQuantity > availableStockAtOrder;
+    }
+    setCartLines((lines) => {
+      const exists = lines.some((line) => line.productSku === cartLine.productSku);
+      return exists ? lines.map((line) => line.productSku === cartLine.productSku ? cartLine : line) : [...lines, cartLine];
     });
+    setOrderForm((current: any) => ({
+      ...current,
+      ...(isPurchase ? { quantityOrdered: quantityText } : { quantity: quantityText, stockApprovalRequested: false, availableStockAtOrder: "0" }),
+      productSku: popup.product.sku,
+      rate: String(nextRate),
+      previousRate: String(popup.lastRate || 0),
+      warehouseId: current.warehouseId || popup.product.allowedWarehouseIds[0] || "",
+      taxableAmount: lineTotals.taxableAmount,
+      gstRate: popup.gstRate,
+      gstAmount: lineTotals.gstAmount,
+      taxMode: popup.taxMode,
+      ...(isPurchase ? {} : {
+        priceApprovalRequested: popup.lastRate > 0 && nextRate < popup.lastRate,
+        minimumAllowedRate: String(popup.lastRate || 0),
+        note: lineNote
+      })
+    }));
     if ((isPurchase ? orderForm.quantityOrdered : orderForm.quantity) === "0") {
       setOrderQuantity(1);
     }
@@ -1687,6 +1687,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 const selected = cartLines.some((line) => line.productSku === product.sku);
                 const availableStock = getAvailableStock(product.sku);
                 const warehouseStock = getWarehouseStock(product.sku, orderForm.warehouseId || "");
+                const stockedWarehouses = stockSummary
+                  .filter((item) => item.productSku === product.sku && item.availableQuantity > 0)
+                  .sort((left, right) => right.availableQuantity - left.availableQuantity);
                 const cardQuantity = cartLines.find((line) => line.productSku === product.sku)?.quantity || 1;
                 const initials = product.name
                   .split(" ")
@@ -1698,23 +1701,29 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <div key={product.sku} className={selected ? "product-card selected" : "product-card"} onClick={() => selectProduct(product)}>
                     <div className="product-card-main">
                     <div className="product-thumb">{initials}</div>
+                    <div className="product-card-copy">
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
                       <strong>{product.name}</strong>
                       <p>{product.department} / {product.section}</p>
                     </div>
-                    <div className="product-meta">
-                      <span>{product.brand || product.shortName || product.sku}</span>
+                    <div className="product-meta compact">
+                      <span>{product.brand || product.shortName || product.unit}</span>
                       <span>{product.size || product.unit}</span>
                     </div>
-                    <div className="product-pricing">
+                    <div className="product-pricing compact">
                       <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Min sell ${getLastPurchaseRate(product)}`}</strong>
-                      <span>{product.defaultWeightKg ? `${product.defaultWeightKg} kg` : "Weight not set"}</span>
+                      <span>{`MRP ${product.mrp ?? 0}`}</span>
                     </div>
-                    <div className="product-footer">
-                      <span>{product.allowedWarehouseIds.join(", ")}</span>
-                      {!isPurchase && orderForm.warehouseId ? <span>{`Dispatch stock ${warehouseStock} at ${orderForm.warehouseId}`}</span> : null}
+                    <div className="product-footer stacked">
+                      {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`Selected ${orderForm.warehouseId}: ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}
+                      <div className="product-stock-chips">
+                        {stockedWarehouses.length > 0
+                          ? stockedWarehouses.map((item) => <span key={`${product.sku}-${item.warehouseId}`} className={orderForm.warehouseId === item.warehouseId ? "stock-chip active" : "stock-chip"}>{`${item.availableQuantity} ${item.warehouseId}`}</span>)
+                          : <span className="stock-chip empty">No stock</span>}
+                      </div>
                       <span>{isPurchase ? `MRP ${product.mrp ?? 0}` : `Stock ${availableStock} · MRP ${product.mrp ?? 0}`}</span>
+                    </div>
                     </div>
                     </div>
                     <div className="product-action-row">
