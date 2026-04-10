@@ -920,6 +920,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [billTaxOverride, setBillTaxOverride] = useState<{ enabled: boolean; gstRate: GstRateInput; taxMode: TaxModeInput }>({ enabled: false, gstRate: "0", taxMode: "Exclusive" });
   const [cartErrors, setCartErrors] = useState<Record<string, boolean>>({});
   const [cartLines, setCartLines] = useState<CartLine[]>([]);
+  const [submittingCart, setSubmittingCart] = useState(false);
   const [ratePopup, setRatePopup] = useState<{
     product: AppSnapshot["products"][number];
     quantity: string;
@@ -1354,6 +1355,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     setAdvanceUploading(false);
     setCheckoutDate("");
     setBillTaxOverride({ enabled: false, gstRate: "0", taxMode: "Exclusive" });
+    setSubmittingCart(false);
   }
 
   function clearCartDraft() {
@@ -1690,6 +1692,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 const stockedWarehouses = stockSummary
                   .filter((item) => item.productSku === product.sku && item.availableQuantity > 0)
                   .sort((left, right) => right.availableQuantity - left.availableQuantity);
+                const metaLabelSource = product.brand || product.shortName || product.unit;
+                const normalizedName = product.name.trim().toLowerCase();
+                const metaLabel = metaLabelSource && metaLabelSource.trim().toLowerCase() !== normalizedName
+                  ? metaLabelSource
+                  : product.sku;
                 const cardQuantity = cartLines.find((line) => line.productSku === product.sku)?.quantity || 1;
                 const initials = product.name
                   .split(" ")
@@ -1708,7 +1715,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <p>{product.department} / {product.section}</p>
                     </div>
                     <div className="product-meta compact">
-                      <span>{product.brand || product.shortName || product.unit}</span>
+                      <span>{metaLabel}</span>
                       <span>{product.size || product.unit}</span>
                     </div>
                     <div className="product-pricing compact">
@@ -2132,13 +2139,19 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <button
                     type="button"
                     className="primary-button"
+                    disabled={submittingCart}
                     onClick={async () => {
+                      if (submittingCart) return;
+                      setSubmittingCart(true);
                       const success = await onSubmit(buildAdvancePaymentPayload(), checkoutDate || undefined, cartLines);
-                      if (success === false) return;
+                      if (success === false) {
+                        setSubmittingCart(false);
+                        return;
+                      }
                       resetCurrentOrder();
                     }}
                   >
-                    Continue and finalize
+                    {submittingCart ? "Booking..." : "Continue and finalize"}
                   </button>
                 </div>
                 </>}
@@ -3287,6 +3300,8 @@ function WarehouseOperationsViewV2({
   const [receiptsMode, setReceiptsMode] = useState<"receipt" | "tag">("receipt");
   const [receiptStage, setReceiptStage] = useState<"checks" | "planned">("checks");
   const [dispatchesMode, setDispatchesMode] = useState<"dispatch" | "tag">("dispatch");
+  const [inboundStep, setInboundStep] = useState<"pickup" | "receive" | "planned">("pickup");
+  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned">("check");
   const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; containerWeightKg: string; weighingProofName: string; cashProofName: string; note: string }>>({});
   const [outgoingDrafts, setOutgoingDrafts] = useState<Record<string, { containerWeightKg: string; weighingProofName: string; assignedTo: string }>>({});
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
@@ -3416,13 +3431,13 @@ function WarehouseOperationsViewV2({
       return Number(rightReceived) - Number(leftReceived) || groupDate(left) - groupDate(right);
     });
   const outgoingOrders = snapshot.salesOrders
-    .filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery")
+    .filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery" || item.status === "Self Pickup")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   const outgoingGroups = salesGroups
-    .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Out for Delivery"))
+    .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const outboundTaskDockets = snapshot.deliveryTasks
-    .filter((task) => task.side === "Sales")
+    .filter((task) => task.side === "Sales" && task.mode === "Delivery")
     .map((task) => ({
       task,
       groups: outgoingGroups.filter((group) => task.linkedOrderIds.includes(group.id))
@@ -3785,6 +3800,7 @@ function WarehouseOperationsViewV2({
     const needsAccountsCheck = paymentPending > 0 && first.paymentMode !== "Cash";
     const totalWeight = group.lines.reduce((sum, line) => sum + (snapshot.deliveryDockets.find((item) => item.salesOrderId === line.id)?.weightKg || 0), 0);
     const isProcessing = Boolean(processingSendKeys[group.id]);
+    const isSelfCollection = first.deliveryMode === "Self Collection";
     return <article className="list-card payment-update-card warehouse-order-card" key={group.id}>
       <button className="warehouse-order-row" type="button" onClick={() => setExpandedSend((current) => ({ ...current, [group.id]: !expanded }))}>
         <div className="warehouse-order-main">
@@ -3803,28 +3819,28 @@ function WarehouseOperationsViewV2({
         <label>Container weight<input type="number" value={draft.containerWeightKg} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, containerWeightKg: e.target.value } }))} /></label>
         <label>Weighing photo<input type="file" accept="image/*" onChange={(e) => void uploadWeighingProof(group.id, e.target.files?.[0] || null, "outgoing")} /></label>
         <label>Proof name<input value={draft.weighingProofName} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, weighingProofName: e.target.value } }))} /></label>
-        <label>Delivery guy<select value={draft.assignedTo} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, assignedTo: e.target.value } }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+        {!isSelfCollection ? <label>Delivery guy<select value={draft.assignedTo} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, assignedTo: e.target.value } }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : null}
         <div className="payment-card-actions wide-field">
           {mode === "check-out" ? <>
             <button className="ghost-button" type="button" disabled={isProcessing} onClick={async () => {
               setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
               try {
-                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: line.note || "Packed by warehouse", status: "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
+                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: line.note || (isSelfCollection ? "Ready for customer pickup" : "Packed by warehouse"), status: isSelfCollection ? "Self Pickup" : "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
                 setExpandedSend((current) => ({ ...current, [group.id]: false }));
               } finally {
                 setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
               }
-            }}>{isProcessing ? "Updating..." : "Ready for dispatch"}</button>
+            }}>{isProcessing ? "Updating..." : (isSelfCollection ? "Ready for pickup" : "Ready for dispatch")}</button>
             <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
               setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
               try {
-                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: `${line.note || ""} Handed over by warehouse.`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
+                await Promise.all(group.lines.map((line) => onUpdateSalesOrder(line.id, { rate: line.rate, paymentMode: line.paymentMode, cashTiming: line.cashTiming, deliveryMode: line.deliveryMode, note: `${line.note || ""} ${isSelfCollection ? "Collected by customer." : "Handed over by warehouse."}`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })));
                 setExpandedSend((current) => ({ ...current, [group.id]: false }));
               } finally {
                 setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
               }
-            }}>{isProcessing ? "Updating..." : "Finalize delivered"}</button>
-          </> : <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
+            }}>{isProcessing ? "Updating..." : (isSelfCollection ? "Customer collected" : "Handed over for delivery")}</button>
+          </> : !isSelfCollection ? <button className="primary-button" type="button" disabled={needsAccountsCheck || isProcessing} onClick={async () => {
             setProcessingSendKeys((current) => ({ ...current, [group.id]: true }));
             try {
               await onCreateDeliveryTask({
@@ -3862,7 +3878,7 @@ function WarehouseOperationsViewV2({
             } finally {
               setProcessingSendKeys((current) => ({ ...current, [group.id]: false }));
             }
-          }}>{isProcessing ? "Tagging..." : "Tag delivery guy"}</button>}
+          }}>{isProcessing ? "Tagging..." : "Tag delivery guy"}</button> : <p className="message success wide-field">Self collection order. Customer will collect directly from warehouse, so no delivery tagging is needed.</p>}
         </div>
         {needsAccountsCheck ? <p className="message error wide-field">Accounts check required before outbound handover because customer payment is still pending.</p> : null}
         <div className="payment-card-actions wide-field">
@@ -3954,19 +3970,24 @@ function WarehouseOperationsViewV2({
       {(screen === "full" && activeTab === "home") ? <>
         <Panel title="Warehouse Summary" eyebrow="Home">
           <div className="stack-list warehouse-order-list">
-            <div className="list-card"><strong>In</strong><p>Tag inbound delivery boy and check inward orders here.</p></div>
-            <div className="list-card"><strong>Out</strong><p>Check dispatch and tag outbound delivery boy here.</p></div>
-          </div>
+          <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("in"); setInboundStep("pickup"); }}>
+            <strong>In</strong><p>Tag pickup, then receive inward orders step by step.</p>
+          </button>
+          <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("out"); setOutboundStep("check"); }}>
+            <strong>Out</strong><p>Check, tag, bundle, then hand over dispatch in order.</p>
+          </button>
+        </div>
         </Panel>
       </> : null}
       {(screen === "full" ? activeTab === "in" : screen === "in") ? <>
         <Panel title="Receipts" eyebrow="Incoming orders">
           <div className="segmented-tabs">
-            <button className={receiptsMode === "receipt" ? "tab-button active" : "tab-button"} type="button" onClick={() => setReceiptsMode("receipt")}>Receipt</button>
-            <button className={receiptsMode === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setReceiptsMode("tag")}>Tag</button>
+            <button className={inboundStep === "pickup" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("pickup")}>1. Pickup</button>
+            <button className={inboundStep === "receive" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("receive")}>2. Receive</button>
+            <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}>3. Planned</button>
           </div>
         </Panel>
-        {receiptsMode === "tag" ? <Panel title="Tag In Delivery Boy" eyebrow="Self collection only">
+        {inboundStep === "pickup" ? <Panel title="Tag In Delivery Boy" eyebrow="Self collection only">
           <form className="form-grid" onSubmit={async (event) => {
             event.preventDefault();
             const chosenGroups = optimizeInboundGroups(sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => selectedInboundGroups.includes(group.id) && !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))));
@@ -4014,6 +4035,7 @@ function WarehouseOperationsViewV2({
               status: "Planned"
             });
             setSelectedInboundGroups([]);
+            setInboundStep("planned");
           }}>
             <label>Delivery guy<select value={inboundAssignedTo} onChange={(e) => setInboundAssignedTo(e.target.value)}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
             <div className="wide-field stack-list warehouse-order-list">
@@ -4028,18 +4050,15 @@ function WarehouseOperationsViewV2({
             </div>
             <div className="payment-card-actions wide-field">
               <span className="small-label">{selectedInboundGroups.length} self-collection pickup order(s) selected</span>
+              <span className="small-label">{optimizeInboundGroups(sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => selectedInboundGroups.includes(group.id) && !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)))).reduce((sum, group) => sum + groupWeight(group, true), 0).toFixed(2)} kg selected</span>
               <button className="primary-button" type="submit">Tag inbound pickup</button>
             </div>
           </form>
           {pendingReceiveGroups.every((group) => !groupNeedsPickupTask(group) || Boolean(inboundTaskForGroup(group.id))) ? <p className="message success top-gap">No self-collection inbound pickup is waiting. Dealer-delivery orders are received directly by warehouse.</p> : null}
-        </Panel> : <>
-          <Panel title="Receipts Flow" eyebrow="Dockets and checks">
-            <div className="segmented-tabs">
-              <button className={receiptStage === "checks" ? "tab-button active" : "tab-button"} type="button" onClick={() => setReceiptStage("checks")}>Checks</button>
-              <button className={receiptStage === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setReceiptStage("planned")}>Planned</button>
-            </div>
-          </Panel>
-          {receiptStage === "checks" ? <>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button>
+          </div>
+        </Panel> : inboundStep === "receive" ? <>
             <Panel title="Checks On In" eyebrow="Single dockets to receive">
               <div className="warehouse-order-list">
                 {receivingInboundDockets.length === 0 && directReceiveGroups.length === 0 ? <div className="empty-card">No incoming orders pending.</div> : <>
@@ -4053,21 +4072,30 @@ function WarehouseOperationsViewV2({
                 {receivedGroups.length === 0 ? <div className="empty-card">No completed orders yet.</div> : receivedGroups.map((group) => renderReceiveGroup(group, true))}
               </div>
             </Panel>
+            <div className="payment-card-actions">
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button>
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned dockets</button>
+            </div>
           </> : <Panel title="Planned Inbound Dockets" eyebrow="Awaiting delivery start">
             <div className="warehouse-order-list">
               {plannedInboundDockets.length === 0 ? <div className="empty-card">No planned inbound dockets.</div> : plannedInboundDockets.map((item) => renderReceiveTaskDocket(item.task, false))}
             </div>
+            <div className="payment-card-actions top-gap">
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button>
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button>
+            </div>
           </Panel>}
-        </>}
       </> : null}
       {(screen === "full" ? activeTab === "out" : screen === "out") ? <>
         <Panel title="Dispatches" eyebrow="Outgoing orders">
           <div className="segmented-tabs">
-            <button className={dispatchesMode === "dispatch" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDispatchesMode("dispatch")}>Dispatch</button>
-            <button className={dispatchesMode === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDispatchesMode("tag")}>Tag</button>
+            <button className={outboundStep === "check" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("check")}>1. Check</button>
+            <button className={outboundStep === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("tag")}>2. Tag</button>
+            <button className={outboundStep === "bundle" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("bundle")}>3. Bundle</button>
+            <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}>4. Planned</button>
           </div>
         </Panel>
-        {dispatchesMode === "dispatch" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
+        {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
           {outgoingGroups.some((group) => {
             const first = group.lines[0];
             const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
@@ -4079,7 +4107,10 @@ function WarehouseOperationsViewV2({
               {directOutboundGroups.map((group) => renderOutgoingGroup(group, "check-out"))}
             </>}
           </div>
-        </Panel> : <>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button>
+          </div>
+        </Panel> : outboundStep === "tag" ? <>
           <Panel title="Tag Out Delivery Boy" eyebrow="Assign outgoing dockets">
             <form className="form-grid" onSubmit={async (event) => {
               event.preventDefault();
@@ -4124,6 +4155,7 @@ function WarehouseOperationsViewV2({
                 status: "Planned"
               });
               setSelectedOutboundGroups([]);
+              setOutboundStep("planned");
             }}>
               <label>Delivery guy<select value={outboundAssignedTo} onChange={(e) => setOutboundAssignedTo(e.target.value)}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
               <div className="wide-field stack-list warehouse-order-list">
@@ -4144,17 +4176,24 @@ function WarehouseOperationsViewV2({
               </div>
               <div className="payment-card-actions wide-field">
                 <span className="small-label">{selectedOutboundGroups.length} outbound order(s) selected</span>
+                <span className="small-label">{sortOrdersForOutboundTag(directOutboundGroups.filter((group) => selectedOutboundGroups.includes(group.id) && group.lines[0].deliveryMode === "Delivery")).reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)} qty selected</span>
                 <button className="primary-button" type="submit">Tag outbound delivery</button>
               </div>
             </form>
           </Panel>
-          {plannedOutboundDockets.length > 0 ? <Panel title="Planned Outbound Dockets" eyebrow="Tagged and waiting">
+          <div className="payment-card-actions">
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button>
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
+          </div>
+        </> : outboundStep === "planned" ? <Panel title="Planned Outbound Dockets" eyebrow="Tagged and waiting">
             <div className="warehouse-order-list">
               {plannedOutboundDockets.map((item) => renderSendTaskDocket(item.task, "tag-out"))}
             </div>
-          </Panel> : null}
-          <Panel title="Dockets and Consignment" eyebrow="Bundle multiple shop dockets"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo, status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" }); }}><label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Delivery user<select value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit">Create consignment</button></div></form></Panel>
-        </>}
+            <div className="payment-card-actions top-gap">
+              <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button>
+              <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
+            </div>
+          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle multiple shop dockets"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo, status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: "delivery" }); setOutboundStep("planned"); }}><label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Delivery user<select value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit">Create consignment</button></div></form><div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button><button className="ghost-button" type="button" onClick={() => setOutboundStep("planned")}>Go to planned</button></div></Panel> : null}
       </> : null}
     </section>
   );
