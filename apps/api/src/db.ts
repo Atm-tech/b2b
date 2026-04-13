@@ -76,6 +76,16 @@ const ready = initializeDatabase();
 async function initializeDatabase() {
   await pool.query(schemaSql);
   await ensureCompatibilityColumns();
+  await pool.query(`
+    DELETE FROM delivery_dockets duplicate
+    USING delivery_dockets keeper
+    WHERE duplicate.sales_order_id = keeper.sales_order_id
+      AND duplicate.id <> keeper.id
+      AND (
+        duplicate.created_at > keeper.created_at
+        OR (duplicate.created_at = keeper.created_at AND duplicate.id > keeper.id)
+      );
+  `);
   await pool.query(indexSql);
   await seedDatabase();
 }
@@ -188,6 +198,10 @@ function numberValue(value: unknown) {
 
 function stringValue(value: unknown) {
   return String(value || "");
+}
+
+function deliveryAssigneeList(value: string) {
+  return Array.from(new Set(value.split(",").map((item) => item.trim()).filter(Boolean)));
 }
 
 function isoValue(value: unknown) {
@@ -743,7 +757,10 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
       ...snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.cartId).filter(Boolean) as string[],
       ...snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.cartId).filter(Boolean) as string[]
     ]);
-    const scopedDeliveryTaskIds = new Set(snapshotWithoutMetrics.deliveryTasks.filter((task) => task.assignedTo === currentUser.username || task.assignedTo === currentUser.fullName || task.routeStops.some((stop) => scopedWarehouseIds.has(stop.warehouseId))).map((task) => task.id));
+    const scopedDeliveryTaskIds = new Set(snapshotWithoutMetrics.deliveryTasks.filter((task) => {
+      const assignees = deliveryAssigneeList(task.assignedTo);
+      return assignees.includes(currentUser.username) || assignees.includes(currentUser.fullName) || task.routeStops.some((stop) => scopedWarehouseIds.has(stop.warehouseId));
+    }).map((task) => task.id));
     snapshotWithoutMetrics = {
       ...snapshotWithoutMetrics,
       warehouses: snapshotWithoutMetrics.warehouses.filter((item) => scopedWarehouseIds.has(item.id)),
@@ -1033,18 +1050,24 @@ async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gs
 
 async function normalizeDeliveryAssignee(assignedTo: string, client?: PoolClient) {
   const trimmed = assignedTo.trim();
+  const requestedAssignees = Array.from(new Set(trimmed.split(",").map((item) => item.trim()).filter(Boolean)));
   const deliveryUsers = await query<Record<string, unknown>>(
     "SELECT username, full_name FROM users WHERE active = TRUE AND (role = 'Delivery' OR roles_json::text LIKE '%Delivery%') ORDER BY id ASC",
     [],
     client
   );
-  if (deliveryUsers.rows.length === 0) return trimmed;
-  const match = deliveryUsers.rows.find((row) => {
-    const username = stringValue(row.username);
-    const fullName = stringValue(row.full_name);
-    return username === trimmed || fullName === trimmed;
-  });
-  if (match) return stringValue(match.username);
+  if (deliveryUsers.rows.length === 0) return requestedAssignees.join(", ");
+  const normalizedAssignees = requestedAssignees
+    .map((requested) => {
+      const match = deliveryUsers.rows.find((row) => {
+        const username = stringValue(row.username);
+        const fullName = stringValue(row.full_name);
+        return username === requested || fullName === requested;
+      });
+      return match ? stringValue(match.username) : requested;
+    })
+    .filter(Boolean);
+  if (normalizedAssignees.length > 0) return Array.from(new Set(normalizedAssignees)).join(", ");
   if (!trimmed || trimmed.toLowerCase() === "delivery") return stringValue(deliveryUsers.rows[0].username);
   return trimmed;
 }
@@ -1341,16 +1364,11 @@ export async function createSalesDockets(payload: {
       if (deliveryMode !== "Delivery") continue;
       const status = stringValue(order.status) as SalesOrder["status"];
       if (status === "Delivered" || status === "Closed") continue;
-      const existing = await one<{ id: string }>(
-        "SELECT id FROM delivery_dockets WHERE sales_order_id = $1",
-        [stringValue(order.id)],
-        client
-      );
-      if (existing?.id) continue;
       await query(
         `INSERT INTO delivery_dockets (
           id, sales_order_id, shop_id, product_sku, warehouse_id, quantity, weight_kg, consignment_id, status, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'Ready', $8)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'Ready', $8)
+        ON CONFLICT (sales_order_id) DO NOTHING`,
         [
           makeId("DCK"),
           stringValue(order.id),
