@@ -353,7 +353,7 @@ app.post("/purchase-orders/cart", async (req, res) => wrap(res, async () => {
     quantityOrdered: requiredNumber(line?.quantityOrdered ?? line?.quantity, "Quantity"),
     rate: requiredNumber(line?.rate, "Rate"),
     taxableAmount: optionalNumber(line?.taxableAmount),
-    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 18 | "NA" | undefined,
+    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 12 | 18 | 40 | "NA" | undefined,
     gstAmount: optionalNumber(line?.gstAmount),
     taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
     previousRate: typeof line?.previousRate === "number" ? line.previousRate : optionalNumber(line?.previousRate)
@@ -376,7 +376,7 @@ app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Purchaser", "Admin"]);
   const lines = requiredArray(req.body?.lines, "Cart lines").map((line) => {
     const rawGstRate = optionalString(line?.gstRate);
-    const parsedGstRate: "NA" | 0 | 5 | 18 | undefined = rawGstRate?.toUpperCase() === "NA" ? "NA" : parseOptionalGstRate(line?.gstRate);
+    const parsedGstRate: "NA" | 0 | 5 | 12 | 18 | 40 | undefined = rawGstRate?.toUpperCase() === "NA" ? "NA" : parseOptionalGstRate(line?.gstRate);
     return {
     id: requiredString(line?.id, "Cart line"),
     quantityOrdered: requiredNumber(line?.quantityOrdered ?? line?.quantity, "Quantity"),
@@ -432,7 +432,7 @@ app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
     quantity: requiredNumber(line?.quantity, "Quantity"),
     rate: requiredNumber(line?.rate, "Rate"),
     taxableAmount: optionalNumber(line?.taxableAmount),
-    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 18 | "NA" | undefined,
+    gstRate: parseOptionalGstRate(line?.gstRate) as 0 | 5 | 12 | 18 | 40 | "NA" | undefined,
     gstAmount: optionalNumber(line?.gstAmount),
     taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined,
     minimumAllowedRate: typeof line?.minimumAllowedRate === "number" ? line.minimumAllowedRate : optionalNumber(line?.minimumAllowedRate),
@@ -763,7 +763,7 @@ function optionalNumber(value: unknown) {
 
 function parseOptionalGstRate(value: unknown) {
   if (String(value || "").trim().toUpperCase() === "NA") return "NA";
-  return optionalNumber(value) as 0 | 5 | 18 | undefined;
+  return optionalNumber(value) as 0 | 5 | 12 | 18 | 40 | undefined;
 }
 
 function parseOptionalLocation(value: unknown) {

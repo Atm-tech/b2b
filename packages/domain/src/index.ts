@@ -104,7 +104,7 @@ export type PlatformSettings = {
   deliveryCharge: DeliveryChargeSetting;
 };
 
-export type GstRate = "NA" | 0 | 5 | 18;
+export type GstRate = "NA" | 0 | 5 | 12 | 18 | 40;
 export type TaxMode = "NA" | "Exclusive" | "Inclusive";
 
 export type PurchaseStatus =

@@ -29,7 +29,7 @@ const api = axios.create({
   baseURL: API_BASE
 });
 
-type GstRateInput = "NA" | "0" | "5" | "18";
+type GstRateInput = "NA" | "0" | "5" | "12" | "18" | "40";
 type TaxModeInput = "NA" | "Exclusive" | "Inclusive";
 
 type ViewKey =
@@ -1827,7 +1827,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <option value="NA">NA</option>
                       <option value="0">0%</option>
                       <option value="5">5%</option>
+                      <option value="12">12%</option>
                       <option value="18">18%</option>
+                      <option value="40">40%</option>
                     </select>
                   </label>
                   <label>
@@ -1883,7 +1885,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <label>Qty<input type="number" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
                       <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
                       <label>Bill Type<select value={line.gstRate === "NA" ? "NA" : "GST"} onChange={(e) => updateCartLineTax(line.productSku, e.target.value === "NA" ? { gstRate: "NA", taxMode: "NA" } : { gstRate: line.gstRate === "NA" ? "0" : line.gstRate, taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode })} disabled={billTaxOverride.enabled}><option value="GST">GST Bill</option><option value="NA">Non GST Bill</option></select></label>
-                      <label>GST<select value={line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput, taxMode: e.target.value === "NA" ? "NA" : (line.taxMode === "NA" ? "Exclusive" : line.taxMode) })} disabled={billTaxOverride.enabled}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="18">18%</option></select></label>
+                      <label>GST<select value={line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput, taxMode: e.target.value === "NA" ? "NA" : (line.taxMode === "NA" ? "Exclusive" : line.taxMode) })} disabled={billTaxOverride.enabled}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
                       <label>Calculation<select value={line.taxMode} onChange={(e) => updateCartLineTax(line.productSku, { taxMode: e.target.value as TaxModeInput })} disabled={line.gstRate === "NA" || billTaxOverride.enabled}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
                       <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
                       <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
@@ -2040,7 +2042,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                         <option value="NA">NA</option>
                         <option value="0">0%</option>
                         <option value="5">5%</option>
+                        <option value="12">12%</option>
                         <option value="18">18%</option>
+                        <option value="40">40%</option>
                       </select>
                     </label>
                     <label>
@@ -2230,7 +2234,7 @@ function PurchaserPurchaseWorkspace({
       quantityOrdered: number;
       rate: number;
       taxableAmount: number;
-      gstRate: "NA" | 0 | 5 | 18;
+      gstRate: "NA" | 0 | 5 | 12 | 18 | 40;
       gstAmount: number;
       taxMode: "NA" | "Exclusive" | "Inclusive";
     }>;
@@ -2293,7 +2297,7 @@ function PurchaseCartEditor({
       quantityOrdered: number;
       rate: number;
       taxableAmount: number;
-      gstRate: "NA" | 0 | 5 | 18;
+      gstRate: "NA" | 0 | 5 | 12 | 18 | 40;
       gstAmount: number;
       taxMode: "NA" | "Exclusive" | "Inclusive";
     }>;
@@ -2405,7 +2409,7 @@ function PurchaseCartEditor({
                 quantityOrdered: Number(line.quantityOrdered || 0),
                 rate: Number(line.rate || 0),
                 taxableAmount: Number(line.taxableAmount || 0),
-                gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 18,
+                gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
                 gstAmount: Number(line.gstAmount || 0),
                 taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
               }))
@@ -2481,7 +2485,7 @@ function PurchaseCartEditor({
                       <label>
                         GST
                         <select value={line.gstRate} onChange={(e) => updateDraftLine(line.id, { gstRate: e.target.value as GstRateInput })} disabled={!editState.editable}>
-                          <option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="18">18%</option>
+                          <option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option>
                         </select>
                       </label>
                       <label>
@@ -4799,7 +4803,7 @@ function ProductAdminView({
           <datalist id="product-section-options">{sectionOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-category-options">{categoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <label>Unit<input value={productForm.unit} onChange={(event) => setProductForm((current) => ({ ...current, unit: event.target.value }))} /></label>
-          <label>Default GST<select value={productForm.defaultGstRate} onChange={(event) => setProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: event.target.value === "NA" ? "NA" : (current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode) }))}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="18">18%</option></select></label>
+          <label>Default GST<select value={productForm.defaultGstRate} onChange={(event) => setProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: event.target.value === "NA" ? "NA" : (current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode) }))}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
           <label>Default Tax<select value={productForm.defaultTaxMode} onChange={(event) => setProductForm((current) => ({ ...current, defaultTaxMode: event.target.value as TaxModeInput }))} disabled={productForm.defaultGstRate === "NA"}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
           <label>Per item / bundle weight<input type="number" value={productForm.defaultWeightKg} onChange={(event) => setProductForm((current) => ({ ...current, defaultWeightKg: event.target.value }))} /></label>
           <label>Tol. Kg<input type="number" value={productForm.toleranceKg} onChange={(event) => setProductForm((current) => ({ ...current, toleranceKg: event.target.value }))} /></label>
