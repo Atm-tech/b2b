@@ -3336,7 +3336,15 @@ function WarehouseOperationsViewV2({
   const [receiptStage, setReceiptStage] = useState<"checks" | "planned">("checks");
   const [dispatchesMode, setDispatchesMode] = useState<"dispatch" | "tag">("dispatch");
   const [inboundStep, setInboundStep] = useState<"pickup" | "receive" | "planned">("pickup");
-  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned">("check");
+  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned">(
+    snapshot.deliveryDockets.some((item) => item.status === "Ready" && !item.consignmentId)
+      ? "bundle"
+      : snapshot.deliveryConsignments.some((item) => item.status === "Ready")
+        ? "tag"
+        : snapshot.deliveryTasks.some((task) => task.side === "Sales" && task.mode === "Delivery" && task.consignmentId && task.status === "Planned")
+          ? "planned"
+          : "check"
+  );
   const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; containerWeightKg: string; weighingProofName: string; cashProofName: string; note: string }>>({});
   const [outgoingDrafts, setOutgoingDrafts] = useState<Record<string, { containerWeightKg: string; weighingProofName: string; assignedTo: string }>>({});
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
@@ -4128,6 +4136,8 @@ function WarehouseOperationsViewV2({
           </div>
         </Panel>
         {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
+          {openDockets.length > 0 ? <p className="message success top-gap">{openDockets.length} outbound docket(s) are already ready. Continue in Bundle to create consignments before tagging delivery.</p> : null}
+          {bundleReadyConsignments.length > 0 ? <p className="message success top-gap">{bundleReadyConsignments.length} bundled consignment(s) are waiting. Continue in Tag to assign delivery.</p> : null}
           {outgoingGroups.some((group) => {
             const first = group.lines[0];
             const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
@@ -4199,7 +4209,7 @@ function WarehouseOperationsViewV2({
             }}>
               <label>Delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e)))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
               <div className="wide-field stack-list warehouse-order-list">
-                {bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments waiting for delivery tagging.</div> : bundleReadyConsignments.map((consignment) => {
+                {bundleReadyConsignments.length === 0 ? <div className="empty-card">{openDockets.length > 0 ? `${openDockets.length} docket(s) are ready, but not bundled yet. Open Bundle first, create a consignment, then come back to Tag.` : "No bundled consignments waiting for delivery tagging."}</div> : bundleReadyConsignments.map((consignment) => {
                   const groups = sortOrdersForOutboundTag(consignmentGroups(consignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
                   const needsAccountsCheck = groups.some((group) => {
                     const first = group.lines[0];
