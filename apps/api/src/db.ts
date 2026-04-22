@@ -234,17 +234,24 @@ async function seedDatabase() {
       ["payment_methods", JSON.stringify(defaultPaymentMethods()), "delivery_charge", JSON.stringify({ model: "Fixed", amount: 350 })]
     );
   }
-  await query(
-    `INSERT INTO users (username, full_name, mobile_number, role, roles_json, warehouse_ids_json, password, active, created_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, TRUE, $8)
-     ON CONFLICT (username) DO UPDATE
-     SET full_name = EXCLUDED.full_name,
-         role = EXCLUDED.role,
-         roles_json = EXCLUDED.roles_json,
-         password = EXCLUDED.password,
-         active = TRUE`,
-    ["dm", "Delivery Manager", "", "Delivery Manager", JSON.stringify(["Delivery Manager"]), JSON.stringify([]), "dm", now()]
-  );
+  const seededUsers = [
+    { username: "dm", fullName: "Delivery Manager", role: "Delivery Manager" as UserRole, password: "dm" },
+    { username: "in", fullName: "In Delivery", role: "In Delivery" as UserRole, password: "in" },
+    { username: "out", fullName: "Out Delivery", role: "Out Delivery" as UserRole, password: "out" }
+  ];
+  for (const user of seededUsers) {
+    await query(
+      `INSERT INTO users (username, full_name, mobile_number, role, roles_json, warehouse_ids_json, password, active, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, TRUE, $8)
+       ON CONFLICT (username) DO UPDATE
+       SET full_name = EXCLUDED.full_name,
+           role = EXCLUDED.role,
+           roles_json = EXCLUDED.roles_json,
+           password = EXCLUDED.password,
+           active = TRUE`,
+      [user.username, user.fullName, "", user.role, JSON.stringify([user.role]), JSON.stringify([]), user.password, now()]
+    );
+  }
 }
 
 async function mapUsers(client?: DbClient): Promise<AppUser[]> {
@@ -760,7 +767,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     deliveryConsignments,
     notes
   };
-  if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("Delivery"))) {
+  if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("In Delivery") || currentUser.roles.includes("Out Delivery") || currentUser.roles.includes("Delivery"))) {
     const scopedWarehouseIds = new Set(currentUser.warehouseIds);
     const scopedPurchaseOrderIds = new Set(snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
     const scopedSalesOrderIds = new Set(snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));

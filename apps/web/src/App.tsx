@@ -57,6 +57,8 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Payments", "Ledger", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "Payments", "Ledger", "Notes"],
+  "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
+  "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment", "Notes"]
 };
 
@@ -67,6 +69,8 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Payments"],
   Accounts: ["Overview", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "Payments"],
+  "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
+  "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment"]
 };
 
@@ -247,7 +251,37 @@ function isUserAssignedToDelivery(value: string, user: AppUser) {
 }
 
 function deliveryTasksForUser(snapshot: AppSnapshot, user: AppUser) {
-  return snapshot.deliveryTasks.filter((task) => isUserAssignedToDelivery(task.assignedTo, user));
+  const side = deliverySideForUser(user);
+  return snapshot.deliveryTasks.filter((task) => isUserAssignedToDelivery(task.assignedTo, user) && (!side || task.side === side));
+}
+
+function userRoleList(user: AppUser) {
+  return user.roles && user.roles.length > 0 ? user.roles : [user.role];
+}
+
+function userHasAnyRole(user: AppUser, roles: UserRole[]) {
+  const userRoles = userRoleList(user);
+  return roles.some((role) => userRoles.includes(role));
+}
+
+function isDeliveryExecutive(user: AppUser) {
+  return userHasAnyRole(user, ["In Delivery", "Out Delivery", "Delivery"]);
+}
+
+function isInboundDeliveryUser(user: AppUser) {
+  return userHasAnyRole(user, ["In Delivery", "Delivery"]);
+}
+
+function isOutboundDeliveryUser(user: AppUser) {
+  return userHasAnyRole(user, ["Out Delivery", "Delivery"]);
+}
+
+function deliverySideForUser(user: AppUser): DeliveryTask["side"] | null {
+  const roles = userRoleList(user);
+  if (roles.includes("Delivery")) return null;
+  if (roles.includes("In Delivery")) return "Purchase";
+  if (roles.includes("Out Delivery")) return "Sales";
+  return null;
 }
 
 function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
@@ -261,7 +295,7 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
       { label: "Live delivery", value: snapshot.deliveryTasks.filter((item) => item.status !== "Delivered" && item.status !== "Handed Over").length }
     ];
   }
-  if (roles.includes("Delivery")) {
+  if (roles.includes("In Delivery") || roles.includes("Out Delivery") || roles.includes("Delivery")) {
     const myTasks = deliveryTasksForUser(snapshot, user);
     return [
       { label: "Current delivery", value: myTasks.filter((item) => item.status !== "Planned" && item.status !== "Handed Over" && item.status !== "Delivered").length },
@@ -334,7 +368,7 @@ function userWarehouseScope(user: AppUser) {
 
 function isWarehouseScoped(user: AppUser) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
-  return userWarehouseScope(user).size > 0 && (roles.includes("Warehouse Manager") || roles.includes("Delivery Manager") || roles.includes("Delivery"));
+  return userWarehouseScope(user).size > 0 && (roles.includes("Warehouse Manager") || roles.includes("Delivery Manager") || roles.includes("In Delivery") || roles.includes("Out Delivery") || roles.includes("Delivery"));
 }
 
 function mapsDirectionsUrl(stops: string[]) {
@@ -617,8 +651,9 @@ function App() {
               <p>Accounts: `a` / `1234`</p>
               <p>Govindpura Warehouse: `gp` / `1234`</p>
               <p>C21 Warehouse: `c21` / `1234`</p>
-              <p>Delivery Manager: `dm` / `1234`</p>
-              <p>Delivery: `d` / `1234`</p>
+              <p>Delivery Manager: `dm` / `dm`</p>
+              <p>In Delivery: `in` / `in`</p>
+              <p>Out Delivery: `out` / `out`</p>
             </div>
           </div>
           <form className="form-shell" onSubmit={doLogin}>
@@ -639,7 +674,7 @@ function App() {
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
   const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");
   const isDeliveryManager = currentRoles.includes("Delivery Manager");
-  const isDeliveryOnly = currentRoles.length === 1 && currentRoles[0] === "Delivery";
+  const isDeliveryOnly = currentRoles.length === 1 && (currentRoles[0] === "In Delivery" || currentRoles[0] === "Out Delivery" || currentRoles[0] === "Delivery");
   const visibleViews = getVisibleViewsForMode(currentUser, simpleMode);
   const safeVisibleViews: ViewKey[] = visibleViews.length > 0 ? visibleViews : ["Overview"];
   const warehouseScope = userWarehouseScope(currentUser);
@@ -2983,7 +3018,7 @@ function AccountsPaymentsView({
     const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
     const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified" || item.verificationStatus === "Resolved");
   const dayCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
-  const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
+  const deliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
     const accountOrderOptions = [
       ...groupPurchaseOrders(snapshot.purchaseOrders).map((group) => ({ id: group.id, side: "Purchase" as const, party: group.lines[0]?.supplierName || "Supplier", pendingAmount: purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id) })),
       ...Array.from(new Set(snapshot.salesOrders.map((order) => orderPublicId(order)))).map((id) => ({ id, side: "Sales" as const, party: findSalesOrderByPublicId(snapshot.salesOrders, id)?.shopName || "Customer", pendingAmount: snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id) }))
@@ -3086,7 +3121,7 @@ function AccountsPaymentsView({
                 {payment.verificationStatus === "Disputed" ? <button className="ghost-button" type="button" onClick={() => void onVerify(payment.id, "Resolved", "Resolved after enquiry by accounts")}>Resolve dispute</button> : null}
               </div>
               {payment.side === "Purchase" && payment.mode === "Cash" && !purchaseCashTask && purchaseOrder && purchaseOrder.deliveryMode === "Self Collection" ? <div className="form-grid top-gap">
-                <label>Delivery guy<select value={deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "d"} onChange={(e) => setDeliveryAssignments((current) => ({ ...current, [payment.id]: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+                <label>In delivery<select value={deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "in"} onChange={(e) => setDeliveryAssignments((current) => ({ ...current, [payment.id]: e.target.value }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
                 <div className="payment-card-actions wide-field">
                   <button className="ghost-button" type="button" onClick={() => void onCreateDeliveryTask({
                     side: "Purchase",
@@ -3095,7 +3130,7 @@ function AccountsPaymentsView({
                     mode: purchaseOrder.deliveryMode,
                     from: "Accounts Cash",
                     to: purchaseOrder.supplierName,
-                    assignedTo: deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "d",
+                    assignedTo: deliveryAssignments[payment.id] || deliveryUsers[0]?.username || "in",
                     paymentAction: "Deliver Payment",
                     cashCollectionRequired: true,
                     status: "Planned"
@@ -3136,7 +3171,7 @@ function WarehouseOperationsView({
     return groups;
   }, new Map<string, PurchaseOrder[]>()).entries()).map(([id, lines]) => ({ id, lines }));
   const openDockets = snapshot.deliveryDockets.filter((item) => item.status !== "Delivered" && !item.consignmentId);
-  const deliveryUsers = snapshot.users.filter((user) => user.roles.includes("Delivery") || user.role === "Delivery");
+  const deliveryUsers = snapshot.users.filter(isDeliveryExecutive);
   const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: "delivery" });
   const selectedDockets = openDockets.filter((item) => consignmentDraft.docketIds.includes(item.id));
   const selectedDocketWeight = selectedDockets.reduce((sum, item) => sum + item.weightKg, 0);
@@ -3360,8 +3395,8 @@ function WarehouseOperationsViewV2({
   const [processingSendKeys, setProcessingSendKeys] = useState<Record<string, boolean>>({});
   const [selectedInboundGroups, setSelectedInboundGroups] = useState<string[]>([]);
   const [selectedOutboundGroups, setSelectedOutboundGroups] = useState<string[]>([]);
-  const [inboundAssignedTo, setInboundAssignedTo] = useState<string[]>(["d"]);
-  const [outboundAssignedTo, setOutboundAssignedTo] = useState<string[]>(["d"]);
+  const [inboundAssignedTo, setInboundAssignedTo] = useState<string[]>(["in"]);
+  const [outboundAssignedTo, setOutboundAssignedTo] = useState<string[]>(["out"]);
   const [submittingInboundTag, setSubmittingInboundTag] = useState(false);
   const [submittingOutboundTag, setSubmittingOutboundTag] = useState(false);
   const [submittingConsignment, setSubmittingConsignment] = useState(false);
@@ -3382,12 +3417,14 @@ function WarehouseOperationsViewV2({
   const [outgoingDrafts, setOutgoingDrafts] = useState<Record<string, { containerWeightKg: string; weighingProofName: string; assignedTo: string }>>({});
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
   const [sendSummaryDrafts, setSendSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
-    const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: ["d"] as string[] });
-    const deliveryUsers = snapshot.users.filter((user) => user.role === "Delivery" || user.roles.includes("Delivery"));
-    const defaultDeliveryUsername = deliveryUsers[0]?.username || "d";
-  const normalizeSelectedDeliveryUsers = (selectedUsers: string[]) => {
-    const validUsers = Array.from(new Set(selectedUsers.filter((username) => deliveryUsers.some((user) => user.username === username))));
-    return validUsers.length > 0 ? validUsers : [defaultDeliveryUsername];
+  const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] });
+  const inboundDeliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
+  const outboundDeliveryUsers = snapshot.users.filter(isOutboundDeliveryUser);
+  const defaultInboundDeliveryUsername = inboundDeliveryUsers[0]?.username || "in";
+  const defaultOutboundDeliveryUsername = outboundDeliveryUsers[0]?.username || "out";
+  const normalizeSelectedDeliveryUsers = (selectedUsers: string[], users: AppUser[], fallbackUsername: string) => {
+    const validUsers = Array.from(new Set(selectedUsers.filter((username) => users.some((user) => user.username === username))));
+    return validUsers.length > 0 ? validUsers : [fallbackUsername];
   };
   const sameDeliveryUsers = (left: string[], right: string[]) => left.length === right.length && left.every((item, index) => item === right[index]);
   const selectedOptions = (event: ChangeEvent<HTMLSelectElement>) => Array.from(event.target.selectedOptions).map((option) => option.value);
@@ -3422,22 +3459,22 @@ function WarehouseOperationsViewV2({
   }, [canManageDeliveryTagging, canManageWarehouseChecks, inboundStep, outboundStep, snapshot.deliveryConsignments, snapshot.deliveryDockets]);
   useEffect(() => {
     setInboundAssignedTo((current) => {
-      const normalized = normalizeSelectedDeliveryUsers(current);
+      const normalized = normalizeSelectedDeliveryUsers(current, inboundDeliveryUsers, defaultInboundDeliveryUsername);
       return sameDeliveryUsers(current, normalized) ? current : normalized;
     });
-  }, [defaultDeliveryUsername, deliveryUsers, inboundAssignedTo]);
+  }, [defaultInboundDeliveryUsername, inboundDeliveryUsers, inboundAssignedTo]);
   useEffect(() => {
     setOutboundAssignedTo((current) => {
-      const normalized = normalizeSelectedDeliveryUsers(current);
+      const normalized = normalizeSelectedDeliveryUsers(current, outboundDeliveryUsers, defaultOutboundDeliveryUsername);
       return sameDeliveryUsers(current, normalized) ? current : normalized;
     });
-  }, [defaultDeliveryUsername, deliveryUsers, outboundAssignedTo]);
+  }, [defaultOutboundDeliveryUsername, outboundDeliveryUsers, outboundAssignedTo]);
   useEffect(() => {
     setConsignmentDraft((current) => {
-      const normalized = normalizeSelectedDeliveryUsers(current.assignedTo);
+      const normalized = normalizeSelectedDeliveryUsers(current.assignedTo, outboundDeliveryUsers, defaultOutboundDeliveryUsername);
       return sameDeliveryUsers(current.assignedTo, normalized) ? current : { ...current, assignedTo: normalized };
     });
-  }, [consignmentDraft.assignedTo, defaultDeliveryUsername, deliveryUsers]);
+  }, [consignmentDraft.assignedTo, defaultOutboundDeliveryUsername, outboundDeliveryUsers]);
 
   const purchaseGroups: PurchaseGroup[] = Array.from(snapshot.purchaseOrders.reduce((groups, order) => {
     const key = orderPublicId(order);
@@ -3633,7 +3670,7 @@ function WarehouseOperationsViewV2({
     if (side === "incoming") {
       setIncomingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { receivedQuantity: "0", actualWeightKg: "0", containerWeightKg: "0", weighingProofName: "", cashProofName: "", note: "" }), weighingProofName: fileName } }));
     } else {
-      setOutgoingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultDeliveryUsername }), weighingProofName: fileName } }));
+      setOutgoingDrafts((current) => ({ ...current, [draftKey]: { ...(current[draftKey] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultOutboundDeliveryUsername }), weighingProofName: fileName } }));
     }
   }
 
@@ -3909,7 +3946,7 @@ function WarehouseOperationsViewV2({
     const summaryExpanded = expandedSendSummary[group.id] ?? false;
     const summaryDraft = sendSummaryDrafts[group.id] || { proofName: "" };
     const paymentPending = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
-    const draft = outgoingDrafts[group.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultDeliveryUsername };
+    const draft = outgoingDrafts[group.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: defaultOutboundDeliveryUsername };
     const needsAccountsCheck = paymentPending > 0 && first.paymentMode !== "Cash";
     const totalWeight = group.lines.reduce((sum, line) => sum + (snapshot.deliveryDockets.find((item) => item.salesOrderId === line.id)?.weightKg || 0), 0);
     const isProcessing = Boolean(processingSendKeys[group.id]);
@@ -3932,7 +3969,7 @@ function WarehouseOperationsViewV2({
         <label>Container weight<input type="number" value={draft.containerWeightKg} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, containerWeightKg: e.target.value } }))} /></label>
         <label>Weighing photo<input type="file" accept="image/*" onChange={(e) => void uploadWeighingProof(group.id, e.target.files?.[0] || null, "outgoing")} /></label>
         <label>Proof name<input value={draft.weighingProofName} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, weighingProofName: e.target.value } }))} /></label>
-        {canManageDeliveryTagging && !isSelfCollection ? <label>Delivery guy<select value={draft.assignedTo} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, assignedTo: e.target.value } }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : null}
+        {canManageDeliveryTagging && !isSelfCollection ? <label>Out delivery<select value={draft.assignedTo} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, assignedTo: e.target.value } }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : null}
         <div className="payment-card-actions wide-field">
           {mode === "check-out" ? <>
             <button className="ghost-button" type="button" disabled={isProcessing} onClick={async () => {
@@ -4124,7 +4161,7 @@ function WarehouseOperationsViewV2({
               setSubmittingInboundTag(false);
             }
           }}>
-            <label>Delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e)))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+            <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
             <div className="wide-field stack-list warehouse-order-list">
               {sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).length === 0 ? <div className="empty-card">No self-collection inbound orders waiting for tagging.</div> : sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).map((group) => <label className="list-card big-checkbox" key={group.id}>
                 <input type="checkbox" disabled={submittingInboundTag} checked={selectedInboundGroups.includes(group.id)} onChange={(e) => setSelectedInboundGroups((current) => e.target.checked ? [...new Set([...current, group.id])] : current.filter((item) => item !== group.id))} />
@@ -4254,7 +4291,7 @@ function WarehouseOperationsViewV2({
                 setSubmittingOutboundTag(false);
               }
             }}>
-              <label>Delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e)))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+              <label>Out delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
               <div className="wide-field stack-list warehouse-order-list">
                 {bundleReadyConsignments.length === 0 ? <div className="empty-card">{openDockets.length > 0 ? `${openDockets.length} docket(s) are ready, but not bundled yet. Open Bundle first, create a consignment, then come back to Tag.` : "No bundled consignments waiting for delivery tagging."}</div> : bundleReadyConsignments.map((consignment) => {
                   const groups = sortOrdersForOutboundTag(consignmentGroups(consignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
@@ -4295,7 +4332,7 @@ function WarehouseOperationsViewV2({
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button> : null}
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Go to check</button> : null}
             </div>
-          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); if (submittingConsignment) return; setSubmittingConsignment(true); try { await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultDeliveryUsername] }); setOutboundStep("tag"); } finally { setSubmittingConsignment(false); } }}><label>Warehouse<select value={consignmentDraft.warehouseId} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e)) }))}>{deliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit" disabled={submittingConsignment}>{submittingConsignment ? "Creating..." : "Create consignment"}</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
+          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); if (submittingConsignment) return; setSubmittingConsignment(true); try { await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] }); setOutboundStep("tag"); } finally { setSubmittingConsignment(false); } }}><label>Warehouse<select value={consignmentDraft.warehouseId} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit" disabled={submittingConsignment}>{submittingConsignment ? "Creating..." : "Create consignment"}</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
     </section>
   );
 }
