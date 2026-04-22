@@ -1828,7 +1828,9 @@ export async function createDeliveryConsignment(payload: {
   const id = makeId("CON");
   const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
-    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, "Sales");
+    const assignedTo = payload.assignedTo.trim()
+      ? await normalizeDeliveryAssignee(payload.assignedTo, client, "Sales")
+      : "";
     await query(
       `INSERT INTO delivery_consignments (id, docket_ids_json, warehouse_id, assigned_to, total_weight_kg, status, created_by, created_at)
        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)`,

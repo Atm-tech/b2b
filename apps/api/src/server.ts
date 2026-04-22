@@ -649,7 +649,7 @@ app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
   return createDeliveryConsignment({
     docketIds: requiredStringArray(req.body?.docketIds, "Dockets"),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
-    assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
+    assignedTo: optionalString(req.body?.assignedTo) || "",
     status: (optionalString(req.body?.status) || "Ready") as any,
     operationDate: optionalString(req.body?.operationDate)
   }, currentUser);

@@ -3340,13 +3340,13 @@ function WarehouseOperationsView({
           await onCreateConsignment({
             docketIds: consignmentDraft.docketIds,
             warehouseId: consignmentDraft.warehouseId,
-            assignedTo: consignmentDraft.assignedTo,
+            assignedTo: "",
             status: "Ready"
           });
           setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: deliveryUsers[0]?.username || "d" });
         }}>
           <label>Warehouse<select value={consignmentDraft.warehouseId} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label>
-          <label>Delivery user<input value={consignmentDraft.assignedTo} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: e.target.value }))} /></label>
+          <div><span className="small-label">Assignment</span><strong>Tag delivery after consignment creation</strong></div>
           <label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>
             {openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} · ${docket.shopName} · ${docket.weightKg.toFixed(2)} kg`}</option>)}
           </select></label>
@@ -4197,7 +4197,7 @@ function WarehouseOperationsViewV2({
         if (submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0) return;
         setSubmittingConsignment(true);
         try {
-          await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: effectiveWarehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" });
+          await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: effectiveWarehouseId, assignedTo: "", status: "Ready" });
           setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] });
           setOutboundStep("tag");
         } finally {
@@ -4205,7 +4205,7 @@ function WarehouseOperationsViewV2({
         }
       }}>
         <div><span className="small-label">Warehouse</span><strong>{warehouseById.get(effectiveWarehouseId)?.name || "Select dockets from one warehouse"}</strong></div>
-        <label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+        <div><span className="small-label">Assignment</span><strong>Tag delivery in the next section</strong></div>
         <div className="payment-card-actions wide-field">
           <span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span>
           {hasMixedWarehouses ? <span className="small-label">Select dockets from only one warehouse.</span> : null}
