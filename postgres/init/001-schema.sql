@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   mobile_number TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL,
   roles_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  warehouse_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   password TEXT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

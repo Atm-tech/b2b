@@ -528,7 +528,7 @@ app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => w
 }));
 
 app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Warehouse Manager", "Delivery"]);
+  await requireRole(req, ["Delivery Manager", "Delivery"]);
   if (!req.file) {
     throw new Error("Delivery proof file is required.");
   }
@@ -589,7 +589,7 @@ app.patch("/receipt-checks/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+  await requireRole(req, ["Delivery Manager", "Accounts"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return createDeliveryTask({
     side: requiredString(req.body?.side, "Side") as DeliveryTask["side"],
@@ -616,7 +616,7 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Warehouse Manager", "Purchaser", "Sales", "Delivery"]);
+  await requireRole(req, ["Warehouse Manager", "Delivery Manager", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
   return updateDeliveryTask(req.params.id, {
     linkedOrderIds,
@@ -645,7 +645,7 @@ app.post("/delivery-dockets", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Warehouse Manager"]);
+  const currentUser = await requireRole(req, ["Delivery Manager"]);
   return createDeliveryConsignment({
     docketIds: requiredStringArray(req.body?.docketIds, "Dockets"),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
@@ -656,7 +656,7 @@ app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/notes", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Warehouse Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
+  const currentUser = await requireRole(req, ["Warehouse Manager", "Delivery Manager", "Purchaser", "Accounts", "Sales", "Delivery"]);
   return createNote(
     {
       entityType: requiredString(req.body?.entityType, "Entity type") as NoteRecord["entityType"],
