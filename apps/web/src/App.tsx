@@ -4136,6 +4136,87 @@ function WarehouseOperationsViewV2({
     </article>;
   }
 
+  function selectedDocketWarehouseIds() {
+    return Array.from(new Set(selectedDockets.map((docket) => docket.warehouseId).filter(Boolean)));
+  }
+
+  function selectOutboundDockets(dockets: DeliveryDocket[]) {
+    const warehouseId = dockets[0]?.warehouseId || "";
+    setConsignmentDraft((current) => ({
+      ...current,
+      warehouseId,
+      docketIds: dockets.filter((docket) => docket.warehouseId === warehouseId).map((docket) => docket.id)
+    }));
+  }
+
+  function renderOutboundBundlePanel() {
+    const selectedWarehouseIds = selectedDocketWarehouseIds();
+    const effectiveWarehouseId = consignmentDraft.warehouseId || selectedWarehouseIds[0] || "";
+    const hasMixedWarehouses = selectedWarehouseIds.length > 1;
+    const suggestedGroupsByWarehouse = outboundDocketSuggestionGroups().reduce((groups, bucket) => {
+      const warehouseId = bucket[0]?.docket.warehouseId || "";
+      if (!warehouseId) return groups;
+      groups.set(warehouseId, [...(groups.get(warehouseId) || []), bucket]);
+      return groups;
+    }, new Map<string, Array<Array<{ docket: DeliveryDocket; group: SalesGroup }>>>());
+    const openDocketsByWarehouse = snapshot.warehouses.map((warehouse) => ({
+      warehouse,
+      dockets: openDockets.filter((docket) => docket.warehouseId === warehouse.id)
+    })).filter((item) => item.dockets.length > 0);
+
+    return <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging">
+      <div className="stack-list warehouse-order-list">
+        {openDocketsByWarehouse.length === 0 ? <div className="empty-card">No ready dockets from any warehouse.</div> : openDocketsByWarehouse.map(({ warehouse, dockets }) => {
+          const suggestionBuckets = suggestedGroupsByWarehouse.get(warehouse.id) || [];
+          return <article className="list-card payment-update-card" key={warehouse.id}>
+            <div className="payment-update-head">
+              <div><strong>{warehouse.name}</strong><p>{warehouse.city} - {dockets.length} ready docket(s)</p></div>
+              <span className="status-pill status-pending">{warehouse.id}</span>
+            </div>
+            {suggestionBuckets.length > 0 ? <div className="stack-list top-gap">
+              {suggestionBuckets.map((bucket, index) => {
+                const groups = bucket.map((item) => item.group);
+                const mapUrl = mapsDirectionsUrl(groups.map((group) => customerAddressForGroup(group)));
+                return <button type="button" className="list-card warehouse-step-card" key={`${warehouse.id}-out-suggestion-${index}`} onClick={() => selectOutboundDockets(bucket.map((item) => item.docket))}>
+                  <strong>{`Suggested area group ${index + 1}`}</strong>
+                  <p>{bucket.length} docket(s) - {groupRouteDistanceKm(groups, (group) => customerById.get(group.lines[0]?.shopId || "")).toFixed(1)} km between stops - {groups.map((group) => group.lines[0]?.shopName || group.id).join(", ")}</p>
+                  {mapUrl ? <span className="small-label">Route available in maps after selection</span> : null}
+                </button>;
+              })}
+            </div> : null}
+            <label className="wide-field top-gap">Dockets from {warehouse.name}
+              <select multiple value={consignmentDraft.docketIds.filter((id) => dockets.some((docket) => docket.id === id))} disabled={submittingConsignment} onChange={(event) => selectOutboundDockets(Array.from(event.target.selectedOptions).map((option) => dockets.find((docket) => docket.id === option.value)).filter((docket): docket is DeliveryDocket => Boolean(docket)))}>
+                {dockets.map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}
+              </select>
+            </label>
+          </article>;
+        })}
+      </div>
+      <form className="form-grid top-gap" onSubmit={async (event) => {
+        event.preventDefault();
+        if (submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0) return;
+        setSubmittingConsignment(true);
+        try {
+          await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: effectiveWarehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" });
+          setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] });
+          setOutboundStep("tag");
+        } finally {
+          setSubmittingConsignment(false);
+        }
+      }}>
+        <div><span className="small-label">Warehouse</span><strong>{warehouseById.get(effectiveWarehouseId)?.name || "Select dockets from one warehouse"}</strong></div>
+        <label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+        <div className="payment-card-actions wide-field">
+          <span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span>
+          {hasMixedWarehouses ? <span className="small-label">Select dockets from only one warehouse.</span> : null}
+          <button className="primary-button" type="submit" disabled={submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0}>{submittingConsignment ? "Creating..." : "Create consignment"}</button>
+        </div>
+      </form>
+      <div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div>
+      <div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div>
+    </Panel>;
+  }
+
   return (
     <section className="dashboard-grid warehouse-ops">
       {screen === "full" ? <Panel title={canManageWarehouseChecks ? "Warehouse" : "Delivery Manager"} eyebrow="Home / In / Out">
@@ -4415,7 +4496,7 @@ function WarehouseOperationsViewV2({
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button> : null}
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Go to check</button> : null}
             </div>
-          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging">{outboundDocketSuggestionGroups().length > 0 ? <div className="stack-list warehouse-order-list">{outboundDocketSuggestionGroups().map((bucket, index) => { const groups = bucket.map((item) => item.group); const mapUrl = mapsDirectionsUrl(groups.map((group) => customerAddressForGroup(group))); return <button type="button" className="list-card warehouse-step-card" key={`out-suggestion-${index}`} onClick={() => setConsignmentDraft((current) => ({ ...current, warehouseId: bucket[0]?.docket.warehouseId || current.warehouseId, docketIds: bucket.map((item) => item.docket.id) }))}><strong>{`Suggested area group ${index + 1}`}</strong><p>{bucket.length} docket(s) - {groupRouteDistanceKm(groups, (group) => customerById.get(group.lines[0]?.shopId || "")).toFixed(1)} km between stops - {groups.map((group) => group.lines[0]?.shopName || group.id).join(", ")}</p>{mapUrl ? <span className="small-label">Open route after selecting to inspect in maps</span> : null}</button>; })}</div> : null}<form className="form-grid top-gap" onSubmit={async (event) => { event.preventDefault(); if (submittingConsignment) return; setSubmittingConsignment(true); try { await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] }); setOutboundStep("tag"); } finally { setSubmittingConsignment(false); } }}><label>Warehouse<select value={consignmentDraft.warehouseId} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{outboundDocketSuggestionGroups().flatMap((bucket) => bucket.map((item) => item.docket)).filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit" disabled={submittingConsignment}>{submittingConsignment ? "Creating..." : "Create consignment"}</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
+          </Panel> : outboundStep === "bundle" ? renderOutboundBundlePanel() : null}</> : null}
     </section>
   );
 }
