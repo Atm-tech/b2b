@@ -1783,21 +1783,21 @@ export async function createDeliveryTask(payload: {
     if (payload.side === "Sales" && payload.consignmentId?.trim()) {
       await query(
         `UPDATE delivery_consignments
-         SET assigned_to = $1, status = 'Out for Delivery'
+         SET assigned_to = $1, status = 'Pending Pickup'
          WHERE id = $2`,
         [assignedTo, payload.consignmentId.trim()],
         client
       );
       await query(
         `UPDATE delivery_dockets
-         SET status = 'Out for Delivery'
+         SET status = 'Pending Pickup'
          WHERE consignment_id = $1`,
         [payload.consignmentId.trim()],
         client
       );
       await query(
         `UPDATE sales_orders
-         SET status = 'Out for Delivery'
+         SET status = 'Pending Pickup'
          WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
         [linkedOrderIds],
         client
@@ -2134,12 +2134,14 @@ export async function updateDeliveryTask(taskId: string, payload: {
           payload.status === "Delivered"
             ? "Delivered"
             : payload.status === "Planned"
-              ? "Ready"
+              ? "Pending Pickup"
               : "Out for Delivery";
         const docketStatus =
           payload.status === "Delivered"
             ? "Delivered"
-            : "Out for Delivery";
+            : payload.status === "Planned"
+              ? "Pending Pickup"
+              : "Out for Delivery";
         await query(
           `UPDATE delivery_consignments
            SET assigned_to = $1, status = $2
@@ -2155,15 +2157,19 @@ export async function updateDeliveryTask(taskId: string, payload: {
           client
         );
       }
-      if (payload.status === "Delivered") {
-        await query(
-          `UPDATE sales_orders
-           SET status = 'Delivered'
-           WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
-          [linkedOrderIds],
-          client
-        );
-      }
+      const salesStatus =
+        payload.status === "Delivered"
+          ? "Delivered"
+          : payload.status === "Planned"
+            ? "Pending Pickup"
+            : "Out for Delivery";
+      await query(
+        `UPDATE sales_orders
+         SET status = $1
+         WHERE id = ANY($2::text[]) OR cart_id = ANY($2::text[])`,
+        [salesStatus, linkedOrderIds],
+        client
+      );
     }
     if (
       side === "Purchase" &&

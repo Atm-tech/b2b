@@ -322,7 +322,7 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
     const scopedTasks = snapshot.deliveryTasks.filter((task) => task.routeStops.some((stop) => warehouseScope.size === 0 || warehouseScope.has(stop.warehouseId)));
     return [
       { label: "Inbound checks", value: countGroupedOrders(scopedPurchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed")) },
-      { label: "Outbound checks", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery")) },
+      { label: "Outbound checks", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery")) },
       { label: "Pickup tags", value: scopedTasks.filter((task) => task.side === "Purchase" && task.status === "Planned").length },
       { label: "Dispatch tags", value: scopedTasks.filter((task) => task.side === "Sales" && task.status === "Planned").length }
     ];
@@ -3205,7 +3205,7 @@ function WarehouseOperationsView({
   onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<boolean | void>;
 }) {
   const incomingOrders = snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  const outgoingOrders = snapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const outgoingOrders = snapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const incomingOrderGroups = Array.from(incomingOrders.reduce((groups, order) => {
     const key = orderPublicId(order);
     groups.set(key, [...(groups.get(key) || []), order]);
@@ -3610,10 +3610,10 @@ function WarehouseOperationsViewV2({
       return Number(rightReceived) - Number(leftReceived) || groupDate(left) - groupDate(right);
     });
   const outgoingOrders = snapshot.salesOrders
-    .filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Out for Delivery" || item.status === "Self Pickup")
+    .filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   const outgoingGroups = salesGroups
-    .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
+    .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Pending Pickup" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const outboundTaskDockets = snapshot.deliveryTasks
     .filter((task) => task.side === "Sales" && task.mode === "Delivery" && task.consignmentId)

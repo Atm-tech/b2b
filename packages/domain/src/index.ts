@@ -146,7 +146,7 @@ export type PurchaseOrder = {
   createdAt: string;
 };
 
-export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed";
+export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Pending Pickup" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed";
 
 export type SalesOrder = {
   id: string;
@@ -185,7 +185,7 @@ export type DeliveryDocket = {
   containerWeightKg: number;
   weighingProofName?: string;
   consignmentId?: string;
-  status: "Pending Packing" | "Ready" | "Tagged" | "Out for Delivery" | "Delivered";
+  status: "Pending Packing" | "Ready" | "Tagged" | "Pending Pickup" | "Out for Delivery" | "Delivered";
   createdAt: string;
 };
 
@@ -195,7 +195,7 @@ export type DeliveryConsignment = {
   warehouseId: string;
   assignedTo: string;
   totalWeightKg: number;
-  status: "Draft" | "Ready" | "Out for Delivery" | "Delivered";
+  status: "Draft" | "Ready" | "Pending Pickup" | "Out for Delivery" | "Delivered";
   createdBy: string;
   createdAt: string;
 };
