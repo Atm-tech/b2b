@@ -241,8 +241,9 @@ async function seedDatabase() {
      SET full_name = EXCLUDED.full_name,
          role = EXCLUDED.role,
          roles_json = EXCLUDED.roles_json,
+         password = EXCLUDED.password,
          active = TRUE`,
-    ["dm", "Delivery Manager", "", "Delivery Manager", JSON.stringify(["Delivery Manager"]), JSON.stringify([]), "1234", now()]
+    ["dm", "Delivery Manager", "", "Delivery Manager", JSON.stringify(["Delivery Manager"]), JSON.stringify([]), "dm", now()]
   );
 }
 
