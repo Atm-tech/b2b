@@ -1405,8 +1405,8 @@ export async function createSalesDockets(payload: {
          SET status = 'Ready for Dispatch',
              note = CASE
                WHEN POSITION('Warehouse docket created' IN COALESCE(note, '')) > 0 THEN note
-               WHEN TRIM(COALESCE(note, '')) = '' THEN $1
-               ELSE CONCAT(note, ' | ', $1)
+               WHEN TRIM(COALESCE(note, '')) = '' THEN $1::text
+               ELSE CONCAT(note, ' | ', $1::text)
              END
          WHERE id = $2`,
         [`Warehouse docket created by ${currentUser.fullName}.`, stringValue(order.id)],
