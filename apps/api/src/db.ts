@@ -1066,12 +1066,13 @@ async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gs
   }
 }
 
-async function normalizeDeliveryAssignee(assignedTo: string, client?: PoolClient) {
+async function normalizeDeliveryAssignee(assignedTo: string, client?: PoolClient, side?: DeliveryTask["side"]) {
   const trimmed = assignedTo.trim();
   const requestedAssignees = Array.from(new Set(trimmed.split(",").map((item) => item.trim()).filter(Boolean)));
+  const deliveryRoles = side === "Purchase" ? ["In Delivery", "Delivery"] : side === "Sales" ? ["Out Delivery", "Delivery"] : ["In Delivery", "Out Delivery", "Delivery"];
   const deliveryUsers = await query<Record<string, unknown>>(
-    "SELECT username, full_name FROM users WHERE active = TRUE AND (role = 'Delivery' OR roles_json::text LIKE '%Delivery%') ORDER BY id ASC",
-    [],
+    "SELECT username, full_name FROM users WHERE active = TRUE AND (role = ANY($1::text[]) OR roles_json ?| $1::text[]) ORDER BY id ASC",
+    [deliveryRoles],
     client
   );
   if (deliveryUsers.rows.length === 0) return requestedAssignees.join(", ");
@@ -1725,7 +1726,7 @@ export async function createDeliveryTask(payload: {
   const createdAt = operationalDate(payload.operationDate);
   const linkedOrderIds = payload.linkedOrderIds && payload.linkedOrderIds.length > 0 ? payload.linkedOrderIds : [payload.linkedOrderId.trim()];
   await withTransaction(async (client) => {
-    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, payload.side);
     let taskMode = payload.mode;
     if (payload.side === "Purchase") {
       const purchaseModes = await query<Record<string, unknown>>(
@@ -1827,7 +1828,7 @@ export async function createDeliveryConsignment(payload: {
   const id = makeId("CON");
   const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
-    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, "Sales");
     await query(
       `INSERT INTO delivery_consignments (id, docket_ids_json, warehouse_id, assigned_to, total_weight_kg, status, created_by, created_at)
        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)`,
@@ -2077,9 +2078,9 @@ export async function updateDeliveryTask(taskId: string, payload: {
 }) {
   await ready;
   await withTransaction(async (client) => {
-    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client);
     const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1", [taskId], client);
     if (!task) throw new Error("Delivery task not found.");
+    const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, stringValue(task.side) as DeliveryTask["side"]);
     await query(
       `UPDATE delivery_tasks
        SET linked_order_ids_json = $1::jsonb, consignment_id = $2, assigned_to = $3, pickup_at = $4, drop_at = $5, route_hint = $6, route_json = $7::jsonb, payment_action = $8,

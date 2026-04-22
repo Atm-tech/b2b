@@ -6,6 +6,7 @@ import type {
   AppUser,
   Counterparty,
   DeliveryConsignment,
+  DeliveryDocket,
   DeliveryTask,
   NoteRecord,
   PaymentMode,
@@ -385,6 +386,46 @@ function mapsDirectionsUrl(stops: string[]) {
   });
   if (waypoints.length > 0) params.set("waypoints", waypoints.join("|"));
   return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+function distanceKmBetween(left?: { latitude?: number; longitude?: number }, right?: { latitude?: number; longitude?: number }) {
+  if (left?.latitude === undefined || left.longitude === undefined || right?.latitude === undefined || right.longitude === undefined) return null;
+  const toRad = (value: number) => value * Math.PI / 180;
+  const earthKm = 6371;
+  const dLat = toRad(right.latitude - left.latitude);
+  const dLng = toRad(right.longitude - left.longitude);
+  const lat1 = toRad(left.latitude);
+  const lat2 = toRad(right.latitude);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function nearestNeighborOrder<T>(items: T[], locationFor: (item: T) => { latitude?: number; longitude?: number } | undefined) {
+  if (items.length < 2) return items;
+  if (items.some((item) => {
+    const location = locationFor(item);
+    return location?.latitude === undefined || location.longitude === undefined;
+  })) return items;
+  const remaining = [...items];
+  const ordered: T[] = [];
+  let current = remaining.shift();
+  if (!current) return items;
+  ordered.push(current);
+  while (remaining.length > 0) {
+    const currentLocation = locationFor(current);
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    remaining.forEach((candidate, index) => {
+      const distance = distanceKmBetween(currentLocation, locationFor(candidate)) ?? Number.POSITIVE_INFINITY;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+    current = remaining.splice(bestIndex, 1)[0];
+    ordered.push(current);
+  }
+  return ordered;
 }
 
 function calculateTaxPreview(amountText: string, gstRateText: string, taxMode: TaxModeInput) {
@@ -3599,36 +3640,7 @@ function WarehouseOperationsViewV2({
   }
 
   function optimizeInboundGroups(groups: PurchaseGroup[]) {
-    const withCoords = groups.map((group) => {
-      const supplier = supplierById.get(group.lines[0]?.supplierId || "");
-      return { group, supplier };
-    });
-    if (withCoords.some((item) => item.supplier?.latitude === undefined || item.supplier?.longitude === undefined)) {
-      return groups;
-    }
-    const remaining = [...withCoords];
-    const ordered: PurchaseGroup[] = [];
-    let current = remaining.shift();
-    if (!current) return groups;
-    ordered.push(current.group);
-    while (remaining.length > 0) {
-      const currentLat = current.supplier?.latitude || 0;
-      const currentLng = current.supplier?.longitude || 0;
-      let bestIndex = 0;
-      let bestDistance = Number.POSITIVE_INFINITY;
-      remaining.forEach((candidate, index) => {
-        const dx = (candidate.supplier?.latitude || 0) - currentLat;
-        const dy = (candidate.supplier?.longitude || 0) - currentLng;
-        const distance = (dx * dx) + (dy * dy);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestIndex = index;
-        }
-      });
-      current = remaining.splice(bestIndex, 1)[0];
-      ordered.push(current.group);
-    }
-    return ordered;
+    return nearestNeighborOrder(groups, (group) => supplierById.get(group.lines[0]?.supplierId || ""));
   }
 
   function supplierAddress(group: PurchaseGroup) {
@@ -3637,7 +3649,7 @@ function WarehouseOperationsViewV2({
   }
 
   function sortGroupsForInboundTag(groups: PurchaseGroup[]) {
-    return [...groups].sort((left, right) => supplierAddress(left).localeCompare(supplierAddress(right), "en-IN"));
+    return optimizeInboundGroups([...groups].sort((left, right) => supplierAddress(left).localeCompare(supplierAddress(right), "en-IN")));
   }
 
   function customerAddress(order: SalesOrder) {
@@ -3650,7 +3662,7 @@ function WarehouseOperationsViewV2({
   }
 
   function sortOrdersForOutboundTag(groups: SalesGroup[]) {
-    return [...groups].sort((left, right) => customerAddressForGroup(left).localeCompare(customerAddressForGroup(right), "en-IN"));
+    return nearestNeighborOrder([...groups].sort((left, right) => customerAddressForGroup(left).localeCompare(customerAddressForGroup(right), "en-IN")), (group) => customerById.get(group.lines[0]?.shopId || ""));
   }
 
   function consignmentGroups(consignment: DeliveryConsignment) {
@@ -3660,6 +3672,60 @@ function WarehouseOperationsViewV2({
         .filter(Boolean) as string[]
     );
     return outgoingGroups.filter((group) => group.lines.some((line) => salesOrderIds.has(line.id)));
+  }
+
+  function groupRouteDistanceKm<T>(items: T[], locationFor: (item: T) => { latitude?: number; longitude?: number } | undefined) {
+    return items.reduce((sum, item, index) => {
+      if (index === 0) return sum;
+      return sum + (distanceKmBetween(locationFor(items[index - 1]), locationFor(item)) || 0);
+    }, 0);
+  }
+
+  function inboundSuggestionGroups() {
+    const candidates = sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)));
+    const buckets: PurchaseGroup[][] = [];
+    for (const group of candidates) {
+      const location = supplierById.get(group.lines[0]?.supplierId || "");
+      const lastBucket = buckets[buckets.length - 1];
+      const lastGroup = lastBucket?.[lastBucket.length - 1];
+      const lastLocation = lastGroup ? supplierById.get(lastGroup.lines[0]?.supplierId || "") : undefined;
+      const distance = distanceKmBetween(lastLocation, location);
+      if (!lastBucket || lastBucket.length >= 4 || (distance !== null && distance > 8)) {
+        buckets.push([group]);
+      } else {
+        lastBucket.push(group);
+      }
+    }
+    return buckets;
+  }
+
+  function outboundDocketSuggestionGroups() {
+    const docketGroups = openDockets.map((docket) => {
+      const salesOrder = snapshot.salesOrders.find((order) => order.id === docket.salesOrderId);
+      const group = salesOrder ? outgoingGroups.find((item) => item.id === orderPublicId(salesOrder)) : undefined;
+      return group ? { docket, group } : undefined;
+    }).filter((item): item is { docket: DeliveryDocket; group: SalesGroup } => Boolean(item));
+    const ordered = nearestNeighborOrder(docketGroups, (item) => customerById.get(item.group.lines[0]?.shopId || ""));
+    const buckets: Array<Array<{ docket: DeliveryDocket; group: SalesGroup }>> = [];
+    for (const item of ordered) {
+      const location = customerById.get(item.group.lines[0]?.shopId || "");
+      const lastBucket = buckets[buckets.length - 1];
+      const lastItem = lastBucket?.[lastBucket.length - 1];
+      const lastLocation = lastItem ? customerById.get(lastItem.group.lines[0]?.shopId || "") : undefined;
+      const distance = distanceKmBetween(lastLocation, location);
+      if (!lastBucket || lastBucket.length >= 6 || (distance !== null && distance > 8)) {
+        buckets.push([item]);
+      } else {
+        lastBucket.push(item);
+      }
+    }
+    return buckets;
+  }
+
+  function consignmentRouteLabel(consignment: DeliveryConsignment) {
+    const groups = sortOrdersForOutboundTag(consignmentGroups(consignment));
+    const distance = groupRouteDistanceKm(groups, (group) => customerById.get(group.lines[0]?.shopId || ""));
+    return distance > 0 ? `${distance.toFixed(1)} km between stops` : "Route sorted by address";
   }
 
   async function uploadWeighingProof(draftKey: string, file: File | null, side: "incoming" | "outgoing") {
@@ -4163,6 +4229,16 @@ function WarehouseOperationsViewV2({
           }}>
             <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
             <div className="wide-field stack-list warehouse-order-list">
+              {inboundSuggestionGroups().map((bucket, index) => {
+                const mapUrl = mapsDirectionsUrl([...bucket.map((group) => supplierAddress(group)), warehouseById.get(bucket[0]?.lines[0]?.warehouseId || "")?.name || "Warehouse"]);
+                return <button type="button" className="list-card warehouse-step-card" key={`in-suggestion-${index}`} disabled={submittingInboundTag} onClick={() => setSelectedInboundGroups(bucket.map((group) => group.id))}>
+                  <strong>{`Suggested pickup group ${index + 1}`}</strong>
+                  <p>{bucket.length} PO group(s) - {groupRouteDistanceKm(bucket, (group) => supplierById.get(group.lines[0]?.supplierId || "")).toFixed(1)} km between pickups - {bucket.map((group) => group.lines[0]?.supplierName || group.id).join(", ")}</p>
+                  {mapUrl ? <span className="small-label">Suggested map route available after selection</span> : null}
+                </button>;
+              })}
+            </div>
+            <div className="wide-field stack-list warehouse-order-list">
               {sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).length === 0 ? <div className="empty-card">No self-collection inbound orders waiting for tagging.</div> : sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).map((group) => <label className="list-card big-checkbox" key={group.id}>
                 <input type="checkbox" disabled={submittingInboundTag} checked={selectedInboundGroups.includes(group.id)} onChange={(e) => setSelectedInboundGroups((current) => e.target.checked ? [...new Set([...current, group.id])] : current.filter((item) => item !== group.id))} />
                 <span />
@@ -4175,6 +4251,7 @@ function WarehouseOperationsViewV2({
             <div className="payment-card-actions wide-field">
               <span className="small-label">{selectedInboundGroups.length} self-collection pickup order(s) selected</span>
               <span className="small-label">{optimizeInboundGroups(sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => selectedInboundGroups.includes(group.id) && !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)))).reduce((sum, group) => sum + groupWeight(group, true), 0).toFixed(2)} kg selected</span>
+              {selectedInboundGroups.length > 0 ? <a className="ghost-button" href={mapsDirectionsUrl([...optimizeInboundGroups(sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => selectedInboundGroups.includes(group.id) && !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)))).map((group) => supplierAddress(group)), warehouseById.get(pendingReceiveGroups.find((group) => selectedInboundGroups.includes(group.id))?.lines[0]?.warehouseId || "")?.name || "Warehouse"])} target="_blank" rel="noreferrer">Map pickup route</a> : null}
               <button className="primary-button" type="submit" disabled={submittingInboundTag}>{submittingInboundTag ? "Tagging..." : "Tag inbound pickup"}</button>
             </div>
           </form>
@@ -4241,50 +4318,53 @@ function WarehouseOperationsViewV2({
             <form className="form-grid" onSubmit={async (event) => {
               event.preventDefault();
               if (submittingOutboundTag) return;
-              const selectedConsignment = bundleReadyConsignments.find((item) => selectedOutboundGroups.includes(item.id));
-              const chosenGroups = selectedConsignment ? sortOrdersForOutboundTag(consignmentGroups(selectedConsignment).filter((group) => group.lines[0].deliveryMode === "Delivery")) : [];
-              if (!selectedConsignment || chosenGroups.length === 0) return;
-              const routeStops = chosenGroups.map((group) => {
-                const first = group.lines[0];
-                const customer = customerById.get(first.shopId);
-                const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
-                return {
-                  orderId: group.id,
-                  supplierId: first.shopId,
-                  supplierName: first.shopName,
-                  productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", "),
-                  warehouseId: first.warehouseId,
-                  warehouseName: warehouseById.get(first.warehouseId)?.name || first.warehouseId,
-                  amountToPay: pendingAmount,
-                  paymentRequired: pendingAmount > 0,
-                  paymentMode: first.paymentMode,
-                  cashTiming: first.cashTiming,
-                  latitude: customer?.latitude,
-                  longitude: customer?.longitude,
-                  locationLabel: customerAddress(first),
-                  reached: false,
-                  checked: false,
-                  paid: pendingAmount <= 0,
-                  picked: false
-                };
-              });
+              const selectedConsignments = bundleReadyConsignments.filter((item) => selectedOutboundGroups.includes(item.id));
+              if (selectedConsignments.length === 0) return;
               setSubmittingOutboundTag(true);
               try {
-                await onCreateDeliveryTask({
-                  side: "Sales",
-                  linkedOrderId: chosenGroups[0].id,
-                  linkedOrderIds: chosenGroups.map((group) => group.id),
-                  consignmentId: selectedConsignment.id,
-                  mode: "Delivery",
-                  from: chosenGroups[0].lines[0].warehouseId,
-                  to: routeStops.map((stop) => stop.supplierName).join(", "),
-                  assignedTo: outboundAssignedTo.join(", "),
-                  paymentAction: routeStops.some((stop) => stop.paymentRequired) ? "Collect Payment" : "None",
-                  cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash"),
-                  routeHint: routeStops.map((stop) => stop.locationLabel || stop.supplierName).join(" -> "),
-                  routeStops,
-                  status: "Planned"
-                });
+                for (const selectedConsignment of selectedConsignments) {
+                  const chosenGroups = sortOrdersForOutboundTag(consignmentGroups(selectedConsignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
+                  if (chosenGroups.length === 0) continue;
+                  const routeStops = chosenGroups.map((group) => {
+                    const first = group.lines[0];
+                    const customer = customerById.get(first.shopId);
+                    const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
+                    return {
+                      orderId: group.id,
+                      supplierId: first.shopId,
+                      supplierName: first.shopName,
+                      productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", "),
+                      warehouseId: first.warehouseId,
+                      warehouseName: warehouseById.get(first.warehouseId)?.name || first.warehouseId,
+                      amountToPay: pendingAmount,
+                      paymentRequired: pendingAmount > 0,
+                      paymentMode: first.paymentMode,
+                      cashTiming: first.cashTiming,
+                      latitude: customer?.latitude,
+                      longitude: customer?.longitude,
+                      locationLabel: customerAddress(first),
+                      reached: false,
+                      checked: false,
+                      paid: pendingAmount <= 0,
+                      picked: false
+                    };
+                  });
+                  await onCreateDeliveryTask({
+                    side: "Sales",
+                    linkedOrderId: chosenGroups[0].id,
+                    linkedOrderIds: chosenGroups.map((group) => group.id),
+                    consignmentId: selectedConsignment.id,
+                    mode: "Delivery",
+                    from: chosenGroups[0].lines[0].warehouseId,
+                    to: routeStops.map((stop) => stop.supplierName).join(", "),
+                    assignedTo: outboundAssignedTo.join(", "),
+                    paymentAction: routeStops.some((stop) => stop.paymentRequired) ? "Collect Payment" : "None",
+                    cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash"),
+                    routeHint: routeStops.map((stop) => stop.locationLabel || stop.supplierName).join(" -> "),
+                    routeStops,
+                    status: "Planned"
+                  });
+                }
                 setSelectedOutboundGroups([]);
                 setOutboundStep("planned");
               } finally {
@@ -4301,13 +4381,16 @@ function WarehouseOperationsViewV2({
                     return pendingAmount > 0 && first.paymentMode !== "Cash";
                   });
                   const totalQty = groups.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.quantity, 0), 0);
+                  const mapUrl = mapsDirectionsUrl(groups.map((group) => customerAddressForGroup(group)));
                   return <label className="list-card big-checkbox" key={consignment.id}>
-                    <input type="checkbox" disabled={needsAccountsCheck || submittingOutboundTag} checked={selectedOutboundGroups.includes(consignment.id)} onChange={(e) => setSelectedOutboundGroups((current) => e.target.checked ? [consignment.id] : current.filter((item) => item !== consignment.id))} />
+                    <input type="checkbox" disabled={needsAccountsCheck || submittingOutboundTag} checked={selectedOutboundGroups.includes(consignment.id)} onChange={(e) => setSelectedOutboundGroups((current) => e.target.checked ? [...new Set([...current, consignment.id])] : current.filter((item) => item !== consignment.id))} />
                     <span />
                     <div>
                       <strong>{consignment.id}</strong>
                       <p>{groups.length} stop(s) - {totalQty} qty - {consignment.totalWeightKg.toFixed(2)} kg</p>
                       <p>{groups.map((group) => group.lines[0]?.shopName || group.id).join(", ")}</p>
+                      <span className="small-label">{consignmentRouteLabel(consignment)}</span>
+                      {mapUrl ? <a className="ghost-button" href={mapUrl} target="_blank" rel="noreferrer">Map route</a> : null}
                       {needsAccountsCheck ? <span className="small-label">Accounts clearance required before tagging</span> : null}
                     </div>
                   </label>;
@@ -4332,7 +4415,7 @@ function WarehouseOperationsViewV2({
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button> : null}
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Go to check</button> : null}
             </div>
-          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging"><form className="form-grid" onSubmit={async (event) => { event.preventDefault(); if (submittingConsignment) return; setSubmittingConsignment(true); try { await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] }); setOutboundStep("tag"); } finally { setSubmittingConsignment(false); } }}><label>Warehouse<select value={consignmentDraft.warehouseId} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{openDockets.filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit" disabled={submittingConsignment}>{submittingConsignment ? "Creating..." : "Create consignment"}</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
+          </Panel> : outboundStep === "bundle" ? <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging">{outboundDocketSuggestionGroups().length > 0 ? <div className="stack-list warehouse-order-list">{outboundDocketSuggestionGroups().map((bucket, index) => { const groups = bucket.map((item) => item.group); const mapUrl = mapsDirectionsUrl(groups.map((group) => customerAddressForGroup(group))); return <button type="button" className="list-card warehouse-step-card" key={`out-suggestion-${index}`} onClick={() => setConsignmentDraft((current) => ({ ...current, warehouseId: bucket[0]?.docket.warehouseId || current.warehouseId, docketIds: bucket.map((item) => item.docket.id) }))}><strong>{`Suggested area group ${index + 1}`}</strong><p>{bucket.length} docket(s) - {groupRouteDistanceKm(groups, (group) => customerById.get(group.lines[0]?.shopId || "")).toFixed(1)} km between stops - {groups.map((group) => group.lines[0]?.shopName || group.id).join(", ")}</p>{mapUrl ? <span className="small-label">Open route after selecting to inspect in maps</span> : null}</button>; })}</div> : null}<form className="form-grid top-gap" onSubmit={async (event) => { event.preventDefault(); if (submittingConsignment) return; setSubmittingConsignment(true); try { await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: consignmentDraft.warehouseId, assignedTo: consignmentDraft.assignedTo.join(", "), status: "Ready" }); setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] }); setOutboundStep("tag"); } finally { setSubmittingConsignment(false); } }}><label>Warehouse<select value={consignmentDraft.warehouseId} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, warehouseId: e.target.value }))}>{renderWarehouseOptions(snapshot.warehouses)}</select></label><label>Out delivery team<select multiple value={consignmentDraft.assignedTo} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, assignedTo: normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername) }))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label><label className="wide-field">Dockets<select multiple value={consignmentDraft.docketIds} disabled={submittingConsignment} onChange={(e) => setConsignmentDraft((current) => ({ ...current, docketIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{outboundDocketSuggestionGroups().flatMap((bucket) => bucket.map((item) => item.docket)).filter((docket) => !consignmentDraft.warehouseId || docket.warehouseId === consignmentDraft.warehouseId).map((docket) => <option key={docket.id} value={docket.id}>{`${docket.id} - ${docket.shopName} - ${docket.weightKg.toFixed(2)} kg`}</option>)}</select></label><div className="payment-card-actions wide-field"><span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span><button className="primary-button" type="submit" disabled={submittingConsignment}>{submittingConsignment ? "Creating..." : "Create consignment"}</button></div></form><div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{item.status}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div><div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div></Panel> : null}</> : null}
     </section>
   );
 }
@@ -4937,3 +5020,4 @@ function uniqueProductFieldOptions(items: AppSnapshot["products"], field: "divis
 function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
 
 export default App;
+
