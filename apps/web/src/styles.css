@@ -697,6 +697,9 @@ textarea {
 .catalog-search {
   display: grid !important;
   gap: 10px !important;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 .catalog-search-row {
@@ -707,6 +710,7 @@ textarea {
 
 .search-box {
   position: relative;
+  width: 100%;
 }
 
 .search-suggestion-list {
@@ -1845,6 +1849,10 @@ textarea {
   .catalog-search-row {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .catalog-search-row .ghost-button {
+    width: 100%;
   }
 
   .product-card {
