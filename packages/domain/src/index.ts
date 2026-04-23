@@ -281,6 +281,7 @@ export type DeliveryRouteStop = {
   latitude?: number;
   longitude?: number;
   locationLabel?: string;
+  warehouseReached?: boolean;
   reached: boolean;
   checked: boolean;
   paid: boolean;
