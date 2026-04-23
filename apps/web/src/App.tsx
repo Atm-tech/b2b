@@ -55,7 +55,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
-  Purchaser: ["Overview", "Parties", "Purchase", "Payments", "Ledger", "Notes"],
+  Purchaser: ["Overview", "Parties", "Purchase", "Ledger", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "Payments", "Ledger", "Notes"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
@@ -67,7 +67,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
-  Purchaser: ["Overview", "Parties", "Purchase", "Payments"],
+  Purchaser: ["Overview", "Parties", "Purchase"],
   Accounts: ["Overview", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "Payments"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
@@ -100,6 +100,7 @@ function displayLabel(view: ViewKey, user?: AppUser | null) {
   if (roles.includes("Warehouse Manager")) {
     if (view === "Stock") return "Dispatches";
   }
+  if (roles.includes("Purchaser") && view === "Purchase") return "PO";
   return labels[view];
 }
 
@@ -240,6 +241,14 @@ function purchaseWorkflowStatus(snapshot: AppSnapshot, orderId: string) {
   const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
   if (lines.length === 0) return "Pending";
   return `${purchaseWarehouseStatus(lines)} / Payment ${purchasePaymentStatus(snapshot, orderId)}`;
+}
+
+function statusPillClass(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("flagged") || normalized.includes("disputed") || normalized.includes("rejected")) return "status-rejected";
+  if (normalized.includes("pending") || normalized.includes("partial") || normalized.includes("cash with delivery")) return "status-pending";
+  if (normalized.includes("completed") || normalized.includes("received") || normalized.includes("verified") || normalized.includes("closed")) return "status-verified";
+  return "status-pending";
 }
 
 function assignedDeliveryUsers(value: string) {
@@ -1037,7 +1046,7 @@ function App() {
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
         </div>
       </section>
-      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => setActiveView(view)}>{displayLabel(view, currentUser)}</button>)}</nav>
+      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}`} onClick={() => setActiveView(view)}>{displayLabel(view, currentUser)}</button>)}</nav>
     </main>
   );
 }
@@ -2453,14 +2462,58 @@ function PurchaserPurchaseWorkspace({
         currentUser={currentUser}
         onUpdateCart={onUpdateCart}
       /> : null}
-      {tab === "summary" ? <Panel title="Order Summary" eyebrow="Your purchase orders">
-        <DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(myOrders, snapshot)} />
-      </Panel> : null}
+      {tab === "summary" ? <PurchaserPurchaseSummary snapshot={snapshot} orders={myOrders} /> : null}
       <div className="purchase-module-tab-bar">
-        <button className={tab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("current")}>New Purchase</button>
+        <button className={tab === "current" ? "tab-button active po-tab-button" : "tab-button po-tab-button"} type="button" onClick={() => setTab("current")}>PO</button>
         <button className={tab === "update" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("update")}>Edit Cart</button>
-        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}>Summary</button>
+        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}>Purchases</button>
       </div>
+    </section>
+  );
+}
+
+function PurchaserPurchaseSummary({ snapshot, orders }: { snapshot: AppSnapshot; orders: AppSnapshot["purchaseOrders"] }) {
+  const groups = groupPurchaseOrders(orders);
+  const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
+  for (const group of groups) {
+    const status = purchaseWorkflowStatus(snapshot, group.id);
+    groupedByStatus.set(status, [...(groupedByStatus.get(status) || []), group]);
+  }
+  const statusSections = Array.from(groupedByStatus.entries()).sort((left, right) => {
+    const leftPending = statusPillClass(left[0]) === "status-pending";
+    const rightPending = statusPillClass(right[0]) === "status-pending";
+    return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
+  });
+  const [openStatus, setOpenStatus] = useState(statusSections[0]?.[0] || "");
+
+  return (
+    <section className="collapse-stack">
+      {statusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
+        <CollapsiblePanel
+          key={status}
+          eyebrow="Purchases"
+          title={<span className="purchase-status-title"><span>{status}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span></span>}
+          open={openStatus === status}
+          onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
+        >
+          <DataTable
+            headers={["PO","Supplier","Products","Taxable","GST","Total","Purchase status","Payment status"]}
+            rows={statusGroups.map((group) => {
+              const first = group.lines[0];
+              return [
+                group.id,
+                first?.supplierName || "Supplier",
+                group.lines.map((line) => line.productSku).join(", "),
+                group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
+                group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
+                group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
+                purchaseWarehouseStatus(group.lines),
+                purchasePaymentStatus(snapshot, group.id)
+              ];
+            })}
+          />
+        </CollapsiblePanel>
+      ))}
     </section>
   );
 }
@@ -5057,7 +5110,7 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
 
 function MetricCard({ label, value }: { label: string; value: string }) { return <article className="metric-card panel"><span className="small-label">{label}</span><strong>{value}</strong></article>; }
 function Panel({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) { return <article className="panel"><div className="section-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div></div>{children}</article>; }
-function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebrow: string; title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebrow: string; title: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <article className={open ? "panel collapsible-panel open" : "panel collapsible-panel"}>
       <button className="collapsible-trigger" type="button" onClick={onToggle} aria-expanded={open}>
