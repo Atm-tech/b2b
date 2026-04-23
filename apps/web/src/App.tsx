@@ -818,6 +818,13 @@ function App() {
   const isDeliveryOnly = currentRoles.length === 1 && (currentRoles[0] === "In Delivery" || currentRoles[0] === "Out Delivery" || currentRoles[0] === "Delivery");
   const visibleViews = getVisibleViewsForMode(currentUser, simpleMode);
   const safeVisibleViews: ViewKey[] = visibleViews.length > 0 ? visibleViews : ["Overview"];
+  const purchaserBottomViews: ViewKey[] = ["Overview", "Purchase", "Purchases"];
+  const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
+  const bottomNavViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
+    ? purchaserBottomViews.filter((view) => safeVisibleViews.includes(view))
+    : currentRoles.includes("Sales") && !currentRoles.includes("Purchaser")
+      ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
+      : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
   const warehousesView = applyWarehouseScope ? snapshot.warehouses.filter((item) => warehouseScope.has(item.id)) : snapshot.warehouses;
@@ -1139,7 +1146,7 @@ function App() {
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
         </div>
       </section>
-      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>
+      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>
     </main>
   );
 }
@@ -5293,11 +5300,11 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
   }
   if (roles.includes("Purchaser")) {
     quickActions.push({ title: "New Purchase", text: "Select supplier and place order.", view: "Purchase" });
-    quickActions.push({ title: "Add Supplier", text: "Register a supplier first.", view: "Parties" });
+    quickActions.push({ title: "Create Parties", text: "Register a supplier first.", view: "Parties" });
   }
   if (roles.includes("Sales")) {
     quickActions.push({ title: "New Sale", text: "Select shop and book order.", view: "Sales" });
-    quickActions.push({ title: "Add Shop", text: "Register a shop first.", view: "Parties" });
+    quickActions.push({ title: "Create Parties", text: "Register a shop first.", view: "Parties" });
   }
   if (roles.includes("Warehouse Manager")) {
     quickActions.push({ title: "Receive Goods", text: "Check and receive stock.", view: "Receipts" });
