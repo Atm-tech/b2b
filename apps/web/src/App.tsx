@@ -1112,10 +1112,12 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const partyType = isPurchase ? "Supplier" : "Shop";
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
   const divisions = Array.from(new Set(products.map((item) => item.division).filter(Boolean)));
-  const showingCategoryLanding = activeDivision === "";
+  const normalizedSearch = search.trim().toLowerCase();
+  const showingCategoryLanding = activeDivision === "" && normalizedSearch === "";
   function productMatchScore(product: AppSnapshot["products"][number], query: string) {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return 0;
+    const tokens = normalized.split(/\s+/).filter(Boolean);
     const fields = {
       exactName: product.name.toLowerCase(),
       startsName: product.name.toLowerCase(),
@@ -1125,8 +1127,12 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       barcode: (product.barcode || "").toLowerCase(),
       division: (product.division || "").toLowerCase(),
       department: (product.department || "").toLowerCase(),
-      section: (product.section || "").toLowerCase()
+      section: (product.section || "").toLowerCase(),
+      article: (product.articleName || "").toLowerCase(),
+      item: (product.itemName || "").toLowerCase(),
+      size: (product.size || "").toLowerCase()
     };
+    const haystack = Object.values(fields).join(" ");
     if (fields.exactName === normalized) return 1000;
     if (fields.exactSku === normalized || fields.barcode === normalized) return 950;
     if (fields.startsName.startsWith(normalized)) return 900;
@@ -1138,14 +1144,15 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     if (fields.department.includes(normalized)) return 500;
     if (fields.section.includes(normalized)) return 450;
     if (fields.division.includes(normalized)) return 400;
+    if (tokens.length > 0 && tokens.every((token) => haystack.includes(token))) return 350 + tokens.length * 25;
+    if (tokens.some((token) => haystack.includes(token))) return 180;
     return 0;
   }
   const filteredProducts = products.filter((product) => {
     const matchesDivision = activeDivision === "" || product.division === activeDivision;
     const matchesDepartment = activeDepartment === "" || product.department === activeDepartment;
     const matchesSection = activeSection === "" || product.section === activeSection;
-    const haystack = [product.name, product.division, product.department, product.section, product.brand, product.shortName, product.articleName, product.itemName, product.barcode, product.size].join(" ").toLowerCase();
-    const matchesSearch = search.trim() === "" || haystack.includes(search.trim().toLowerCase());
+    const matchesSearch = normalizedSearch === "" || productMatchScore(product, search) > 0;
     return matchesDivision && matchesDepartment && matchesSection && matchesSearch;
   }).sort((left, right) => {
     const query = search.trim();
@@ -1170,10 +1177,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     .slice(0, 8);
 
   function applySearchSuggestion(product: AppSnapshot["products"][number]) {
-    setSearch("");
-    setActiveDivision(product.division || "");
-    setActiveDepartment(product.department || "");
-    setActiveSection(product.section || "");
+    setSearch(product.name);
+    setActiveDivision("");
+    setActiveDepartment("");
+    setActiveSection("");
     setSuggestionOpen(false);
   }
 
@@ -1770,11 +1777,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <h3>Select existing {partyLabel}</h3>
                 <div className="form-grid top-gap">
                   <label className="wide-field supplier-search-field">Search saved {isPurchase ? "supplier" : "customer"}<div className="search-box"><input value={partySearch} onChange={(e) => { setPartySearch(e.target.value); setPartySuggestionOpen(true); }} onFocus={() => setPartySuggestionOpen(true)} onBlur={() => window.setTimeout(() => setPartySuggestionOpen(false), 120)} placeholder={`Type saved ${isPurchase ? "supplier" : "customer"} name, GST, city, or mobile`} />{partySuggestionOpen ? <div className="search-suggestion-list">{partySuggestions.length > 0 ? partySuggestions.map((party) => <button key={party.id} type="button" className="search-suggestion-item" onMouseDown={() => selectSavedParty(party)}><strong>{party.name}</strong><span>{party.gstNumber || "GST pending"} / {party.mobileNumber || "Mobile pending"} / {party.city || "City pending"}</span></button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved {isPurchase ? "supplier" : "customer"} found</strong><span>Create one first.</span></div>}</div> : null}</div></label>
-                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => { const party = parties.find((item) => item.id === e.target.value); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" }) : ({ ...current, shopId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" })); }}>{renderOptions(parties)}</select></label>
+                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => { const party = parties.find((item) => item.id === e.target.value); if (party) setPartySearch(party.name); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" }) : ({ ...current, shopId: e.target.value, locationAddress: party?.deliveryAddress || party?.address || "", locationCity: party?.deliveryCity || party?.city || "" })); }}>{renderOptions(parties)}</select></label>
                 </div>
                 <div className="flow-action-row">
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("landing")}>Back</button>
-                  <button className="primary-button" type="button" onClick={() => setFlowStep("catalog")} disabled={!selectedPartyId}>Continue to ecom page</button>
+                  <button className="primary-button" type="button" onClick={() => setFlowStep("catalog")} disabled={!selectedPartyId}>{isPurchase ? "Back to purchase order page" : "Back to sales order page"}</button>
                 </div>
               </> : null}
               {flowStep === "new" ? <>
@@ -1821,14 +1828,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
                 </div>
               </label>
-              <div className="selected-party-bar">
+              {(!isPurchase || !selectedPartyId) ? <div className="selected-party-bar">
                 <span className="small-label">{isPurchase ? "Selected supplier" : "Selected customer"}</span>
                 <strong>{parties.find((item) => item.id === selectedPartyId)?.name || "Not selected"}</strong>
                 {isPurchase ? <div className="selected-party-actions">
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("existing")}>Select supplier</button>
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("new")}>New supplier</button>
                 </div> : <button className="ghost-button" type="button" onClick={() => setCartOpen(true)}>Choose in cart</button>}
-              </div>
+              </div> : null}
             </div>
 
             {showingCategoryLanding ? <div className="category-section">
@@ -1862,7 +1869,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               </div>
             </div> : <>
             <div className="catalog-subhead">
-                <button className="ghost-button" type="button" onClick={() => { setActiveDivision(""); setActiveDepartment(""); setActiveSection(""); setSearch(""); }}>Back to categories</button>
+                <button className="ghost-button" type="button" onClick={() => { setActiveDivision(""); setActiveDepartment(""); setActiveSection(""); setSearch(""); }}>{normalizedSearch ? "Clear search" : "Back to categories"}</button>
                 <div className="chip-row chip-row-scroll">
                   <button type="button" className={activeDivision === "" ? "chip-button active" : "chip-button"} onClick={() => { setActiveDivision(""); setActiveDepartment(""); setActiveSection(""); }}>All</button>
                   {divisions.map((division) => (
@@ -2103,7 +2110,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                   <label className={cartErrors.supplierId ? "field-error" : ""}>
                     {isPurchase ? "Supplier" : "Customer"}
-                    <select value={isPurchase ? orderForm.supplierId : orderForm.shopId} onChange={(e) => { setCartErrors((current) => ({ ...current, supplierId: false })); const selected = parties.find((party) => party.id === e.target.value); if (selected) setPartySearch(selected.name); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value }) : ({ ...current, shopId: e.target.value })); }}>
+                    <select value={isPurchase ? orderForm.supplierId : orderForm.shopId} onChange={(e) => { setCartErrors((current) => ({ ...current, supplierId: false })); const selected = parties.find((party) => party.id === e.target.value); if (selected) setPartySearch(selected.name); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value, locationAddress: selected?.deliveryAddress || selected?.address || "", locationCity: selected?.deliveryCity || selected?.city || "" }) : ({ ...current, shopId: e.target.value, locationAddress: selected?.deliveryAddress || selected?.address || "", locationCity: selected?.deliveryCity || selected?.city || "" })); }}>
                       {renderOptions(parties)}
                     </select>
                   </label>
