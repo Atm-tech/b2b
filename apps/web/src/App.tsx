@@ -777,22 +777,23 @@ function App() {
 
   const partyItems = currentUser.role === "Sales" ? shops : suppliers;
   const partyRoleLabel = currentUser.role === "Sales" ? "Customer" : "Supplier";
+  const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const partyFormGstNa = partyForm.gstNumber.trim().toUpperCase() === "N/A";
   const partyFormBankNa = [partyForm.bankName, partyForm.bankAccountNumber, partyForm.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
   const partyEditFormGstNa = partyEditForm.gstNumber.trim().toUpperCase() === "N/A";
   const partyEditFormBankNa = [partyEditForm.bankName, partyEditForm.bankAccountNumber, partyEditForm.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
   const partiesView = isAdminUser ? (
     <section className="collapse-stack">
-      <CollapsiblePanel title="Supplier Master" eyebrow="Admin view">
+      <CollapsiblePanel title="Supplier Master" eyebrow="Admin view" open={openPartyPanel === "supplier-master"} onToggle={() => setOpenPartyPanel((current) => current === "supplier-master" ? "" : "supplier-master")}>
         <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={suppliers.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
       </CollapsiblePanel>
-      <CollapsiblePanel title="Customer Master" eyebrow="Admin view">
+      <CollapsiblePanel title="Customer Master" eyebrow="Admin view" open={openPartyPanel === "customer-master"} onToggle={() => setOpenPartyPanel((current) => current === "customer-master" ? "" : "customer-master")}>
         <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={shops.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
       </CollapsiblePanel>
     </section>
   ) : (
     <section className="collapse-stack">
-      <CollapsiblePanel title={`Register ${partyRoleLabel}`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}>
+      <CollapsiblePanel title={`Register ${partyRoleLabel}`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"} open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
         <form className="form-grid" onSubmit={saveStandaloneParty}>
           <label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label>
           <label className={partyFormErrors.name ? "field-error" : ""}>Name<input value={partyForm.name} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, name: false })); setPartyForm((c) => ({ ...c, name: e.target.value })); }} /></label>
@@ -809,7 +810,7 @@ function App() {
           <button className="primary-button" type="submit">{currentUser.role === "Sales" ? "Save customer" : "Save supplier"}</button>
         </form>
       </CollapsiblePanel>
-      <CollapsiblePanel title={`Update ${partyRoleLabel}`} eyebrow="Edit details">
+      <CollapsiblePanel title={`Update ${partyRoleLabel}`} eyebrow="Edit details" open={openPartyPanel === "update"} onToggle={() => setOpenPartyPanel((current) => current === "update" ? "" : "update")}>
         <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}>
           <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(partyItems)}</select></label>
           <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
@@ -826,7 +827,7 @@ function App() {
           <button className="primary-button" type="submit">Update</button>
         </form>
       </CollapsiblePanel>
-      <CollapsiblePanel title={`${partyRoleLabel} Database`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"}>
+      <CollapsiblePanel title={`${partyRoleLabel} Database`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"} open={openPartyPanel === "database"} onToggle={() => setOpenPartyPanel((current) => current === "database" ? "" : "database")}>
         <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={partyItems.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
       </CollapsiblePanel>
     </section>
@@ -5045,11 +5046,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
 
 function MetricCard({ label, value }: { label: string; value: string }) { return <article className="metric-card panel"><span className="small-label">{label}</span><strong>{value}</strong></article>; }
 function Panel({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) { return <article className="panel"><div className="section-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div></div>{children}</article>; }
-function CollapsiblePanel({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebrow: string; title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <article className={open ? "panel collapsible-panel open" : "panel collapsible-panel"}>
-      <button className="collapsible-trigger" type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+      <button className="collapsible-trigger" type="button" onClick={onToggle} aria-expanded={open}>
         <div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>
         <span className="collapsible-icon">{open ? "Close" : "Open"}</span>
       </button>
