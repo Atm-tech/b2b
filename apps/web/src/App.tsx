@@ -2521,7 +2521,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
     const rightPending = statusPillClass(right[0]) === "status-pending";
     return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
   });
-  const [openStatus, setOpenStatus] = useState(statusSections[0]?.[0] || "");
+  const [openStatus, setOpenStatus] = useState("");
 
   return (
     <section className="collapse-stack">
