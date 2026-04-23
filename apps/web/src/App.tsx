@@ -2598,7 +2598,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <CollapsiblePanel
           key={status}
           eyebrow="Purchases"
-          title={<span className="purchase-status-title"><span>{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span>}
+          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
           open={openStatus === status}
           onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
         >
@@ -2892,7 +2892,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
         <CollapsiblePanel
           key={status}
           eyebrow="Sales"
-          title={<span className="purchase-status-title"><span>{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} SO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span>}
+          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} SO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
           open={openStatus === status}
           onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
         >
