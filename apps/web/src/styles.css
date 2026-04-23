@@ -1809,21 +1809,37 @@ textarea {
 
   .dashboard-grid,
   .simple-steps,
-  .category-grid,
   .catalog-grid {
     grid-template-columns: 1fr;
   }
 
-  .product-card-main,
+  .category-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .category-card {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .product-card-main {
     grid-template-columns: 46px minmax(0, 1fr);
     align-items: start;
   }
 
-  .product-thumb,
-  .category-card-thumb {
+  .category-card {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .product-thumb {
     width: 46px;
     height: 46px;
+  }
+
+  .category-card-thumb {
+    width: 42px;
+    height: 42px;
   }
 
   .catalog-search-row {
