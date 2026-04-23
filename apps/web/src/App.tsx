@@ -516,6 +516,7 @@ function App() {
   const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
   const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
+  const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
   const emptyPartyEditForm = { id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
 
@@ -810,7 +811,6 @@ function App() {
 
   const partyItems = currentUser.role === "Sales" ? shops : suppliers;
   const partyRoleLabel = currentUser.role === "Sales" ? "Customer" : "Supplier";
-  const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const partyFormGstNa = partyForm.gstNumber.trim().toUpperCase() === "N/A";
   const partyFormBankNa = [partyForm.bankName, partyForm.bankAccountNumber, partyForm.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
   const partyEditFormGstNa = partyEditForm.gstNumber.trim().toUpperCase() === "N/A";
