@@ -43,6 +43,7 @@ type ViewKey =
   | "Purchase"
   | "Purchases"
   | "Sales"
+  | "SalesOrders"
   | "Payments"
   | "Receipts"
   | "Ledger"
@@ -59,7 +60,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "Ledger", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
-  Sales: ["Overview", "Parties", "Sales", "Payments", "Ledger", "Notes"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "Ledger", "Notes"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment", "Notes"]
@@ -71,7 +72,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases"],
   Accounts: ["Overview", "Payments", "Ledger"],
-  Sales: ["Overview", "Parties", "Sales", "Payments"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment"]
@@ -86,6 +87,7 @@ const labels: Record<ViewKey, string> = {
   Purchase: "Purchase",
   Purchases: "Purchases",
   Sales: "Sales",
+  SalesOrders: "Sales",
   Payments: "Payments",
   Receipts: "Receipts",
   Ledger: "Ledger",
@@ -104,6 +106,7 @@ function displayLabel(view: ViewKey, user?: AppUser | null) {
     if (view === "Stock") return "Dispatches";
   }
   if (roles.includes("Purchaser") && view === "Purchase") return "PO";
+  if (roles.includes("Sales") && view === "Sales") return "SO";
   return labels[view];
 }
 
@@ -193,8 +196,49 @@ function salesOrderPublicTotal(orders: SalesOrder[], orderId: string) {
   return lines.reduce((sum, order) => sum + order.totalAmount + order.deliveryCharge, 0);
 }
 
+function salesDeliveryTask(snapshot: AppSnapshot, orderId: string) {
+  return snapshot.deliveryTasks.find((task) => task.side === "Sales" && [task.linkedOrderId, ...task.linkedOrderIds].includes(orderId));
+}
+
+function salesDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
+  const task = salesDeliveryTask(snapshot, orderId);
+  if (!task) return "Delivery not assigned";
+  return `${task.status}${task.assignedTo ? ` to ${task.assignedTo}` : ""}`;
+}
+
+function salesPaymentStatus(snapshot: AppSnapshot, orderId: string) {
+  const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === orderId);
+  const latest = snapshot.payments
+    .filter((item) => item.side === "Sales" && item.linkedOrderId === orderId)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
+  if (latest?.verificationStatus === "Disputed") return "Disputed";
+  if (latest?.verificationStatus === "Rejected") return "Flagged";
+  if (ledger && ledger.pendingAmount <= 0 && (latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved")) return "Completed";
+  if ((ledger && ledger.paidAmount > 0) || latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved") return "Partial";
+  return "Pending";
+}
+
+function salesFulfillmentStatus(lines: SalesOrder[]) {
+  if (lines.every((line) => line.status === "Delivered" || line.status === "Closed")) return "Delivered";
+  if (lines.some((line) => line.status === "Draft")) return "Admin approval";
+  if (lines.some((line) => line.status === "Out for Delivery")) return "Out for Delivery";
+  if (lines.some((line) => line.status === "Ready for Dispatch")) return "Ready for Dispatch";
+  if (lines.some((line) => line.status === "Pending Pickup")) return "Pending Pickup";
+  if (lines.some((line) => line.status === "Self Pickup")) return "Self Pickup";
+  return lines[0]?.status || "Booked";
+}
+
 function groupPurchaseOrders(orders: PurchaseOrder[]) {
   const grouped = new Map<string, PurchaseOrder[]>();
+  for (const order of orders) {
+    const key = orderPublicId(order);
+    grouped.set(key, [...(grouped.get(key) || []), order]);
+  }
+  return Array.from(grouped.entries()).map(([id, lines]) => ({ id, lines }));
+}
+
+function groupSalesOrders(orders: SalesOrder[]) {
+  const grouped = new Map<string, SalesOrder[]>();
   for (const order of orders) {
     const key = orderPublicId(order);
     grouped.set(key, [...(grouped.get(key) || []), order]);
@@ -261,7 +305,7 @@ function statusPillClass(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes("flagged") || normalized.includes("disputed") || normalized.includes("rejected")) return "status-rejected";
   if (normalized.includes("pending") || normalized.includes("partial") || normalized.includes("cash with delivery")) return "status-pending";
-  if (normalized.includes("completed") || normalized.includes("received") || normalized.includes("verified") || normalized.includes("closed")) return "status-verified";
+  if (normalized.includes("completed") || normalized.includes("received") || normalized.includes("delivered") || normalized.includes("verified") || normalized.includes("closed")) return "status-verified";
   return "status-pending";
 }
 
@@ -487,6 +531,22 @@ function purchaseCartEditState(snapshot: AppSnapshot, orderId: string, currentUs
   return { editable: true, reason: "" };
 }
 
+function salesOrderEditState(snapshot: AppSnapshot, orderId: string, currentUser: AppUser) {
+  const lines = snapshot.salesOrders.filter((order) => orderPublicId(order) === orderId);
+  if (lines.length === 0) return { editable: false, reason: "Sales order not found." };
+  const isAdmin = userRoleList(currentUser).includes("Admin");
+  const ownsOrder = lines.some((line) => line.salesmanId === currentUser.id || line.salesmanName === currentUser.fullName);
+  if (!isAdmin && !ownsOrder) return { editable: false, reason: "Only the salesman or admin can edit this sales order." };
+  if (!isAdmin && lines.some((line) => line.status === "Delivered" || line.status === "Closed")) {
+    return { editable: false, reason: "Sales order is closed. Only admin can edit it now." };
+  }
+  const assignedDelivery = salesDeliveryTask(snapshot, orderId);
+  if (!isAdmin && assignedDelivery) {
+    return { editable: false, reason: "Delivery is assigned. Only admin can edit this sales order now." };
+  }
+  return { editable: true, reason: "" };
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [sessionToken, setSessionToken] = useState("");
@@ -522,6 +582,7 @@ function App() {
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const [purchaseUpdateOrderId, setPurchaseUpdateOrderId] = useState("");
+  const [salesUpdateOrderId, setSalesUpdateOrderId] = useState("");
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
   const emptyPartyEditForm = { id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
 
@@ -919,7 +980,7 @@ function App() {
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
             {safeVisibleViews.map((view) => (
-              <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => setActiveView(view)}>
+              <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>
                 <span>{displayLabel(view, currentUser)}</span><small>{view}</small>
               </button>
             ))}
@@ -960,7 +1021,7 @@ function App() {
             />
           </>) : null}
           {activeView === "Purchases" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} /> : null}
-          {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Customer order booking"
@@ -976,7 +1037,8 @@ function App() {
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, lines.some((line) => Boolean(line.priceApprovalRequested) || Boolean(line.stockApprovalRequested)) ? "Sales cart booked as draft demand for review." : "Sales cart created.")}
             rightPanel={null}
-          />) : null}
+          />)) : null}
+          {activeView === "SalesOrders" ? <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} /> : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>
@@ -1077,7 +1139,7 @@ function App() {
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
         </div>
       </section>
-      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}`} onClick={() => setActiveView(view)}>{displayLabel(view, currentUser)}</button>)}</nav>
+      <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{safeVisibleViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>
     </main>
   );
 }
@@ -2799,6 +2861,134 @@ function PurchaseCartEditor({
           </> : null}
         </form>
       </>}
+    </Panel>
+  );
+}
+
+function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void }) {
+  const groups = groupSalesOrders(orders);
+  const groupedByStatus = new Map<string, ReturnType<typeof groupSalesOrders>>();
+  for (const group of groups) {
+    const status = `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`;
+    groupedByStatus.set(status, [...(groupedByStatus.get(status) || []), group]);
+  }
+  const statusSections = Array.from(groupedByStatus.entries()).sort((left, right) => {
+    const leftPending = statusPillClass(left[0]) === "status-pending";
+    const rightPending = statusPillClass(right[0]) === "status-pending";
+    return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
+  });
+  const [openStatus, setOpenStatus] = useState("");
+
+  return (
+    <section className="collapse-stack">
+      {statusSections.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
+        <CollapsiblePanel
+          key={status}
+          eyebrow="Sales"
+          title={<span className="purchase-status-title"><span>{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} SO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span>}
+          open={openStatus === status}
+          onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
+        >
+          <div className="stack-list">
+            {statusGroups.map((group) => {
+              const first = group.lines[0];
+              const editState = salesOrderEditState(snapshot, group.id, currentUser);
+              return (
+                <article className="list-card purchase-summary-card" key={group.id}>
+                  <div className="payment-update-head">
+                    <div>
+                      <strong>{group.id}</strong>
+                      <p>{first?.shopName || "Customer"} / {group.lines.map((line) => line.productSku).join(", ")}</p>
+                    </div>
+                    <span className={`status-pill ${statusPillClass(salesFulfillmentStatus(group.lines))}`}>{salesFulfillmentStatus(group.lines)}</span>
+                  </div>
+                  <div className="payment-meta-grid">
+                    <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
+                    <div><span className="small-label">Delivery</span><strong>{salesDeliveryStatus(snapshot, group.id)}</strong></div>
+                    <div><span className="small-label">Payment</span><strong>{salesPaymentStatus(snapshot, group.id)}</strong></div>
+                    <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0).toFixed(2)}</strong></div>
+                  </div>
+                  <div className="payment-card-actions top-gap">
+                    {editState.editable ? <button className="primary-button" type="button" onClick={() => onUpdateSo(group.id)}>Update SO</button> : <span className="small-label">{editState.reason}</span>}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </CollapsiblePanel>
+      ))}
+    </section>
+  );
+}
+
+function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, onUpdateSalesOrder }: {
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  initialOrderId: string;
+  onNewOrder: () => void;
+  onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus }) => Promise<boolean | void>;
+}) {
+  const editableGroups = groupSalesOrders(snapshot.salesOrders.filter((order) =>
+    userRoleList(currentUser).includes("Admin")
+    || order.salesmanId === currentUser.id
+    || order.salesmanName === currentUser.fullName
+  ));
+  const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
+  const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
+  const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
+  const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ id: string; productSku: string; rate: string; quantity: string; totalAmount: number }> } | null>(null);
+
+  useEffect(() => {
+    if (initialOrderId) setSelectedOrderId(initialOrderId);
+  }, [initialOrderId]);
+
+  useEffect(() => {
+    if (!selectedGroup) {
+      setDraft(null);
+      return;
+    }
+    const first = selectedGroup.lines[0];
+    setDraft({
+      paymentMode: first.paymentMode,
+      cashTiming: first.cashTiming || "",
+      deliveryMode: first.deliveryMode,
+      note: first.note || "",
+      status: first.status,
+      lines: selectedGroup.lines.map((line) => ({ id: line.id, productSku: line.productSku, rate: String(line.rate), quantity: String(line.quantity), totalAmount: line.totalAmount + line.deliveryCharge }))
+    });
+  }, [selectedGroup?.id]);
+
+  return (
+    <Panel title="Edit Sales Order" eyebrow="Salesman until delivery assignment">
+      {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!selectedGroup || !draft || !editState.editable) return;
+        await Promise.all(draft.lines.map((line) => onUpdateSalesOrder(line.id, {
+          rate: Number(line.rate || 0),
+          paymentMode: draft.paymentMode,
+          cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
+          deliveryMode: draft.deliveryMode,
+          note: draft.note,
+          status: draft.status
+        })));
+      }}>
+        <label className="wide-field">Sales order<select value={selectedGroup?.id || ""} onChange={(e) => setSelectedOrderId(e.target.value)}>{editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.shopName || "Customer"}`}</option>)}</select></label>
+        {selectedGroup ? <>
+          <div className="message-chip-grid wide-field">
+            <span className="status-pill">{selectedGroup.lines[0]?.shopName || "Customer"}</span>
+            <span className="status-pill">{selectedGroup.lines.length} product(s)</span>
+            <span className="status-pill">{salesFulfillmentStatus(selectedGroup.lines)} / Payment {salesPaymentStatus(snapshot, selectedGroup.id)}</span>
+          </div>
+          {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
+          <label>Payment Method<select value={draft?.paymentMode || ""} onChange={(e) => setDraft((current) => current ? { ...current, paymentMode: e.target.value as PaymentMode } : current)} disabled={!editState.editable}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
+          {draft?.paymentMode === "Cash" ? <label>Cash Timing<select value={draft.cashTiming} onChange={(e) => setDraft((current) => current ? { ...current, cashTiming: e.target.value } : current)} disabled={!editState.editable}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+          <label>Delivery Mode<select value={draft?.deliveryMode || "Delivery"} onChange={(e) => setDraft((current) => current ? { ...current, deliveryMode: e.target.value as "Self Collection" | "Delivery" } : current)} disabled={!editState.editable}><option>Self Collection</option><option>Delivery</option></select></label>
+          <label>Status<input value={draft?.status || ""} readOnly /></label>
+          <label className="wide-field">Note<input value={draft?.note || ""} onChange={(e) => setDraft((current) => current ? { ...current, note: e.target.value } : current)} disabled={!editState.editable} /></label>
+          <div className="stack-list wide-field">{draft?.lines.map((line) => <article className="list-card" key={line.id}><div className="payment-update-head"><div><strong>{line.productSku}</strong><p>{line.id} / Qty {line.quantity}</p></div><span className="status-pill">{Number(line.totalAmount || 0).toFixed(2)}</span></div><div className="cart-edit-grid top-gap"><label>Rate<input type="number" min="0" value={line.rate} onChange={(e) => setDraft((current) => current ? { ...current, lines: current.lines.map((item) => item.id === line.id ? { ...item, rate: e.target.value } : item) } : current)} disabled={!editState.editable} /></label></div></article>)}</div>
+          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={onNewOrder}>New SO</button></div>
+        </> : null}
+      </form>}
     </Panel>
   );
 }
