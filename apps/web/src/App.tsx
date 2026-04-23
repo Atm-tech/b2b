@@ -26,6 +26,7 @@ const browserOriginFallback = typeof window !== "undefined" && window.location.h
 const API_BASE = configuredApiBase || browserOriginFallback;
 const SESSION_KEY = "aapoorti-b2b-user";
 const TOKEN_KEY = "aapoorti-b2b-token";
+const ACTIVE_VIEW_KEY = "aapoorti-b2b-active-view";
 const api = axios.create({
   baseURL: API_BASE
 });
@@ -118,6 +119,7 @@ function getVisibleViewsForMode(user: AppUser, simpleMode: boolean) {
 function clearSessionState(setCurrentUser: React.Dispatch<React.SetStateAction<AppUser | null>>, setSessionToken: React.Dispatch<React.SetStateAction<string>>, setSnapshot: React.Dispatch<React.SetStateAction<AppSnapshot | null>>) {
   window.localStorage.removeItem(SESSION_KEY);
   window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(ACTIVE_VIEW_KEY);
   setCurrentUser(null);
   setSessionToken("");
   setSnapshot(null);
@@ -460,7 +462,7 @@ function calculateTaxPreview(amountText: string, gstRateText: string, taxMode: T
 function purchaseCartEditState(snapshot: AppSnapshot, orderId: string, currentUser: AppUser) {
   const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
   if (lines.length === 0) return { editable: false, reason: "Purchase cart not found." };
-  const isAdmin = currentUser.role === "Admin" || currentUser.roles.includes("Admin");
+  const isAdmin = userRoleList(currentUser).includes("Admin");
   const ownsCart = lines.some((line) => line.purchaserId === currentUser.id || line.purchaserName === currentUser.fullName);
   if (!isAdmin && !ownsCart) return { editable: false, reason: "Only the purchaser or admin can edit this purchase cart." };
   const ledger = purchaseLedgerByOrder(snapshot, orderId);
@@ -486,6 +488,7 @@ function App() {
   const [sessionToken, setSessionToken] = useState("");
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("Overview");
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -519,12 +522,22 @@ function App() {
   useEffect(() => {
     const stored = window.localStorage.getItem(SESSION_KEY);
     const token = window.localStorage.getItem(TOKEN_KEY) || "";
-    if (!stored || !token) return;
-    const user = JSON.parse(stored) as AppUser;
-    setCurrentUser(user);
-    setSessionToken(token);
-    setActiveView(getVisibleViewsForMode(user, true)[0] || "Overview");
-    void refresh(user);
+    if (!stored || !token) {
+      setBootstrapping(false);
+      return;
+    }
+    try {
+      const user = JSON.parse(stored) as AppUser;
+      const visible = getVisibleViewsForMode(user, true);
+      const storedView = window.localStorage.getItem(ACTIVE_VIEW_KEY) as ViewKey | null;
+      setCurrentUser(user);
+      setSessionToken(token);
+      setActiveView(storedView && visible.includes(storedView) ? storedView : visible[0] || "Overview");
+      void refresh(user).finally(() => setBootstrapping(false));
+    } catch {
+      clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
+      setBootstrapping(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -533,6 +546,10 @@ function App() {
       setActiveView(nextViews[0]);
     }
   }, [activeView, currentUser, simpleMode]);
+
+  useEffect(() => {
+    if (currentUser) window.localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
+  }, [activeView, currentUser]);
 
   useEffect(() => {
     if (!message) return;
@@ -562,9 +579,11 @@ function App() {
       setSessionToken(String(data.token || ""));
       setSnapshot(data.snapshot as AppSnapshot);
       const nextUser = data.user as AppUser;
-      setActiveView(getVisibleViewsForMode(nextUser, simpleMode)[0] || "Overview");
+      const nextView = getVisibleViewsForMode(nextUser, simpleMode)[0] || "Overview";
+      setActiveView(nextView);
       window.localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
       window.localStorage.setItem(TOKEN_KEY, String(data.token || ""));
+      window.localStorage.setItem(ACTIVE_VIEW_KEY, nextView);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Login failed.");
     } finally {
@@ -680,10 +699,15 @@ function App() {
     }
     window.localStorage.removeItem(SESSION_KEY);
     window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(ACTIVE_VIEW_KEY);
     setCurrentUser(null);
     setSessionToken("");
     setSnapshot(null);
     setProfileOpen(false);
+  }
+
+  if (bootstrapping || (currentUser && !snapshot)) {
+    return <BootLoader />;
   }
 
   if (!currentUser || !snapshot) {
@@ -2545,7 +2569,7 @@ function PurchaseCartEditor({
   const editableGroups = groupPurchaseOrders(
     snapshot.purchaseOrders.filter((order) =>
       currentUser.role === "Admin"
-      || currentUser.roles.includes("Admin")
+      || userRoleList(currentUser).includes("Admin")
       || order.purchaserId === currentUser.id
       || order.purchaserName === currentUser.fullName
     )
@@ -5105,6 +5129,26 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
       <Panel title="Payment Verification" eyebrow="Accounts"><DataTable headers={["Payment","Side","Order","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.verificationStatus])} /></Panel>
       <Panel title="Stock Snapshot" eyebrow="Warehouse"><DataTable headers={["Warehouse","Product","Avail","Reserved","Blocked"]} rows={snapshot.stockSummary.map((s) => [s.warehouseName, s.productName, s.availableQuantity, s.reservedQuantity, s.blockedQuantity])} /></Panel>
     </section>
+  );
+}
+
+function BootLoader() {
+  return (
+    <main className="boot-loader-shell">
+      <section className="boot-loader-card">
+        <div className="boot-loader-mark" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="boot-loader-copy">
+          <span className="eyebrow">Aapoorti B2B</span>
+          <h1>Restoring workspace</h1>
+          <p>Loading your module, live orders, parties, stock, and delivery state.</p>
+        </div>
+        <div className="boot-loader-track"><span /></div>
+      </section>
+    </main>
   );
 }
 
