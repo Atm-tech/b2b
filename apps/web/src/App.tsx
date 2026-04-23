@@ -247,6 +247,16 @@ function purchaseWorkflowStatus(snapshot: AppSnapshot, orderId: string) {
   return `${purchaseWarehouseStatus(lines)} / Payment ${purchasePaymentStatus(snapshot, orderId)}`;
 }
 
+function purchaseDeliveryTask(snapshot: AppSnapshot, orderId: string) {
+  return snapshot.deliveryTasks.find((task) => task.side === "Purchase" && [task.linkedOrderId, ...task.linkedOrderIds].includes(orderId));
+}
+
+function purchaseDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
+  const task = purchaseDeliveryTask(snapshot, orderId);
+  if (!task) return "Delivery not assigned";
+  return `${task.status}${task.assignedTo ? ` to ${task.assignedTo}` : ""}`;
+}
+
 function statusPillClass(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes("flagged") || normalized.includes("disputed") || normalized.includes("rejected")) return "status-rejected";
@@ -467,20 +477,12 @@ function purchaseCartEditState(snapshot: AppSnapshot, orderId: string, currentUs
   const isAdmin = userRoleList(currentUser).includes("Admin");
   const ownsCart = lines.some((line) => line.purchaserId === currentUser.id || line.purchaserName === currentUser.fullName);
   if (!isAdmin && !ownsCart) return { editable: false, reason: "Only the purchaser or admin can edit this purchase cart." };
-  const ledger = purchaseLedgerByOrder(snapshot, orderId);
-  if (!isAdmin && (ledger?.paidAmount || 0) > 0) {
-    return { editable: false, reason: "Payment is completed. Only admin can edit this purchase cart now." };
-  }
   if (!isAdmin && lines.some((line) => line.quantityReceived > 0)) {
     return { editable: false, reason: "Receiving has started. Only admin can edit this purchase cart now." };
   }
-  const pickupStarted = snapshot.deliveryTasks.some((task) =>
-    task.side === "Purchase"
-    && [task.linkedOrderId, ...task.linkedOrderIds].includes(orderId)
-    && task.status !== "Planned"
-  );
-  if (!isAdmin && pickupStarted) {
-    return { editable: false, reason: "Pickup has started. Only admin can edit this purchase cart now." };
+  const assignedDelivery = purchaseDeliveryTask(snapshot, orderId);
+  if (!isAdmin && assignedDelivery) {
+    return { editable: false, reason: "Delivery is assigned. Only admin can edit this purchase cart now." };
   }
   return { editable: true, reason: "" };
 }
@@ -519,6 +521,7 @@ function App() {
   const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
+  const [purchaseUpdateOrderId, setPurchaseUpdateOrderId] = useState("");
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
   const emptyPartyEditForm = { id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" };
 
@@ -953,9 +956,10 @@ function App() {
               onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
               onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
               onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
+              initialUpdateOrderId={purchaseUpdateOrderId}
             />
           </>) : null}
-          {activeView === "Purchases" ? <PurchaserPurchaseSummary snapshot={snapshot} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} /> : null}
+          {activeView === "Purchases" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} /> : null}
           {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
@@ -2430,6 +2434,7 @@ function PurchaserPurchaseWorkspace({
   onCreateParty,
   onUploadProof,
   onSubmit,
+  initialUpdateOrderId,
   onUpdateCart
 }: {
   snapshot: AppSnapshot;
@@ -2445,6 +2450,7 @@ function PurchaserPurchaseWorkspace({
   onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
   onUploadProof: (file: File) => Promise<unknown>;
   onSubmit: CatalogOrderViewProps["onSubmit"];
+  initialUpdateOrderId?: string;
   onUpdateCart: (orderId: string, body: {
     paymentMode: PaymentMode;
     cashTiming?: string;
@@ -2462,8 +2468,11 @@ function PurchaserPurchaseWorkspace({
     }>;
   }) => Promise<boolean | void>;
 }) {
-  const [tab, setTab] = useState<"current" | "update" | "summary">("current");
+  const [tab, setTab] = useState<"current" | "update" | "summary">(initialUpdateOrderId ? "update" : "current");
   const myOrders = purchaseOrders.filter((order) => order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName);
+  useEffect(() => {
+    if (initialUpdateOrderId) setTab("update");
+  }, [initialUpdateOrderId]);
 
   return (
     <section className="module-stack">
@@ -2488,8 +2497,9 @@ function PurchaserPurchaseWorkspace({
         snapshot={snapshot}
         currentUser={currentUser}
         onUpdateCart={onUpdateCart}
+        initialOrderId={initialUpdateOrderId}
       /> : null}
-      {tab === "summary" ? <PurchaserPurchaseSummary snapshot={snapshot} orders={myOrders} /> : null}
+      {tab === "summary" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={myOrders} /> : null}
       <div className="purchase-module-tab-bar">
         <button className={tab === "current" ? "tab-button active po-tab-button" : "tab-button po-tab-button"} type="button" onClick={() => setTab("current")}>PO</button>
         <button className={tab === "update" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("update")}>Edit Cart</button>
@@ -2499,7 +2509,7 @@ function PurchaserPurchaseWorkspace({
   );
 }
 
-function PurchaserPurchaseSummary({ snapshot, orders }: { snapshot: AppSnapshot; orders: AppSnapshot["purchaseOrders"] }) {
+function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
   const groups = groupPurchaseOrders(orders);
   const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
   for (const group of groups) {
@@ -2519,26 +2529,36 @@ function PurchaserPurchaseSummary({ snapshot, orders }: { snapshot: AppSnapshot;
         <CollapsiblePanel
           key={status}
           eyebrow="Purchases"
-          title={<span className="purchase-status-title"><span>{status}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span></span>}
+          title={<span className="purchase-status-title"><span>{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span>}
           open={openStatus === status}
           onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
         >
-          <DataTable
-            headers={["PO","Supplier","Products","Taxable","GST","Total","Purchase status","Payment status"]}
-            rows={statusGroups.map((group) => {
+          <div className="stack-list">
+            {statusGroups.map((group) => {
               const first = group.lines[0];
-              return [
-                group.id,
-                first?.supplierName || "Supplier",
-                group.lines.map((line) => line.productSku).join(", "),
-                group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
-                group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
-                group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
-                purchaseWarehouseStatus(group.lines),
-                purchasePaymentStatus(snapshot, group.id)
-              ];
+              const editState = currentUser ? purchaseCartEditState(snapshot, group.id, currentUser) : { editable: false, reason: "Open PO to update." };
+              return (
+                <article className="list-card purchase-summary-card" key={group.id}>
+                  <div className="payment-update-head">
+                    <div>
+                      <strong>{group.id}</strong>
+                      <p>{first?.supplierName || "Supplier"} / {group.lines.map((line) => line.productSku).join(", ")}</p>
+                    </div>
+                    <span className={`status-pill ${statusPillClass(purchaseWarehouseStatus(group.lines))}`}>{purchaseWarehouseStatus(group.lines)}</span>
+                  </div>
+                  <div className="payment-meta-grid">
+                    <div><span className="small-label">Supplier</span><strong>{first?.supplierName || "Supplier"}</strong></div>
+                    <div><span className="small-label">Delivery</span><strong>{purchaseDeliveryStatus(snapshot, group.id)}</strong></div>
+                    <div><span className="small-label">Payment</span><strong>{purchasePaymentStatus(snapshot, group.id)}</strong></div>
+                    <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</strong></div>
+                  </div>
+                  <div className="payment-card-actions top-gap">
+                    {editState.editable && onUpdatePo ? <button className="primary-button" type="button" onClick={() => onUpdatePo(group.id)}>Update PO</button> : <span className="small-label">{editState.reason}</span>}
+                  </div>
+                </article>
+              );
             })}
-          />
+          </div>
         </CollapsiblePanel>
       ))}
     </section>
@@ -2548,10 +2568,12 @@ function PurchaserPurchaseSummary({ snapshot, orders }: { snapshot: AppSnapshot;
 function PurchaseCartEditor({
   snapshot,
   currentUser,
-  onUpdateCart
+  onUpdateCart,
+  initialOrderId
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
+  initialOrderId?: string;
   onUpdateCart: (orderId: string, body: {
     paymentMode: PaymentMode;
     cashTiming?: string;
@@ -2577,7 +2599,7 @@ function PurchaseCartEditor({
       || order.purchaserName === currentUser.fullName
     )
   );
-  const [selectedOrderId, setSelectedOrderId] = useState(editableGroups[0]?.id || "");
+  const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const [draft, setDraft] = useState<{
     paymentMode: PaymentMode;
     cashTiming: string;
@@ -2598,6 +2620,10 @@ function PurchaseCartEditor({
 
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? purchaseCartEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No purchase carts available." };
+
+  useEffect(() => {
+    if (initialOrderId) setSelectedOrderId(initialOrderId);
+  }, [initialOrderId]);
 
   useEffect(() => {
     if (!selectedGroup) {
@@ -2657,7 +2683,7 @@ function PurchaseCartEditor({
   }
 
   return (
-    <Panel title="Edit Purchase Cart" eyebrow="Purchaser until payment or pickup starts">
+    <Panel title="Edit Purchase Cart" eyebrow="Purchaser until delivery assignment">
       {editableGroups.length === 0 ? <div className="empty-card">No purchase carts available for edit.</div> : <>
         <form
           className="form-grid"
