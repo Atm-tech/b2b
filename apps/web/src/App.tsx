@@ -337,11 +337,11 @@ function isDeliveryExecutive(user: AppUser) {
 }
 
 function isInboundDeliveryUser(user: AppUser) {
-  return userHasAnyRole(user, ["In Delivery", "Delivery"]);
+  return userHasAnyRole(user, ["In Delivery"]);
 }
 
 function isOutboundDeliveryUser(user: AppUser) {
-  return userHasAnyRole(user, ["Out Delivery", "Delivery"]);
+  return userHasAnyRole(user, ["Out Delivery"]);
 }
 
 function deliverySideForUser(user: AppUser): DeliveryTask["side"] | null {
@@ -437,6 +437,34 @@ function userWarehouseScope(user: AppUser) {
 function isWarehouseScoped(user: AppUser) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   return userWarehouseScope(user).size > 0 && (roles.includes("Warehouse Manager") || roles.includes("Delivery Manager") || roles.includes("In Delivery") || roles.includes("Out Delivery") || roles.includes("Delivery"));
+}
+
+function snapshotForWarehouse(snapshot: AppSnapshot, warehouseId: string): AppSnapshot {
+  if (!warehouseId) return snapshot;
+  const purchaseOrderIds = new Set(snapshot.purchaseOrders.filter((item) => item.warehouseId === warehouseId).map((item) => orderPublicId(item)));
+  const salesOrderIds = new Set(snapshot.salesOrders.filter((item) => item.warehouseId === warehouseId).map((item) => orderPublicId(item)));
+  const consignmentIds = new Set(snapshot.deliveryConsignments.filter((item) => item.warehouseId === warehouseId).map((item) => item.id));
+  const receiptIds = new Set(snapshot.receiptChecks.filter((item) => item.warehouseId === warehouseId).map((item) => item.grcNumber));
+  const deliveryTaskIds = new Set(snapshot.deliveryTasks.filter((task) =>
+    task.routeStops.some((stop) => stop.warehouseId === warehouseId) ||
+    (task.consignmentId ? consignmentIds.has(task.consignmentId) : false) ||
+    task.linkedOrderIds.some((id) => purchaseOrderIds.has(id) || salesOrderIds.has(id))
+  ).map((task) => task.id));
+
+  return {
+    ...snapshot,
+    purchaseOrders: snapshot.purchaseOrders.filter((item) => item.warehouseId === warehouseId),
+    salesOrders: snapshot.salesOrders.filter((item) => item.warehouseId === warehouseId),
+    receiptChecks: snapshot.receiptChecks.filter((item) => item.warehouseId === warehouseId),
+    inventoryLots: snapshot.inventoryLots.filter((item) => item.warehouseId === warehouseId),
+    stockSummary: snapshot.stockSummary.filter((item) => item.warehouseId === warehouseId),
+    deliveryDockets: snapshot.deliveryDockets.filter((item) => item.warehouseId === warehouseId),
+    deliveryConsignments: snapshot.deliveryConsignments.filter((item) => item.warehouseId === warehouseId),
+    deliveryTasks: snapshot.deliveryTasks.filter((item) => deliveryTaskIds.has(item.id)),
+    ledgerEntries: snapshot.ledgerEntries.filter((item) => purchaseOrderIds.has(item.linkedOrderId) || salesOrderIds.has(item.linkedOrderId)),
+    payments: snapshot.payments.filter((item) => purchaseOrderIds.has(item.linkedOrderId) || salesOrderIds.has(item.linkedOrderId)),
+    notes: snapshot.notes.filter((item) => purchaseOrderIds.has(item.entityId) || salesOrderIds.has(item.entityId) || deliveryTaskIds.has(item.entityId) || receiptIds.has(item.entityId))
+  };
 }
 
 function mapsDirectionsUrl(stops: string[]) {
@@ -558,7 +586,8 @@ function App() {
   const [error, setError] = useState("");
   const [simpleMode, setSimpleMode] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"in" | "out">("in");
+  const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
+  const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "admin", password: "1234" });
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
@@ -839,6 +868,9 @@ function App() {
   const suppliers = counterparties.filter((item) => item.type === "Supplier" && (!applyWarehouseScope || purchaseSupplierIds.has(item.id)));
   const shops = counterparties.filter((item) => item.type === "Shop" && (!applyWarehouseScope || salesShopIds.has(item.id)));
   const paymentMethods = settings.paymentMethods.filter((item) => item.active);
+  const deliveryManagerWarehouseOptions = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
+  const activeDeliveryManagerWarehouseId = deliveryManagerWarehouseId || deliveryManagerWarehouseOptions[0]?.id || "";
+  const deliveryManagerSnapshot = snapshotForWarehouse(snapshot, activeDeliveryManagerWarehouseId);
 
   function isNaGst(value: string) {
     return value.trim().toUpperCase() === "N/A";
@@ -1125,21 +1157,45 @@ function App() {
                 onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
               />
             ) : isDeliveryManager ? (
-              <WarehouseOperationsViewV2
-                snapshot={snapshot}
-                currentUser={currentUser}
-                onUploadProof={async (file) => uploadFile("/receipt-checks/upload-proof", "receiptProof", file, "Weighing proof uploaded.")}
-                onUploadPaymentProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Cash proof uploaded.")}
-                onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
-                onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
-                onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
-                onCreateDockets={(body) => post("/delivery-dockets", body, "Outbound dockets created.")}
-                onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
-                onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
-                screen={deliveryManagerScreen}
-                canManageDeliveryTagging={true}
-                canManageWarehouseChecks={false}
-              />
+              deliveryManagerScreen === "home" ? (
+                <DeliveryManagerHome
+                  snapshot={deliveryManagerSnapshot}
+                  warehouses={deliveryManagerWarehouseOptions}
+                  selectedWarehouseId={activeDeliveryManagerWarehouseId}
+                  onSelectWarehouse={setDeliveryManagerWarehouseId}
+                  onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
+                  onFlagTask={(task, note) => post("/notes", { entityType: "Delivery", entityId: task.id, note, visibility: "Operational" }, "Delivery flag added.")}
+                  onOpenReceive={() => setDeliveryManagerScreen("in")}
+                  onOpenDispatch={() => setDeliveryManagerScreen("out")}
+                />
+              ) : (
+              <>
+                <Panel title="Warehouse" eyebrow="Delivery scope">
+                  <div className="segmented-tabs">
+                    {deliveryManagerWarehouseOptions.map((warehouse) => (
+                      <button key={warehouse.id} className={activeDeliveryManagerWarehouseId === warehouse.id ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryManagerWarehouseId(warehouse.id)}>
+                        {warehouse.name.replace(/\s+(warehouse|yard)$/i, "")}
+                      </button>
+                    ))}
+                  </div>
+                </Panel>
+                <WarehouseOperationsViewV2
+                  snapshot={deliveryManagerSnapshot}
+                  currentUser={currentUser}
+                  onUploadProof={async (file) => uploadFile("/receipt-checks/upload-proof", "receiptProof", file, "Weighing proof uploaded.")}
+                  onUploadPaymentProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Cash proof uploaded.")}
+                  onReceive={(body) => post("/receipt-checks", body, "Warehouse receipt saved.")}
+                  onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
+                  onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")}
+                  onCreateDockets={(body) => post("/delivery-dockets", body, "Outbound dockets created.")}
+                  onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Delivery task assigned.")}
+                  onCreateConsignment={(body) => post("/delivery-consignments", body, "Consignment created.")}
+                  screen={deliveryManagerScreen}
+                  canManageDeliveryTagging={true}
+                  canManageWarehouseChecks={false}
+                />
+              </>
+              )
             ) : (isWarehouseOnly || currentRoles.includes("Warehouse Manager")) ? (
               <WarehouseDeliveryBoard snapshot={snapshot} />
             ) : <TwoCol left={<Panel title="Delivery Task" eyebrow="Pickup and drop"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/delivery-tasks", { ...deliveryForm, linkedOrderIds: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "" }, "Delivery task created."); }}><label>Side<select value={deliveryForm.side} onChange={(e) => setDeliveryForm((c) => ({ ...c, side: e.target.value as DeliveryTask["side"] }))}><option>Purchase</option><option>Sales</option></select></label><label className="wide-field">Orders<input value={deliveryForm.linkedOrderIdsText} onChange={(e) => setDeliveryForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} placeholder="PO-1, SO-2" /></label><label>Mode<select value={deliveryForm.mode} onChange={(e) => setDeliveryForm((c) => ({ ...c, mode: e.target.value as DeliveryTask["mode"] }))}><option>Dealer Delivery</option><option>Self Collection</option><option>Delivery</option></select></label><label>Status<select value={deliveryForm.status} onChange={(e) => setDeliveryForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label>From<input value={deliveryForm.from} onChange={(e) => setDeliveryForm((c) => ({ ...c, from: e.target.value }))} /></label><label>To<input value={deliveryForm.to} onChange={(e) => setDeliveryForm((c) => ({ ...c, to: e.target.value }))} /></label><label>Assigned<input value={deliveryForm.assignedTo} onChange={(e) => setDeliveryForm((c) => ({ ...c, assignedTo: e.target.value }))} placeholder="delivery" /></label><label>Pickup time<input value={deliveryForm.pickupAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, pickupAt: e.target.value }))} placeholder="2026-04-04 10:30" /></label><label>Drop time<input value={deliveryForm.dropAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, dropAt: e.target.value }))} placeholder="2026-04-04 13:00" /></label><label>Route hint<input value={deliveryForm.routeHint} onChange={(e) => setDeliveryForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryForm.paymentAction} onChange={(e) => setDeliveryForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryForm.cashCollectionRequired} onChange={(e) => setDeliveryForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Create task</button></form></Panel>} right={<><Panel title="Update Delivery" eyebrow="Assignment and completion"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/delivery-tasks/${deliveryEditForm.id}`, { linkedOrderIds: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "", assignedTo: deliveryEditForm.assignedTo, pickupAt: deliveryEditForm.pickupAt, dropAt: deliveryEditForm.dropAt, routeHint: deliveryEditForm.routeHint, paymentAction: deliveryEditForm.paymentAction, cashCollectionRequired: deliveryEditForm.cashCollectionRequired, cashHandoverMarked: deliveryEditForm.cashHandoverMarked, weightProofName: deliveryEditForm.weightProofName, cashProofName: deliveryEditForm.cashProofName, status: deliveryEditForm.status }, "Delivery task updated."); }}><label>Task<select value={deliveryEditForm.id} onChange={(e) => { const item = snapshot.deliveryTasks.find((d) => d.id === e.target.value); setDeliveryEditForm(item ? { id: item.id, linkedOrderIdsText: item.linkedOrderIds.join(", "), assignedTo: item.assignedTo, pickupAt: item.pickupAt || "", dropAt: item.dropAt || "", routeHint: item.routeHint || "", paymentAction: item.paymentAction, cashCollectionRequired: item.cashCollectionRequired, cashHandoverMarked: item.cashHandoverMarked, weightProofName: item.weightProofName || "", cashProofName: item.cashProofName || "", status: item.status } : { id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None", cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" }); }}>{snapshot.deliveryTasks.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}</select></label><label className="wide-field">Orders<input value={deliveryEditForm.linkedOrderIdsText} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} /></label><label>Assigned<input value={deliveryEditForm.assignedTo} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, assignedTo: e.target.value }))} /></label><label>Pickup time<input value={deliveryEditForm.pickupAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, pickupAt: e.target.value }))} /></label><label>Drop time<input value={deliveryEditForm.dropAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, dropAt: e.target.value }))} /></label><label>Route hint<input value={deliveryEditForm.routeHint} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryEditForm.paymentAction} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label>Status<select value={deliveryEditForm.status} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashCollectionRequired} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashHandoverMarked} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashHandoverMarked: e.target.checked }))} />Cash handover marked</label><button className="primary-button" type="submit">Update task</button></form></Panel><Panel title="Delivery Tasks" eyebrow="Transport flow"><DataTable headers={["ID","Side","Orders","Mode","Assigned","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.mode, d.assignedTo, d.status])} /></Panel></>} />
@@ -1149,6 +1205,7 @@ function App() {
         </div>
       </section>
       {isDeliveryManager ? <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}>Home</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}>Receive</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}>Dispatch</button>
       </nav> : <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>}
@@ -5287,6 +5344,176 @@ function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
               </div>
             </article>
           ))}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function DeliveryManagerHome({
+  snapshot,
+  warehouses,
+  selectedWarehouseId,
+  onSelectWarehouse,
+  onUpdateTask,
+  onFlagTask,
+  onOpenReceive,
+  onOpenDispatch
+}: {
+  snapshot: AppSnapshot;
+  warehouses: AppSnapshot["warehouses"];
+  selectedWarehouseId: string;
+  onSelectWarehouse: (warehouseId: string) => void;
+  onUpdateTask: (id: string, body: {
+    linkedOrderIds: string[];
+    consignmentId?: string;
+    assignedTo: string;
+    routeStops?: DeliveryTask["routeStops"];
+    pickupAt?: string;
+    dropAt?: string;
+    routeHint?: string;
+    paymentAction: DeliveryTask["paymentAction"];
+    status: DeliveryTask["status"];
+    cashCollectionRequired: boolean;
+    cashHandoverMarked?: boolean;
+    weightProofName?: string;
+    cashProofName?: string;
+    lastActionAt?: string;
+  }) => Promise<boolean | void>;
+  onFlagTask: (task: DeliveryTask, note: string) => Promise<boolean | void>;
+  onOpenReceive: () => void;
+  onOpenDispatch: () => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, { status: DeliveryTask["status"]; flagType: string; note: string }>>({});
+  const notesByDelivery = new Map<string, NoteRecord[]>();
+  snapshot.notes.filter((note) => note.entityType === "Delivery").forEach((note) => {
+    notesByDelivery.set(note.entityId, [...(notesByDelivery.get(note.entityId) || []), note]);
+  });
+  const nowMs = Date.now();
+  const activeTasks = snapshot.deliveryTasks.filter((task) => task.status !== "Delivered");
+  const flaggedTaskIds = new Set(snapshot.notes.filter((note) => note.entityType === "Delivery" && note.note.toLowerCase().includes("flag")).map((note) => note.entityId));
+  const priority = (task: DeliveryTask) => {
+    const ageHours = (nowMs - new Date(task.lastActionAt || task.createdAt).getTime()) / 36e5;
+    if (flaggedTaskIds.has(task.id)) return 0;
+    if (ageHours >= 24) return 1;
+    if (task.paymentAction !== "None" && task.cashCollectionRequired && !task.cashHandoverMarked) return 2;
+    if (task.status === "Planned") return 3;
+    if (task.status === "Picked") return 4;
+    if (task.status === "Handed Over") return 5;
+    return 6;
+  };
+  const sortedTasks = [...snapshot.deliveryTasks].sort((left, right) =>
+    priority(left) - priority(right)
+    || new Date(left.lastActionAt || left.createdAt).getTime() - new Date(right.lastActionAt || right.createdAt).getTime()
+  );
+  const dashboardTasks = sortedTasks.slice(0, 12);
+
+  function draftFor(task: DeliveryTask) {
+    return drafts[task.id] || { status: task.status, flagType: "Delay", note: "" };
+  }
+
+  function ageLabel(task: DeliveryTask) {
+    const actionAt = task.lastActionAt || task.createdAt;
+    const hours = Math.max(0, Math.floor((nowMs - new Date(actionAt).getTime()) / 36e5));
+    if (hours < 1) return "Just now";
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
+
+  function taskStatusClass(task: DeliveryTask) {
+    if (flaggedTaskIds.has(task.id)) return "status-rejected";
+    if (task.status === "Delivered") return "status-verified";
+    if (priority(task) <= 2) return "status-rejected";
+    return "status-pending";
+  }
+
+  function taskRoute(task: DeliveryTask) {
+    if (task.routeStops.length > 0) return `${task.routeStops.length} stop(s)`;
+    return [task.from, task.to].filter(Boolean).join(" -> ") || "Route pending";
+  }
+
+  async function updateTaskStatus(task: DeliveryTask) {
+    const draft = draftFor(task);
+    await onUpdateTask(task.id, {
+      linkedOrderIds: task.linkedOrderIds,
+      consignmentId: task.consignmentId,
+      assignedTo: task.assignedTo,
+      routeStops: task.routeStops,
+      pickupAt: task.pickupAt,
+      dropAt: task.dropAt,
+      routeHint: task.routeHint,
+      paymentAction: task.paymentAction,
+      status: draft.status,
+      cashCollectionRequired: task.cashCollectionRequired,
+      cashHandoverMarked: task.cashHandoverMarked,
+      weightProofName: task.weightProofName,
+      cashProofName: task.cashProofName,
+      lastActionAt: new Date().toISOString()
+    });
+  }
+
+  async function flagTask(task: DeliveryTask) {
+    const draft = draftFor(task);
+    const note = [`FLAG: ${draft.flagType}`, draft.note.trim()].filter(Boolean).join(" - ");
+    if (!note) return;
+    await onFlagTask(task, note);
+    setDrafts((current) => ({ ...current, [task.id]: { ...draft, note: "" } }));
+  }
+
+  return (
+    <section className="dashboard-grid">
+      <Panel title="Delivery Home" eyebrow="Urgent first">
+        <div className="segmented-tabs">
+          {warehouses.map((warehouse) => (
+            <button key={warehouse.id} className={selectedWarehouseId === warehouse.id ? "tab-button active" : "tab-button"} type="button" onClick={() => onSelectWarehouse(warehouse.id)}>
+              {warehouse.name.replace(/\s+(warehouse|yard)$/i, "")}
+            </button>
+          ))}
+        </div>
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{activeTasks.length}</strong><p>Live deliveries</p></div></div>
+          <div className="list-card"><div><strong>{activeTasks.filter((task) => task.side === "Purchase").length}</strong><p>Receive side</p></div></div>
+          <div className="list-card"><div><strong>{activeTasks.filter((task) => task.side === "Sales").length}</strong><p>Dispatch side</p></div></div>
+          <div className="list-card"><div><strong>{flaggedTaskIds.size}</strong><p>Flagged notes</p></div></div>
+        </div>
+        <div className="payment-card-actions top-gap">
+          <button className="ghost-button" type="button" onClick={onOpenReceive}>Open receive</button>
+          <button className="ghost-button" type="button" onClick={onOpenDispatch}>Open dispatch</button>
+        </div>
+      </Panel>
+      <Panel title="Delivery Status" eyebrow="Sorted by time and flags">
+        <div className="stack-list payment-update-list">
+          {dashboardTasks.length === 0 ? <div className="empty-card">No delivery activity yet.</div> : dashboardTasks.map((task) => {
+            const draft = draftFor(task);
+            const latestNote = notesByDelivery.get(task.id)?.[0];
+            return (
+              <article className="list-card payment-update-card delivery-status-card" key={task.id}>
+                <div className="payment-update-head">
+                  <div>
+                    <strong>{task.id}</strong>
+                    <p>{task.side} | {task.linkedOrderIds.join(", ")} | {taskRoute(task)}</p>
+                  </div>
+                  <span className={`status-pill ${taskStatusClass(task)}`}>{task.status}</span>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Last action</span><strong>{ageLabel(task)}</strong></div>
+                  <div><span className="small-label">Assigned</span><strong>{task.assignedTo || "Not assigned"}</strong></div>
+                  <div><span className="small-label">Payment</span><strong>{task.paymentAction}{task.cashCollectionRequired ? " / Cash" : ""}</strong></div>
+                  <div><span className="small-label">Mode</span><strong>{task.mode}</strong></div>
+                </div>
+                {latestNote ? <p className="message error">Latest flag: {latestNote.note}</p> : null}
+                <div className="cart-edit-grid">
+                  <label>Status<select value={draft.status} onChange={(event) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, status: event.target.value as DeliveryTask["status"] } }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label>
+                  <label>Flag<select value={draft.flagType} onChange={(event) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, flagType: event.target.value } }))}><option>Delay</option><option>Payment issue</option><option>Route issue</option><option>Vehicle issue</option><option>Customer issue</option><option>Warehouse issue</option></select></label>
+                  <label className="wide-field">Flag note<input value={draft.note} onChange={(event) => setDrafts((current) => ({ ...current, [task.id]: { ...draft, note: event.target.value } }))} placeholder="Write issue or update for this delivery" /></label>
+                </div>
+                <div className="payment-card-actions top-gap">
+                  <button className="primary-button" type="button" onClick={() => void updateTaskStatus(task)}>Update status</button>
+                  <button className="ghost-button danger-button" type="button" onClick={() => void flagTask(task)}>Flag issue</button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </Panel>
     </section>
