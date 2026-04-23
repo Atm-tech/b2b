@@ -534,6 +534,10 @@ textarea {
   box-shadow: 0 14px 24px rgba(35, 93, 93, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 
+.delivery-manager-tab-bar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .simple-tab-bar .purchaser-po-tab {
   position: relative;
   justify-self: center;
