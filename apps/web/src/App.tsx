@@ -41,6 +41,7 @@ type ViewKey =
   | "Products"
   | "Parties"
   | "Purchase"
+  | "Purchases"
   | "Sales"
   | "Payments"
   | "Receipts"
@@ -56,7 +57,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
-  Purchaser: ["Overview", "Parties", "Purchase", "Ledger", "Notes"],
+  Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "Ledger", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "Payments", "Ledger", "Notes"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
@@ -68,7 +69,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
-  Purchaser: ["Overview", "Parties", "Purchase"],
+  Purchaser: ["Overview", "Parties", "Purchase", "Purchases"],
   Accounts: ["Overview", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "Payments"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
@@ -83,6 +84,7 @@ const labels: Record<ViewKey, string> = {
   Products: "Products",
   Parties: "Parties",
   Purchase: "Purchase",
+  Purchases: "Purchases",
   Sales: "Sales",
   Payments: "Payments",
   Receipts: "Receipts",
@@ -953,6 +955,7 @@ function App() {
               onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
             />
           </>) : null}
+          {activeView === "Purchases" ? <PurchaserPurchaseSummary snapshot={snapshot} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} /> : null}
           {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
