@@ -189,6 +189,18 @@ function orderPublicId(order: { id: string; cartId?: string }) {
   return order.cartId || order.id;
 }
 
+function groupOldestCreatedAt<T extends { createdAt: string }>(lines: T[]) {
+  return Math.min(...lines.map((line) => new Date(line.createdAt).getTime()));
+}
+
+function isOpenPurchaseOrder(order: PurchaseOrder) {
+  return order.status !== "Received" && order.status !== "Closed";
+}
+
+function isOpenSalesOrder(order: SalesOrder) {
+  return order.status !== "Delivered" && order.status !== "Closed";
+}
+
 function findPurchaseOrderByPublicId(orders: PurchaseOrder[], orderId: string) {
   return orders.find((order) => order.id === orderId || order.cartId === orderId);
 }
@@ -1004,6 +1016,8 @@ function App() {
   const deliveryManagerWarehouseOptions = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
   const activeDeliveryManagerWarehouseId = deliveryManagerWarehouseId || deliveryManagerWarehouseOptions[0]?.id || "";
   const deliveryManagerSnapshot = snapshotForWarehouse(snapshot, activeDeliveryManagerWarehouseId);
+  const purchaserOrderCount = countGroupedOrders(purchaseOrdersView.filter((order) => (order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName) && isOpenPurchaseOrder(order)));
+  const salesOrderCount = countGroupedOrders(salesOrdersView.filter((order) => (order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName) && isOpenSalesOrder(order)));
   const deliveryManagerHomePendingCount = deliveryManagerSnapshot.deliveryTasks.filter((task) => task.status !== "Delivered").length;
   const deliveryManagerInboundPendingCount = countGroupedOrders(deliveryManagerSnapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"));
   const deliveryManagerDispatchPendingCount = countGroupedOrders(deliveryManagerSnapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup"));
@@ -1344,7 +1358,15 @@ function App() {
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><LabelWithBadge label="Dispatch" count={deliveryManagerDispatchPendingCount} /></button>
-      </nav> : <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>}
+      </nav> : <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => {
+        const count = view === "Purchase" || view === "Purchases"
+          ? purchaserOrderCount
+          : view === "Sales" || view === "SalesOrders"
+            ? salesOrderCount
+            : 0;
+        const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
+        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
+      })}</nav>}
     </main>
   );
 }
@@ -2736,7 +2758,10 @@ function PurchaserPurchaseWorkspace({
   }) => Promise<boolean | void>;
 }) {
   const [tab, setTab] = useState<"current" | "update" | "summary">(initialUpdateOrderId ? "update" : "current");
-  const myOrders = purchaseOrders.filter((order) => order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName);
+  const myOrders = purchaseOrders
+    .filter((order) => (order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName) && isOpenPurchaseOrder(order))
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const pendingPoCount = countGroupedOrders(myOrders);
   useEffect(() => {
     if (initialUpdateOrderId) setTab("update");
   }, [initialUpdateOrderId]);
@@ -2768,16 +2793,16 @@ function PurchaserPurchaseWorkspace({
       /> : null}
       {tab === "summary" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={myOrders} /> : null}
       <div className="purchase-module-tab-bar">
-        <button className={tab === "current" ? "tab-button active po-tab-button" : "tab-button po-tab-button"} type="button" onClick={() => setTab("current")}>PO</button>
+        <button className={tab === "current" ? "tab-button active po-tab-button" : "tab-button po-tab-button"} type="button" onClick={() => setTab("current")}><LabelWithBadge label="PO" count={pendingPoCount} /></button>
         <button className={tab === "update" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("update")}>Edit Cart</button>
-        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}>Purchases</button>
+        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}><LabelWithBadge label="Purchases" count={pendingPoCount} /></button>
       </div>
     </section>
   );
 }
 
 function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
-  const groups = groupPurchaseOrders(orders);
+  const groups = groupPurchaseOrders(orders.filter(isOpenPurchaseOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
   for (const group of groups) {
     const status = purchaseWorkflowStatus(snapshot, group.id);
@@ -2860,12 +2885,14 @@ function PurchaseCartEditor({
 }) {
   const editableGroups = groupPurchaseOrders(
     snapshot.purchaseOrders.filter((order) =>
+      isOpenPurchaseOrder(order) && (
       currentUser.role === "Admin"
       || userRoleList(currentUser).includes("Admin")
       || order.purchaserId === currentUser.id
       || order.purchaserName === currentUser.fullName
+      )
     )
-  );
+  ).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const [draft, setDraft] = useState<{
     paymentMode: PaymentMode;
@@ -3071,7 +3098,7 @@ function PurchaseCartEditor({
 }
 
 function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void }) {
-  const groups = groupSalesOrders(orders);
+  const groups = groupSalesOrders(orders.filter(isOpenSalesOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const groupedByStatus = new Map<string, ReturnType<typeof groupSalesOrders>>();
   for (const group of groups) {
     const status = `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`;
@@ -3134,10 +3161,12 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus }) => Promise<boolean | void>;
 }) {
   const editableGroups = groupSalesOrders(snapshot.salesOrders.filter((order) =>
-    userRoleList(currentUser).includes("Admin")
-    || order.salesmanId === currentUser.id
-    || order.salesmanName === currentUser.fullName
-  ));
+    isOpenSalesOrder(order) && (
+      userRoleList(currentUser).includes("Admin")
+      || order.salesmanId === currentUser.id
+      || order.salesmanName === currentUser.fullName
+    )
+  )).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
