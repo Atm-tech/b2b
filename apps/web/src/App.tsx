@@ -755,6 +755,23 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  useEffect(() => {
+    if (!currentUser || !snapshot) return;
+    const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
+    if (!currentRoles.includes("Delivery Manager")) return;
+    const warehouseScope = userWarehouseScope(currentUser);
+    const applyWarehouseScope = isWarehouseScoped(currentUser);
+    const warehousesView = applyWarehouseScope ? snapshot.warehouses.filter((item) => warehouseScope.has(item.id)) : snapshot.warehouses;
+    const options = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
+    if (options.length === 0) {
+      if (deliveryManagerWarehouseId) setDeliveryManagerWarehouseId("");
+      return;
+    }
+    if (!deliveryManagerWarehouseId || !options.some((warehouse) => warehouse.id === deliveryManagerWarehouseId)) {
+      setDeliveryManagerWarehouseId(options[0].id);
+    }
+  }, [currentUser, snapshot, deliveryManagerWarehouseId]);
+
   async function refresh(user = currentUser) {
     const token = window.localStorage.getItem(TOKEN_KEY) || sessionToken;
     if (!user || !token) return;
@@ -973,17 +990,6 @@ function App() {
   const deliveryManagerWarehouseOptions = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
   const activeDeliveryManagerWarehouseId = deliveryManagerWarehouseId || deliveryManagerWarehouseOptions[0]?.id || "";
   const deliveryManagerSnapshot = snapshotForWarehouse(snapshot, activeDeliveryManagerWarehouseId);
-
-  useEffect(() => {
-    if (!isDeliveryManager) return;
-    if (deliveryManagerWarehouseOptions.length === 0) {
-      if (deliveryManagerWarehouseId) setDeliveryManagerWarehouseId("");
-      return;
-    }
-    if (!deliveryManagerWarehouseId || !deliveryManagerWarehouseOptions.some((warehouse) => warehouse.id === deliveryManagerWarehouseId)) {
-      setDeliveryManagerWarehouseId(deliveryManagerWarehouseOptions[0].id);
-    }
-  }, [deliveryManagerWarehouseId, deliveryManagerWarehouseOptions, isDeliveryManager]);
 
   function isNaGst(value: string) {
     return value.trim().toUpperCase() === "N/A";
