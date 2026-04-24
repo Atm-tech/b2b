@@ -1016,6 +1016,16 @@ function App() {
   const deliveryManagerWarehouseOptions = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
   const activeDeliveryManagerWarehouseId = deliveryManagerWarehouseId || deliveryManagerWarehouseOptions[0]?.id || "";
   const deliveryManagerSnapshot = snapshotForWarehouse(snapshot, activeDeliveryManagerWarehouseId);
+  const deliveryManagerWarehousePendingCounts = new Map(
+    deliveryManagerWarehouseOptions.map((warehouse) => {
+      const scopedSnapshot = snapshotForWarehouse(snapshot, warehouse.id);
+      const pendingCount =
+        countGroupedOrders(scopedSnapshot.purchaseOrders.filter(isOpenPurchaseOrder))
+        + countGroupedOrders(scopedSnapshot.salesOrders.filter(isOpenSalesOrder))
+        + scopedSnapshot.deliveryTasks.filter(isDeliveryTaskPending).length;
+      return [warehouse.id, pendingCount];
+    })
+  );
   const purchaserOrderCount = countGroupedOrders(purchaseOrdersView.filter((order) => (order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName) && isOpenPurchaseOrder(order)));
   const salesOrderCount = countGroupedOrders(salesOrdersView.filter((order) => (order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName) && isOpenSalesOrder(order)));
   const deliveryManagerHomePendingCount = deliveryManagerSnapshot.deliveryTasks.filter((task) => task.status !== "Delivered").length;
@@ -1311,6 +1321,7 @@ function App() {
                 <DeliveryManagerHome
                   snapshot={deliveryManagerSnapshot}
                   warehouses={deliveryManagerWarehouseOptions}
+                  warehousePendingCounts={deliveryManagerWarehousePendingCounts}
                   selectedWarehouseId={activeDeliveryManagerWarehouseId}
                   onSelectWarehouse={setDeliveryManagerWarehouseId}
                   onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
@@ -1324,7 +1335,7 @@ function App() {
                   <div className="segmented-tabs">
                     {deliveryManagerWarehouseOptions.map((warehouse) => (
                       <button key={warehouse.id} className={activeDeliveryManagerWarehouseId === warehouse.id ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryManagerWarehouseId(warehouse.id)}>
-                        {warehouse.name.replace(/\s+(warehouse|yard)$/i, "")}
+                        <LabelWithBadge label={warehouse.name.replace(/\s+(warehouse|yard)$/i, "")} count={deliveryManagerWarehousePendingCounts.get(warehouse.id) || 0} />
                       </button>
                     ))}
                   </div>
@@ -5587,6 +5598,7 @@ function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
 function DeliveryManagerHome({
   snapshot,
   warehouses,
+  warehousePendingCounts,
   selectedWarehouseId,
   onSelectWarehouse,
   onUpdateTask,
@@ -5596,6 +5608,7 @@ function DeliveryManagerHome({
 }: {
   snapshot: AppSnapshot;
   warehouses: AppSnapshot["warehouses"];
+  warehousePendingCounts: Map<string, number>;
   selectedWarehouseId: string;
   onSelectWarehouse: (warehouseId: string) => void;
   onUpdateTask: (id: string, body: {
@@ -5702,7 +5715,7 @@ function DeliveryManagerHome({
         <div className="segmented-tabs">
           {warehouses.map((warehouse) => (
             <button key={warehouse.id} className={selectedWarehouseId === warehouse.id ? "tab-button active" : "tab-button"} type="button" onClick={() => onSelectWarehouse(warehouse.id)}>
-              {warehouse.name.replace(/\s+(warehouse|yard)$/i, "")}
+              <LabelWithBadge label={warehouse.name.replace(/\s+(warehouse|yard)$/i, "")} count={warehousePendingCounts.get(warehouse.id) || 0} />
             </button>
           ))}
         </div>
