@@ -111,6 +111,15 @@ function displayLabel(view: ViewKey, user?: AppUser | null) {
   return labels[view];
 }
 
+function PendingBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return <span className="pending-count-badge">{count > 99 ? "99+" : count}</span>;
+}
+
+function LabelWithBadge({ label, count }: { label: string; count: number }) {
+  return <span className="button-badge-label"><span>{label}</span><PendingBadge count={count} /></span>;
+}
+
 function getVisibleViews(user: AppUser) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   return Array.from(new Set(roles.flatMap((role) => roleViews[role] || [])));
@@ -442,6 +451,11 @@ function deliverySideForUser(user: AppUser): DeliveryTask["side"] | null {
   return null;
 }
 
+function isDeliveryTaskPending(task: DeliveryTask) {
+  if (task.side === "Sales") return task.status !== "Delivered";
+  return task.status !== "Handed Over" && task.status !== "Delivered";
+}
+
 function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   const today = new Date().toISOString().slice(0, 10);
@@ -450,13 +464,13 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
       { label: "Purchase open", value: countGroupedOrders(snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed")) },
       { label: "Sales open", value: countGroupedOrders(snapshot.salesOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed")) },
       { label: "Payment flags", value: snapshot.payments.filter((item) => item.verificationStatus === "Rejected" || item.verificationStatus === "Disputed").length },
-      { label: "Live delivery", value: snapshot.deliveryTasks.filter((item) => item.status !== "Delivered" && item.status !== "Handed Over").length }
+      { label: "Live delivery", value: snapshot.deliveryTasks.filter(isDeliveryTaskPending).length }
     ];
   }
   if (roles.includes("In Delivery") || roles.includes("Out Delivery") || roles.includes("Delivery")) {
     const myTasks = deliveryTasksForUser(snapshot, user);
     return [
-      { label: "Current delivery", value: myTasks.filter((item) => item.status !== "Planned" && item.status !== "Handed Over" && item.status !== "Delivered").length },
+      { label: "Current delivery", value: myTasks.filter((item) => item.status !== "Planned" && isDeliveryTaskPending(item)).length },
       { label: "New assignments", value: myTasks.filter((item) => item.status === "Planned").length },
       { label: "Completed today", value: myTasks.filter((item) => (item.status === "Handed Over" || item.status === "Delivered") && item.lastActionAt?.slice(0, 10) === today).length },
       { label: "Cash actions", value: myTasks.filter((item) => item.cashCollectionRequired).length }
@@ -469,7 +483,7 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
       { label: "Inbound pickup tags", value: scopedTasks.filter((task) => task.side === "Purchase" && task.status === "Planned").length },
       { label: "Ready dockets", value: snapshot.deliveryDockets.filter((item) => item.status === "Ready" && !item.consignmentId && (warehouseScope.size === 0 || warehouseScope.has(item.warehouseId))).length },
       { label: "Ready consignments", value: snapshot.deliveryConsignments.filter((item) => item.status === "Ready" && (warehouseScope.size === 0 || warehouseScope.has(item.warehouseId))).length },
-      { label: "Live delivery", value: scopedTasks.filter((task) => task.status !== "Delivered" && task.status !== "Handed Over").length }
+      { label: "Live delivery", value: scopedTasks.filter(isDeliveryTaskPending).length }
     ];
   }
   if (roles.includes("Warehouse Manager")) {
@@ -990,6 +1004,9 @@ function App() {
   const deliveryManagerWarehouseOptions = warehousesView.length > 0 ? warehousesView : snapshot.warehouses;
   const activeDeliveryManagerWarehouseId = deliveryManagerWarehouseId || deliveryManagerWarehouseOptions[0]?.id || "";
   const deliveryManagerSnapshot = snapshotForWarehouse(snapshot, activeDeliveryManagerWarehouseId);
+  const deliveryManagerHomePendingCount = deliveryManagerSnapshot.deliveryTasks.filter((task) => task.status !== "Delivered").length;
+  const deliveryManagerInboundPendingCount = countGroupedOrders(deliveryManagerSnapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"));
+  const deliveryManagerDispatchPendingCount = countGroupedOrders(deliveryManagerSnapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup"));
 
   function isNaGst(value: string) {
     return value.trim().toUpperCase() === "N/A";
@@ -1324,9 +1341,9 @@ function App() {
         </div>
       </section>
       {isDeliveryManager ? <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}>Home</button>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}>Inbound</button>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}>Dispatch</button>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><LabelWithBadge label="Dispatch" count={deliveryManagerDispatchPendingCount} /></button>
       </nav> : <nav className={simpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{displayLabel(view, currentUser)}</button>)}</nav>}
     </main>
   );
@@ -4156,8 +4173,11 @@ function WarehouseOperationsViewV2({
   const plannedInboundDockets = inboundTaskDockets
     .filter((item) => item.task.status === "Planned")
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+  const completedInboundDockets = inboundTaskDockets
+    .filter((item) => item.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed")))
+    .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const receivingInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered")
+    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered" && item.groups.some((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed")))
     .sort((left, right) => {
       const leftCompleted = left.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
       const rightCompleted = right.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
@@ -4199,6 +4219,15 @@ function WarehouseOperationsViewV2({
   const directOutboundGroups = outgoingGroups
     .filter((group) => group.lines[0].deliveryMode === "Self Collection" || group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
+  const inboundPickupPendingCount = sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).length;
+  const inboundReceivePendingCount = receivingInboundDockets.length + directReceiveGroups.length;
+  const inboundPlannedPendingCount = plannedInboundDockets.length;
+  const inboundTotalPendingCount = inboundPickupPendingCount + inboundReceivePendingCount + inboundPlannedPendingCount;
+  const outboundCheckPendingCount = activeOutboundDockets.length + directOutboundGroups.length;
+  const outboundTagPendingCount = bundleReadyConsignments.length;
+  const outboundBundlePendingCount = openDockets.length;
+  const outboundPlannedPendingCount = plannedOutboundDockets.length;
+  const outboundTotalPendingCount = outboundCheckPendingCount + outboundTagPendingCount + outboundBundlePendingCount + outboundPlannedPendingCount;
 
   function inboundTaskForGroup(groupId: string) {
     return snapshot.deliveryTasks.find((task) => task.side === "Purchase" && task.linkedOrderIds.includes(groupId));
@@ -4384,9 +4413,6 @@ function WarehouseOperationsViewV2({
               note: draft.note || `Received by ${currentUser.fullName}`,
               confirmPartial: receivedQuantity < pendingQty
             });
-          }
-          if (vendorCashProofName) {
-            window.alert("Cash proof linked. Payment will be marked completed with this receipt.");
           }
           if (vendorKey) {
             setExpandedReceiveVendor((current) => ({ ...current, [vendorKey]: false }));
@@ -4786,9 +4812,9 @@ function WarehouseOperationsViewV2({
     <section className="dashboard-grid warehouse-ops">
       {screen === "full" ? <Panel title={canManageWarehouseChecks ? "Warehouse" : "Delivery Manager"} eyebrow="Home / In / Out">
         <div className="segmented-tabs">
-          <button className={activeTab === "home" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("home")}>Home</button>
-          <button className={activeTab === "in" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("in")}>In</button>
-          <button className={activeTab === "out" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("out")}>Out</button>
+          <button className={activeTab === "home" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("home")}><LabelWithBadge label="Home" count={inboundTotalPendingCount + outboundTotalPendingCount} /></button>
+          <button className={activeTab === "in" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("in")}><LabelWithBadge label="In" count={inboundTotalPendingCount} /></button>
+          <button className={activeTab === "out" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("out")}><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></button>
         </div>
         <div className="simple-summary payment-summary-grid top-gap">
           <div className="list-card"><div><strong>{pendingReceiveGroups.length}</strong><p>Pending to receive</p></div></div>
@@ -4801,10 +4827,10 @@ function WarehouseOperationsViewV2({
         <Panel title={canManageWarehouseChecks ? "Warehouse Summary" : "Delivery Summary"} eyebrow="Home">
           <div className="stack-list warehouse-order-list">
           <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("in"); setInboundStep(canManageDeliveryTagging ? "pickup" : "receive"); }}>
-            <strong>In</strong><p>{canManageDeliveryTagging ? "Tag pickup, then monitor inward movement step by step." : "Receive inward orders and complete warehouse checks."}</p>
+            <strong><LabelWithBadge label="In" count={inboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Tag pickup, then monitor inward movement step by step." : "Receive inward orders and complete warehouse checks."}</p>
           </button>
           <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("out"); setOutboundStep(canManageWarehouseChecks ? "check" : "bundle"); }}>
-            <strong>Out</strong><p>{canManageDeliveryTagging ? "Bundle, tag, and monitor dispatch in order." : "Check and prepare dispatches for delivery manager assignment."}</p>
+            <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Bundle, tag, and monitor dispatch in order." : "Check and prepare dispatches for delivery manager assignment."}</p>
           </button>
         </div>
         </Panel>
@@ -4812,9 +4838,9 @@ function WarehouseOperationsViewV2({
       {(screen === "full" ? activeTab === "in" : screen === "in") ? <>
         <Panel title={canManageWarehouseChecks ? "Receipts" : "Inbound Routing"} eyebrow={canManageWarehouseChecks ? "Incoming orders" : "Pickup routes"}>
           <div className="segmented-tabs">
-            {canManageDeliveryTagging ? <button className={inboundStep === "pickup" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("pickup")}>1. Pickup</button> : null}
-            {canManageWarehouseChecks ? <button className={inboundStep === "receive" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("receive")}>{canManageDeliveryTagging ? "2. Receive" : "1. Receive"}</button> : null}
-            <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}>{canManageDeliveryTagging && canManageWarehouseChecks ? "3. Planned" : canManageDeliveryTagging ? "2. Planned" : "2. Planned"}</button>
+            {canManageDeliveryTagging ? <button className={inboundStep === "pickup" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("pickup")}><LabelWithBadge label="1. Pickup" count={inboundPickupPendingCount} /></button> : null}
+            {canManageWarehouseChecks ? <button className={inboundStep === "receive" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("receive")}><LabelWithBadge label={canManageDeliveryTagging ? "2. Receive" : "1. Receive"} count={inboundReceivePendingCount} /></button> : null}
+            <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "3. Planned" : canManageDeliveryTagging ? "2. Planned" : "2. Planned"} count={inboundPlannedPendingCount} /></button>
           </div>
         </Panel>
         {canManageDeliveryTagging && inboundStep === "pickup" ? <Panel title="Tag In Delivery Team" eyebrow="Self collection only">
@@ -4916,7 +4942,10 @@ function WarehouseOperationsViewV2({
             </Panel>
             <Panel title="In Completed" eyebrow="Warehouse checked">
               <div className="warehouse-order-list">
-                {receivedGroups.length === 0 ? <div className="empty-card">No completed orders yet.</div> : receivedGroups.map((group) => renderReceiveGroup(group, true))}
+                {receivedGroups.length === 0 && completedInboundDockets.length === 0 ? <div className="empty-card">No completed orders yet.</div> : <>
+                  {completedInboundDockets.map((item) => renderReceiveTaskDocket(item.task, true))}
+                  {receivedGroups.map((group) => renderReceiveGroup(group, true))}
+                </>}
               </div>
             </Panel>
             <div className="payment-card-actions">
@@ -4936,10 +4965,10 @@ function WarehouseOperationsViewV2({
       {(screen === "full" ? activeTab === "out" : screen === "out") ? <>
         <Panel title="Dispatches" eyebrow="Outgoing orders">
           <div className="segmented-tabs">
-            {canManageWarehouseChecks ? <button className={outboundStep === "check" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("check")}>1. Check</button> : null}
-            {canManageDeliveryTagging ? <button className={outboundStep === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("tag")}>{canManageWarehouseChecks ? "2. Tag" : "1. Tag"}</button> : null}
-            {canManageDeliveryTagging ? <button className={outboundStep === "bundle" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("bundle")}>{canManageWarehouseChecks ? "3. Bundle" : "2. Bundle"}</button> : null}
-            <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}>{canManageDeliveryTagging ? (canManageWarehouseChecks ? "4. Planned" : "3. Planned") : "2. Planned"}</button>
+            {canManageWarehouseChecks ? <button className={outboundStep === "check" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("check")}><LabelWithBadge label="1. Check" count={outboundCheckPendingCount} /></button> : null}
+            {canManageDeliveryTagging ? <button className={outboundStep === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("tag")}><LabelWithBadge label={canManageWarehouseChecks ? "2. Tag" : "1. Tag"} count={outboundTagPendingCount} /></button> : null}
+            {canManageDeliveryTagging ? <button className={outboundStep === "bundle" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("bundle")}><LabelWithBadge label={canManageWarehouseChecks ? "3. Bundle" : "2. Bundle"} count={outboundBundlePendingCount} /></button> : null}
+            <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "4. Planned" : "3. Planned") : "2. Planned"} count={outboundPlannedPendingCount} /></button>
           </div>
         </Panel>
         {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
@@ -5238,9 +5267,13 @@ function DeliveryJobsView({
   }
 
   const sortedTasks = [...myTasks].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const currentAssignments = sortedTasks.filter((task) => {
+    const draft = taskDraft(task);
+    return draft.status !== "Planned" && isDeliveryTaskPending({ ...task, status: draft.status });
+  });
   const activeTask = sortedTasks.find((task) => {
     const draft = taskDraft(task);
-    return draft.status !== "Planned" && draft.status !== "Handed Over" && draft.status !== "Delivered";
+    return draft.status !== "Planned" && isDeliveryTaskPending({ ...task, status: draft.status });
   }) || null;
   const newAssignments = sortedTasks.filter((task) => taskDraft(task).status === "Planned");
   function renderTask(task: DeliveryTask, compact = false) {
@@ -5405,14 +5438,14 @@ function DeliveryJobsView({
         </article> : null}
         {allPicked ? <article className="list-card top-gap">
           <strong>Vehicle summary</strong>
-          <p>All vendor pickups completed.</p>
+          <p>{draft.status === "Handed Over" && task.side === "Sales" ? "Dispatch is still live until final delivery is completed." : "All vendor pickups completed."}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Stops</span><strong>{completedStops.length}</strong></div>
             <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
           </div>
           <div className="payment-card-actions top-gap">
             {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Return to warehouse</a> : null}
-            <button className="ghost-button" type="button" onClick={async () => {
+            {draft.status !== "Handed Over" ? <button className="ghost-button" type="button" onClick={async () => {
               await onUpdateTask(task.id, {
                 linkedOrderIds: task.linkedOrderIds,
                 assignedTo: task.assignedTo,
@@ -5442,7 +5475,7 @@ function DeliveryJobsView({
                 });
                 return nextState;
               });
-            }}>Submit to warehouse</button>
+            }}>Submit to warehouse</button> : null}
           </div>
         </article> : null}
         {completedStops.length > 0 ? <div className="stack-list top-gap">
@@ -5474,8 +5507,8 @@ function DeliveryJobsView({
         </div>
       </Panel>
       {showInternalTabs ? <div className="delivery-module-tab-bar">
-        <button className={deliveryTab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("current")}>Current Delivery</button>
-        <button className={deliveryTab === "new" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("new")}>New Assignment</button>
+        <button className={deliveryTab === "current" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("current")}><LabelWithBadge label="Current Delivery" count={currentAssignments.length} /></button>
+        <button className={deliveryTab === "new" ? "tab-button active" : "tab-button"} type="button" onClick={() => setDeliveryTab("new")}><LabelWithBadge label="New Assignment" count={newAssignments.length} /></button>
       </div> : null}
     </section>
   );
@@ -5483,6 +5516,8 @@ function DeliveryJobsView({
 
 function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
   const [side, setSide] = useState<"Purchase" | "Sales">("Purchase");
+  const inboundCount = snapshot.deliveryTasks.filter((task) => task.side === "Purchase" && isDeliveryTaskPending(task)).length;
+  const outboundCount = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && isDeliveryTaskPending(task)).length;
   const tasks = snapshot.deliveryTasks
     .filter((task) => task.side === side)
     .sort((left, right) => `${left.from} ${left.to}`.localeCompare(`${right.from} ${right.to}`, "en-IN"));
@@ -5491,8 +5526,8 @@ function WarehouseDeliveryBoard({ snapshot }: { snapshot: AppSnapshot }) {
     <section className="dashboard-grid">
       <Panel title="Delivery" eyebrow="Tracking">
         <div className="segmented-tabs">
-          <button className={side === "Purchase" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Purchase")}>In</button>
-          <button className={side === "Sales" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Sales")}>Out</button>
+          <button className={side === "Purchase" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Purchase")}><LabelWithBadge label="In" count={inboundCount} /></button>
+          <button className={side === "Sales" ? "tab-button active" : "tab-button"} type="button" onClick={() => setSide("Sales")}><LabelWithBadge label="Out" count={outboundCount} /></button>
         </div>
       </Panel>
       <Panel title={side === "Purchase" ? "Inbound Tracking" : "Outbound Tracking"} eyebrow="Sorted by route">
@@ -5560,7 +5595,9 @@ function DeliveryManagerHome({
     notesByDelivery.set(note.entityId, [...(notesByDelivery.get(note.entityId) || []), note]);
   });
   const nowMs = Date.now();
-  const activeTasks = snapshot.deliveryTasks.filter((task) => task.status !== "Delivered");
+  const activeTasks = snapshot.deliveryTasks.filter(isDeliveryTaskPending);
+  const inboundPendingCount = countGroupedOrders(snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"));
+  const dispatchPendingCount = countGroupedOrders(snapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup"));
   const flaggedTaskIds = new Set(snapshot.notes.filter((note) => note.entityType === "Delivery" && note.note.toLowerCase().includes("flag")).map((note) => note.entityId));
   const priority = (task: DeliveryTask) => {
     const ageHours = (nowMs - new Date(task.lastActionAt || task.createdAt).getTime()) / 36e5;
@@ -5647,8 +5684,8 @@ function DeliveryManagerHome({
           <div className="list-card"><div><strong>{flaggedTaskIds.size}</strong><p>Flagged notes</p></div></div>
         </div>
         <div className="payment-card-actions top-gap">
-          <button className="ghost-button" type="button" onClick={onOpenReceive}>Open inbound routing</button>
-          <button className="ghost-button" type="button" onClick={onOpenDispatch}>Open dispatch</button>
+          <button className="ghost-button" type="button" onClick={onOpenReceive}><LabelWithBadge label="Open inbound routing" count={inboundPendingCount} /></button>
+          <button className="ghost-button" type="button" onClick={onOpenDispatch}><LabelWithBadge label="Open dispatch" count={dispatchPendingCount} /></button>
         </div>
       </Panel>
       <Panel title="Delivery Status" eyebrow="Sorted by time and flags">
