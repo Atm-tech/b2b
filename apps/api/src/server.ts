@@ -456,14 +456,26 @@ app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Sales", "Accounts"]);
+  const currentUser = await getCurrentUser(req);
+  const status = requiredString(req.body?.status, "Status") as any;
+  const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
+  const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts");
+  const canRunWarehouseDispatchFlow =
+    currentUser.roles.includes("Warehouse Manager") &&
+    (
+      status === "Ready for Dispatch" ||
+      (deliveryMode === "Self Collection" && (status === "Self Pickup" || status === "Delivered"))
+    );
+  if (!canEditSalesOrders && !canRunWarehouseDispatchFlow) {
+    throw new Error("You are not allowed to perform this action.");
+  }
   return updateSalesOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
-    deliveryMode: requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery",
+    deliveryMode,
     note: optionalString(req.body?.note) || "",
-    status: requiredString(req.body?.status, "Status") as any,
+    status,
     containerWeightKg: optionalNumber(req.body?.containerWeightKg),
     weighingProofName: optionalString(req.body?.weighingProofName)
   });

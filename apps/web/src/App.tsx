@@ -2814,6 +2814,9 @@ function PurchaserPurchaseWorkspace({
 
 function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
   const groups = groupPurchaseOrders(orders.filter(isOpenPurchaseOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
+  const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
+  const paymentPendingCount = groups.filter((group) => purchasePaymentStatus(snapshot, group.id) !== "Completed").length;
   const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
   for (const group of groups) {
     const status = purchaseWorkflowStatus(snapshot, group.id);
@@ -2828,11 +2831,18 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
 
   return (
     <section className="collapse-stack">
+      {groups.length > 0 ? <article className="list-card">
+        <div className="payment-meta-grid">
+          <div><span className="small-label">Pickup queue</span><strong><LabelWithBadge label="Pickup pending" count={pickupPendingCount} /></strong></div>
+          <div><span className="small-label">Warehouse queue</span><strong><LabelWithBadge label="Receiving" count={receivingPendingCount} /></strong></div>
+          <div><span className="small-label">Accounts follow-up</span><strong><LabelWithBadge label="Payment pending" count={paymentPendingCount} /></strong></div>
+        </div>
+      </article> : null}
       {statusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
         <CollapsiblePanel
           key={status}
           eyebrow="Purchases"
-          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} PO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
+          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}><LabelWithBadge label="PO" count={statusGroups.length} /></span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
           open={openStatus === status}
           onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
         >
@@ -3110,6 +3120,17 @@ function PurchaseCartEditor({
 
 function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void }) {
   const groups = groupSalesOrders(orders.filter(isOpenSalesOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const dispatchPendingCount = groups.filter((group) => {
+    const status = salesFulfillmentStatus(group.lines);
+    return status === "SO booked" || status === "SO docket ready" || status === "Customer pickup";
+  }).length;
+  const deliveryPendingCount = groups.filter((group) => {
+    const first = group.lines[0];
+    if (!first || first.deliveryMode !== "Delivery") return false;
+    const task = salesDeliveryTask(snapshot, group.id);
+    return !task || isDeliveryTaskPending(task);
+  }).length;
+  const collectionPendingCount = groups.filter((group) => salesPaymentStatus(snapshot, group.id) !== "Completed").length;
   const groupedByStatus = new Map<string, ReturnType<typeof groupSalesOrders>>();
   for (const group of groups) {
     const status = `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`;
@@ -3124,11 +3145,18 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
 
   return (
     <section className="collapse-stack">
+      {groups.length > 0 ? <article className="list-card">
+        <div className="payment-meta-grid">
+          <div><span className="small-label">Warehouse queue</span><strong><LabelWithBadge label="Dispatch pending" count={dispatchPendingCount} /></strong></div>
+          <div><span className="small-label">Delivery queue</span><strong><LabelWithBadge label="Pickup pending" count={deliveryPendingCount} /></strong></div>
+          <div><span className="small-label">Collection queue</span><strong><LabelWithBadge label="Collection pending" count={collectionPendingCount} /></strong></div>
+        </div>
+      </article> : null}
       {statusSections.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
         <CollapsiblePanel
           key={status}
           eyebrow="Sales"
-          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}>{statusGroups.length} SO</span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
+          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}><LabelWithBadge label="SO" count={statusGroups.length} /></span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
           open={openStatus === status}
           onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
         >
@@ -4240,6 +4268,8 @@ function WarehouseOperationsViewV2({
   const outgoingGroups = salesGroups
     .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Pending Pickup" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
+  const dispatchQueueOrders = canManageWarehouseChecks ? outgoingOrders : outgoingOrders.filter((item) => item.deliveryMode === "Delivery");
+  const dispatchQueueGroups = canManageWarehouseChecks ? outgoingGroups : outgoingGroups.filter((group) => group.lines[0].deliveryMode === "Delivery");
   const outboundTaskDockets = snapshot.deliveryTasks
     .filter((task) => task.side === "Sales" && task.mode === "Delivery" && task.consignmentId)
     .map((task) => ({
@@ -4256,8 +4286,8 @@ function WarehouseOperationsViewV2({
   const bundleReadyConsignments = snapshot.deliveryConsignments
     .filter((item) => item.status === "Ready")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
-  const directOutboundGroups = outgoingGroups
-    .filter((group) => group.lines[0].deliveryMode === "Self Collection" || group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
+  const directOutboundGroups = dispatchQueueGroups
+    .filter((group) => canManageWarehouseChecks ? (group.lines[0].deliveryMode === "Self Collection" || group.lines.every((line) => !docketBySalesOrderId.has(line.id))) : group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const inboundPickupPendingCount = sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).length;
   const inboundReceivePendingCount = receivingInboundDockets.length + directReceiveGroups.length;
@@ -4859,7 +4889,7 @@ function WarehouseOperationsViewV2({
         <div className="simple-summary payment-summary-grid top-gap">
           <div className="list-card"><div><strong>{pendingReceiveGroups.length}</strong><p>Pending to receive</p></div></div>
           <div className="list-card"><div><strong>{receivedGroups.length}</strong><p>Received</p></div></div>
-          <div className="list-card"><div><strong>{outgoingOrders.length}</strong><p>Orders to send</p></div></div>
+          <div className="list-card"><div><strong>{dispatchQueueOrders.length}</strong><p>{canManageWarehouseChecks ? "Orders to send" : "Dispatch orders"}</p></div></div>
           <div className="list-card"><div><strong>{snapshot.receiptChecks.filter((item) => item.flagged || item.partialReceipt).length}</strong><p>Partial / flagged</p></div></div>
         </div>
       </Panel> : null}
@@ -4873,6 +4903,7 @@ function WarehouseOperationsViewV2({
             <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Bundle, tag, and monitor dispatch in order." : "Check and prepare dispatches for delivery manager assignment."}</p>
           </button>
         </div>
+        {!canManageWarehouseChecks ? <p className="message success top-gap">Customer self-collection handover stays with warehouse. Delivery manager only tracks status and delivery-side workload.</p> : null}
         </Panel>
       </> : null}
       {(screen === "full" ? activeTab === "in" : screen === "in") ? <>
