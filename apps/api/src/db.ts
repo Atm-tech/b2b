@@ -2185,21 +2185,35 @@ export async function updateDeliveryTask(taskId: string, payload: {
     const linkedOrderId = stringValue(task.linked_order_id);
     const linkedOrderIds = payload.linkedOrderIds || (Array.isArray(task.linked_order_ids_json) ? (task.linked_order_ids_json as string[]) : [linkedOrderId]);
     if (side === "Purchase") {
-      const purchaseStatus =
-        payload.status === "Delivered"
-          ? "Order Delivered - Warehouse Check"
-          : payload.status === "Handed Over"
-            ? "Order Delivered - Warehouse Check"
-            : payload.status === "Picked"
-              ? "In Pickup"
-              : "Pickup Assigned";
-      await query(
-        `UPDATE purchase_orders
-         SET status = $1
-         WHERE cart_id = ANY($2::text[]) OR id = ANY($2::text[])`,
-        [purchaseStatus, linkedOrderIds],
+      const relatedPurchaseOrders = await query<Record<string, unknown>>(
+        `SELECT id, cart_id, quantity_ordered, quantity_received, status
+         FROM purchase_orders
+         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [linkedOrderIds],
         client
       );
+      for (const order of relatedPurchaseOrders.rows) {
+        const orderedQty = numberValue(order.quantity_ordered);
+        const receivedQty = numberValue(order.quantity_received);
+        const currentStatus = stringValue(order.status);
+        const nextStatus =
+          receivedQty >= orderedQty && orderedQty > 0
+            ? (currentStatus === "Closed" ? "Closed" : "Received")
+            : receivedQty > 0
+              ? "Partially Received"
+              : payload.status === "Delivered" || payload.status === "Handed Over"
+                ? "Order Delivered - Warehouse Check"
+                : payload.status === "Picked"
+                  ? "In Pickup"
+                  : "Pickup Assigned";
+        await query(
+          `UPDATE purchase_orders
+           SET status = $1
+           WHERE id = $2`,
+          [nextStatus, stringValue(order.id)],
+          client
+        );
+      }
     }
     if (side === "Sales") {
       const affectedSalesOrders = await query<Record<string, unknown>>(

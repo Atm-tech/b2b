@@ -4263,14 +4263,14 @@ function WarehouseOperationsViewV2({
   }
 
   const pendingReceiveGroups = purchaseGroups
-    .filter((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed"))
+    .filter((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0))
     .sort((left, right) =>
       Number(paidBeforeReceiving(right)) - Number(paidBeforeReceiving(left))
       || Number(Boolean(inboundTaskForGroup(left.id))) - Number(Boolean(inboundTaskForGroup(right.id)))
       || groupDate(left) - groupDate(right)
     );
   const receivedGroups = purchaseGroups
-    .filter((group) => group.lines.length > 0 && group.lines.every((line) => line.status === "Received" || line.status === "Closed"))
+    .filter((group) => group.lines.length > 0 && group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"))
     .sort((left, right) => groupDate(left) - groupDate(right));
   const inboundTaskDockets = snapshot.deliveryTasks
     .filter((task) => task.side === "Purchase")
@@ -4280,16 +4280,16 @@ function WarehouseOperationsViewV2({
     }))
     .filter((item) => item.groups.length > 0);
   const plannedInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status === "Planned" && item.groups.some((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed")))
+    .filter((item) => item.task.status === "Planned" && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const completedInboundDockets = inboundTaskDockets
-    .filter((item) => item.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed")))
+    .filter((item) => item.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed")))
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const receivingInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered" && item.groups.some((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed")))
+    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered" && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
     .sort((left, right) => {
-      const leftCompleted = left.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
-      const rightCompleted = right.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed"));
+      const leftCompleted = left.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"));
+      const rightCompleted = right.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"));
       const leftReceived = left.groups.some((group) => group.lines.some((line) => line.quantityReceived > 0));
       const rightReceived = right.groups.some((group) => group.lines.some((line) => line.quantityReceived > 0));
       return Number(leftCompleted) - Number(rightCompleted)
