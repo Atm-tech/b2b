@@ -1621,6 +1621,58 @@ export async function createReceiptCheck(payload: {
       client
     );
     const linkedOrderId = stringValue(order.cart_id) || payload.purchaseOrderId;
+    const linkedTasks = await query<Record<string, unknown>>(
+      `SELECT *
+       FROM delivery_tasks
+       WHERE side = 'Purchase'
+         AND (
+           linked_order_id = $1
+           OR linked_order_id = $2
+           OR linked_order_ids_json ? $1
+           OR linked_order_ids_json ? $2
+         )`,
+      [linkedOrderId, payload.purchaseOrderId],
+      client
+    );
+    for (const taskRow of linkedTasks.rows) {
+      const taskLinkedOrderId = stringValue(taskRow.linked_order_id);
+      const taskLinkedOrderIds = Array.isArray(taskRow.linked_order_ids_json)
+        ? (taskRow.linked_order_ids_json as string[]).map((item) => String(item).trim()).filter(Boolean)
+        : [taskLinkedOrderId].filter(Boolean);
+      const relatedOrders = await query<Record<string, unknown>>(
+        `SELECT status, quantity_received
+         FROM purchase_orders
+         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [taskLinkedOrderIds],
+        client
+      );
+      if (relatedOrders.rows.length === 0) continue;
+      const allReceivedForTask = relatedOrders.rows.every((row) => {
+        const status = stringValue(row.status);
+        return status === "Received" || status === "Closed";
+      });
+      const anyReceivedForTask = relatedOrders.rows.some((row) => {
+        const status = stringValue(row.status);
+        return numberValue(row.quantity_received) > 0 || status === "Partially Received" || status === "Received" || status === "Closed";
+      });
+      const currentTaskStatus = stringValue(taskRow.status) as DeliveryTask["status"];
+      const nextTaskStatus =
+        allReceivedForTask
+          ? "Delivered"
+          : anyReceivedForTask && currentTaskStatus === "Planned"
+            ? "Handed Over"
+            : currentTaskStatus;
+      if (nextTaskStatus !== currentTaskStatus) {
+        await query(
+          `UPDATE delivery_tasks
+           SET status = $1,
+               last_action_at = $2
+           WHERE id = $3`,
+          [nextTaskStatus, createdAt, stringValue(taskRow.id)],
+          client
+        );
+      }
+    }
     if (
       stringValue(order.delivery_mode) === "Dealer Delivery" &&
       stringValue(order.payment_mode) === "Cash" &&

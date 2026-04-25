@@ -4280,7 +4280,7 @@ function WarehouseOperationsViewV2({
     }))
     .filter((item) => item.groups.length > 0);
   const plannedInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status === "Planned")
+    .filter((item) => item.task.status === "Planned" && item.groups.some((group) => group.lines.some((line) => line.status !== "Received" && line.status !== "Closed")))
     .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
   const completedInboundDockets = inboundTaskDockets
     .filter((item) => item.groups.every((group) => group.lines.every((line) => line.status === "Received" || line.status === "Closed")))
@@ -4334,7 +4334,7 @@ function WarehouseOperationsViewV2({
   const inboundReceivePendingCount = receivingInboundDockets.length + directReceiveGroups.length;
   const inboundPlannedPendingCount = plannedInboundDockets.length;
   const inboundTotalPendingCount = inboundPickupPendingCount + inboundReceivePendingCount + inboundPlannedPendingCount;
-  const outboundCheckPendingCount = activeOutboundDockets.length + directOutboundGroups.length;
+  const outboundCheckPendingCount = canManageWarehouseChecks ? activeOutboundDockets.length + directOutboundGroups.length : activeOutboundDockets.length;
   const outboundTagPendingCount = bundleReadyConsignments.length;
   const outboundBundlePendingCount = openDockets.length + bundleReadyConsignments.length;
   const outboundPlannedPendingCount = plannedOutboundDockets.length;
@@ -4854,7 +4854,6 @@ function WarehouseOperationsViewV2({
     const selectedWarehouseIds = selectedDocketWarehouseIds();
     const effectiveWarehouseId = consignmentDraft.warehouseId || selectedWarehouseIds[0] || "";
     const hasMixedWarehouses = selectedWarehouseIds.length > 1;
-    const waitingSalesOrders = dispatchQueueGroups.filter((group) => group.lines.every((line) => !docketBySalesOrderId.has(line.id)));
     const suggestedGroupsByWarehouse = outboundDocketSuggestionGroups().reduce((groups, bucket) => {
       const warehouseId = bucket[0]?.docket.warehouseId || "";
       if (!warehouseId) return groups;
@@ -4914,25 +4913,6 @@ function WarehouseOperationsViewV2({
           <button className="primary-button" type="submit" disabled={submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0}>{submittingConsignment ? "Creating..." : "Create consignment"}</button>
         </div>
       </form>
-      <div className="stack-list payment-update-list top-gap">
-        {waitingSalesOrders.length === 0 ? <div className="empty-card">No outbound sales orders are waiting for docket creation.</div> : waitingSalesOrders.map((group) => {
-          const first = group.lines[0];
-          const totalQty = group.lines.reduce((sum, line) => sum + line.quantity, 0);
-          const totalAmount = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
-          return <article className="list-card payment-update-card" key={`waiting-${group.id}`}>
-            <div className="payment-update-head">
-              <div><strong>{group.id}</strong><p>{first.shopName}</p></div>
-              <span className="status-pill status-pending">Waiting for warehouse docket</span>
-            </div>
-            <div className="payment-meta-grid">
-              <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
-              <div><span className="small-label">Qty</span><strong>{totalQty}</strong></div>
-              <div><span className="small-label">Warehouse</span><strong>{warehouseById.get(first.warehouseId)?.name || first.warehouseId}</strong></div>
-              <div><span className="small-label">Total</span><strong>{totalAmount.toFixed(2)}</strong></div>
-            </div>
-          </article>;
-        })}
-      </div>
       <div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{deliveryConsignmentStatusLabel(item.status)}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div>
       <div className="payment-card-actions top-gap">{canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}<button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Go to tag</button></div>
     </Panel>;
@@ -4960,7 +4940,7 @@ function WarehouseOperationsViewV2({
             <strong><LabelWithBadge label="In" count={inboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Tag pickup, then monitor inward movement step by step." : "Receive inward orders and complete warehouse checks."}</p>
           </button>
           <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("out"); setOutboundStep(canManageWarehouseChecks ? "check" : ((snapshot.deliveryDockets.some((item) => item.status === "Ready" && !item.consignmentId) || snapshot.deliveryConsignments.some((item) => item.status === "Ready")) ? "bundle" : "planned")); }}>
-            <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Bundle, tag, and monitor dispatch in order." : "Check and prepare dispatches for delivery manager assignment."}</p>
+            <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageWarehouseChecks ? "Check orders and create outbound dockets for dispatch." : "Bundle warehouse dockets into consignments and tag delivery."}</p>
           </button>
         </div>
         {!canManageWarehouseChecks ? <p className="message success top-gap">Customer self-collection handover stays with warehouse. Delivery manager only tracks status and delivery-side workload.</p> : null}
@@ -5103,7 +5083,7 @@ function WarehouseOperationsViewV2({
           </div>
         </Panel>
         {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
-          {openDockets.length > 0 ? <p className="message success top-gap">{canManageDeliveryTagging ? `${openDockets.length} outbound docket(s) are already ready. Continue in Bundle to create consignments before tagging delivery.` : `${openDockets.length} outbound docket(s) are ready for delivery manager bundling.`}</p> : null}
+          {openDockets.length > 0 ? <p className="message success top-gap">{canManageWarehouseChecks ? `${openDockets.length} outbound docket(s) are ready for delivery manager bundling.` : `${openDockets.length} warehouse docket(s) are ready. Bundle them into consignments before tagging delivery.`}</p> : null}
           {bundleReadyConsignments.length > 0 ? <p className="message success top-gap">{canManageDeliveryTagging ? `${bundleReadyConsignments.length} bundled consignment(s) are waiting. Continue in Tag to assign delivery.` : `${bundleReadyConsignments.length} bundled consignment(s) are waiting for delivery manager assignment.`}</p> : null}
           {outgoingGroups.some((group) => {
             const first = group.lines[0];
@@ -5268,6 +5248,7 @@ function DeliveryJobsView({
   const [deliveryTab, setDeliveryTab] = useState<"current" | "new">(initialTab);
   const [startedStops, setStartedStops] = useState<Record<string, boolean>>({});
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
+  const customerById = new Map(snapshot.counterparties.filter((item) => item.type === "Shop").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
 
   useEffect(() => {
@@ -5286,11 +5267,19 @@ function DeliveryJobsView({
   }
 
   function liveStopLabel(stop: DeliveryTask["routeStops"][number]) {
+    if (stop.orderId.startsWith("SO-") || stop.orderId.startsWith("SCART-")) {
+      const customer = customerById.get(stop.supplierId || "");
+      return customer?.name || stop.supplierName;
+    }
     const supplier = supplierById.get(stop.supplierId || "");
     return supplier?.name || stop.supplierName;
   }
 
   function liveStopLocation(stop: DeliveryTask["routeStops"][number]) {
+    if (stop.orderId.startsWith("SO-") || stop.orderId.startsWith("SCART-")) {
+      const customer = customerById.get(stop.supplierId || "");
+      return customer?.locationLabel || [customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ") || stop.locationLabel || liveStopLabel(stop);
+    }
     const supplier = supplierById.get(stop.supplierId || "");
     return supplier?.locationLabel || [supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ") || stop.locationLabel || liveStopLabel(stop);
   }
@@ -5300,7 +5289,14 @@ function DeliveryJobsView({
   }
 
   function liveStopContact(stop: DeliveryTask["routeStops"][number]) {
+    if (stop.orderId.startsWith("SO-") || stop.orderId.startsWith("SCART-")) {
+      return customerById.get(stop.supplierId || "")?.mobileNumber || "Pending";
+    }
     return supplierById.get(stop.supplierId || "")?.mobileNumber || "Pending";
+  }
+
+  function stopEntityLabel(stop: DeliveryTask["routeStops"][number]) {
+    return stop.orderId.startsWith("SO-") || stop.orderId.startsWith("SCART-") ? "Customer" : "Supplier";
   }
 
   function parseProductItems(summary: string) {
@@ -5436,8 +5432,8 @@ function DeliveryJobsView({
     return <article className="list-card payment-update-card" key={task.id}>
       <div className="payment-update-head">
         <div>
-          <strong>{task.id}</strong>
-          <p>{task.side} | {task.linkedOrderIds.join(", ")} | {task.mode}</p>
+          <strong>{task.side === "Sales" && task.consignmentId ? task.consignmentId : task.id}</strong>
+          <p>{task.side === "Sales" ? `${draft.routeStops.length} customer stop(s) | ${task.mode}` : `${task.side} | ${task.linkedOrderIds.join(", ")} | ${task.mode}`}</p>
         </div>
         <span className="status-pill status-pending">{taskProgressStatus(task, draft)}</span>
       </div>
@@ -5447,6 +5443,16 @@ function DeliveryJobsView({
         <div><span className="small-label">Route km</span><strong>{approxRouteKm ? approxRouteKm.toFixed(1) : "Pending"}</strong></div>
         <div><span className="small-label">Last action</span><strong>{task.lastActionAt ? new Date(task.lastActionAt).toLocaleString("en-IN") : "Pending"}</strong></div>
       </div>
+      {task.side === "Sales" ? <div className="stack-list top-gap">
+        {draft.routeStops.map((stop) => <article className="list-card" key={`${task.id}-${stop.orderId}-summary`}>
+          <strong>{liveStopLabel(stop)}</strong>
+          <p>{stop.orderId} | {stop.productSummary}</p>
+          <div className="payment-meta-grid">
+            <div><span className="small-label">Contact</span><strong>{liveStopContact(stop)}</strong></div>
+            <div><span className="small-label">Status</span><strong>{stop.picked ? "Delivered" : stop.reached ? "At customer" : "Pending"}</strong></div>
+          </div>
+        </article>)}
+      </div> : null}
       {compact ? <div className="payment-card-actions top-gap">
         <button className="primary-button" type="button" onClick={async () => {
           await onUpdateTask(task.id, {
@@ -5505,19 +5511,21 @@ function DeliveryJobsView({
           </div>
         </article> : null}
         {warehouseReached && !allPicked && nextStop && !nextStop.reached ? <article className="list-card top-gap">
-          <strong>{task.side === "Sales" ? "Select delivery stop" : "Select vendor to visit"}</strong>
+          <strong>{task.side === "Sales" ? "Select customer stop" : "Select vendor to visit"}</strong>
           <div className="stack-list top-gap">
             {draft.routeStops.filter((stop) => !stop.picked).map((stop, index) => <article className="list-card" key={`${task.id}-route-${stop.orderId}`}>
               <div>
                 <strong>{liveStopLabel(stop)}</strong>
                 <p>{liveStopLocation(stop)}</p>
                 <div className="payment-meta-grid">
+                  <div><span className="small-label">SO</span><strong>{stop.orderId}</strong></div>
                   <div><span className="small-label">Approx km</span><strong>{approxDistanceKmFromCurrent(stop)?.toFixed(1) || "Pending"}</strong></div>
                   <div><span className="small-label">Contact</span><strong>{liveStopContact(stop)}</strong></div>
                   <div><span className="small-label">Selected</span><strong>{index === 0 ? "Yes" : "No"}</strong></div>
                 </div>
+                <p>{stop.productSummary}</p>
               </div>
-              {index !== 0 ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => moveStopToFront(task.id, task, stop.orderId)}>{task.side === "Sales" ? "Choose this stop first" : "Choose this vendor first"}</button></div> : null}
+              {index !== 0 ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={() => moveStopToFront(task.id, task, stop.orderId)}>{task.side === "Sales" ? "Choose this customer first" : "Choose this vendor first"}</button></div> : null}
             </article>)}
           </div>
           {!currentStopStarted ? <div className="payment-card-actions top-gap">
@@ -5529,7 +5537,7 @@ function DeliveryJobsView({
         </article> : null}
         {!allPicked && nextStop && nextStop.reached && !nextStop.checked ? <article className="list-card top-gap">
           <strong>{liveStopLabel(nextStop)}</strong>
-          <p>Select each product after checking it.</p>
+          <p>{stopEntityLabel(nextStop)} stop {nextStop.orderId}. Select each product after checking it.</p>
           <div className="stack-list top-gap">
             {itemChecks.map((item, index) => <label className="checkbox-line" key={`${item.label}-${index}`}>
               <input type="checkbox" checked={Boolean(checkedItems[index])} onChange={(e) => {
@@ -5545,7 +5553,7 @@ function DeliveryJobsView({
         </article> : null}
         {!allPicked && nextStop && nextStop.checked && nextStop.paymentRequired && nextStop.paymentMode === "Cash" && !nextStop.paid ? <article className="list-card top-gap">
           <strong>Cash payment</strong>
-          <p>{liveStopLabel(nextStop)}</p>
+          <p>{liveStopLabel(nextStop)} | {nextStop.orderId}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Amount</span><strong>{nextStop.amountToPay.toFixed(2)}</strong></div>
             <div><span className="small-label">Ref</span><strong>{nextStop.paymentReference || "Pending"}</strong></div>
@@ -5561,7 +5569,7 @@ function DeliveryJobsView({
         </article> : null}
         {!allPicked && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
           <strong>{task.side === "Sales" ? "Complete handover" : "Complete pickup"}</strong>
-          <p>{liveStopLabel(nextStop)}</p>
+          <p>{liveStopLabel(nextStop)} | {nextStop.orderId}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Items</span><strong>{nextStop.productSummary}</strong></div>
             <div><span className="small-label">Payment</span><strong>{nextStop.paymentRequired ? (nextStop.paymentMode === "Cash" ? "Cash paid" : nextStop.paymentReference || "Reference payment") : "No payment"}</strong></div>
@@ -5645,7 +5653,7 @@ function DeliveryJobsView({
         {completedStops.length > 0 ? <div className="stack-list top-gap">
           {completedStops.map((stop) => <article className="list-card" key={`${task.id}-${stop.orderId}-done`}>
             <strong>{liveStopLabel(stop)}</strong>
-            <p>{stop.productSummary}</p>
+            <p>{stop.orderId} | {stop.productSummary}</p>
           </article>)}
         </div> : null}
         {routeMapUrl || weightUrl || cashUrl ? <div className="payment-card-actions wide-field top-gap">
