@@ -5532,26 +5532,56 @@ function DeliveryJobsView({
           </div>
         </article> : null}
         {!allPicked && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
-          <strong>Complete pickup</strong>
+          <strong>{task.side === "Sales" ? "Complete handover" : "Complete pickup"}</strong>
           <p>{liveStopLabel(nextStop)}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Items</span><strong>{nextStop.productSummary}</strong></div>
             <div><span className="small-label">Payment</span><strong>{nextStop.paymentRequired ? (nextStop.paymentMode === "Cash" ? "Cash paid" : nextStop.paymentReference || "Reference payment") : "No payment"}</strong></div>
           </div>
           <div className="payment-card-actions top-gap">
-            <button className="primary-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>Next</button>
+            <button className="primary-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>{task.side === "Sales" ? "Goods handed over" : "Next"}</button>
           </div>
         </article> : null}
         {allPicked ? <article className="list-card top-gap">
           <strong>Vehicle summary</strong>
-          <p>{draft.status === "Handed Over" && task.side === "Sales" ? "Dispatch is still live until final delivery is completed." : "All vendor pickups completed."}</p>
+          <p>{task.side === "Sales" ? "All delivery stops are completed. Finish the trip to mark the customer handover done." : "All vendor pickups completed."}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Stops</span><strong>{completedStops.length}</strong></div>
             <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
           </div>
           <div className="payment-card-actions top-gap">
-            {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">Return to warehouse</a> : null}
-            {draft.status !== "Handed Over" ? <button className="ghost-button" type="button" onClick={async () => {
+            {progressMapUrl ? <a className="primary-button" href={progressMapUrl} target="_blank" rel="noreferrer">{task.side === "Sales" ? "Open route map" : "Return to warehouse"}</a> : null}
+            {task.side === "Sales" ? <button className="ghost-button" type="button" onClick={async () => {
+              await onUpdateTask(task.id, {
+                linkedOrderIds: task.linkedOrderIds,
+                assignedTo: task.assignedTo,
+                routeStops: draft.routeStops,
+                pickupAt: task.pickupAt,
+                dropAt: task.dropAt,
+                routeHint: draft.routeHint,
+                paymentAction: task.paymentAction,
+                status: "Delivered",
+                cashCollectionRequired: task.cashCollectionRequired,
+                cashHandoverMarked: draft.cashHandoverMarked,
+                weightProofName: draft.weightProofName || undefined,
+                cashProofName: draft.cashProofName || undefined,
+                lastActionAt: new Date().toISOString()
+              });
+              setDrafts((current) => ({
+                ...current,
+                [task.id]: {
+                  ...draft,
+                  status: "Delivered"
+                }
+              }));
+              setStartedStops((current) => {
+                const nextState = { ...current };
+                Object.keys(nextState).filter((key) => key.startsWith(`${task.id}-`)).forEach((key) => {
+                  delete nextState[key];
+                });
+                return nextState;
+              });
+            }}>Mark customer handover done</button> : draft.status !== "Handed Over" ? <button className="ghost-button" type="button" onClick={async () => {
               await onUpdateTask(task.id, {
                 linkedOrderIds: task.linkedOrderIds,
                 assignedTo: task.assignedTo,
