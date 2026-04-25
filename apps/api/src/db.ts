@@ -1759,18 +1759,36 @@ export async function createDeliveryTask(payload: {
       );
     }
     if (payload.side === "Sales" && payload.consignmentId?.trim()) {
+      const affectedSalesOrders = await query<Record<string, unknown>>(
+        `SELECT id
+         FROM sales_orders
+         WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+      const affectedSalesOrderIds = affectedSalesOrders.rows.map((row) => stringValue(row.id)).filter(Boolean);
+      const affectedConsignments = affectedSalesOrderIds.length > 0
+        ? await query<Record<string, unknown>>(
+          `SELECT DISTINCT consignment_id
+           FROM delivery_dockets
+           WHERE sales_order_id = ANY($1::text[]) AND consignment_id IS NOT NULL`,
+          [affectedSalesOrderIds],
+          client
+        )
+        : { rows: [] as Record<string, unknown>[] };
+      const affectedConsignmentIds = affectedConsignments.rows.map((row) => stringValue(row.consignment_id)).filter(Boolean);
       await query(
         `UPDATE delivery_consignments
          SET assigned_to = $1, status = 'Pending Pickup'
-         WHERE id = $2`,
-        [assignedTo, payload.consignmentId.trim()],
+         WHERE id = ANY($2::text[])`,
+        [assignedTo, affectedConsignmentIds.length > 0 ? affectedConsignmentIds : [payload.consignmentId.trim()]],
         client
       );
       await query(
         `UPDATE delivery_dockets
          SET status = 'Pending Pickup'
-         WHERE consignment_id = $1`,
-        [payload.consignmentId.trim()],
+         WHERE sales_order_id = ANY($1::text[])`,
+        [affectedSalesOrderIds],
         client
       );
       await query(
@@ -2106,8 +2124,26 @@ export async function updateDeliveryTask(taskId: string, payload: {
       );
     }
     if (side === "Sales") {
+      const affectedSalesOrders = await query<Record<string, unknown>>(
+        `SELECT id
+         FROM sales_orders
+         WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+      const affectedSalesOrderIds = affectedSalesOrders.rows.map((row) => stringValue(row.id)).filter(Boolean);
+      const affectedConsignments = affectedSalesOrderIds.length > 0
+        ? await query<Record<string, unknown>>(
+          `SELECT DISTINCT consignment_id
+           FROM delivery_dockets
+           WHERE sales_order_id = ANY($1::text[]) AND consignment_id IS NOT NULL`,
+          [affectedSalesOrderIds],
+          client
+        )
+        : { rows: [] as Record<string, unknown>[] };
+      const affectedConsignmentIds = affectedConsignments.rows.map((row) => stringValue(row.consignment_id)).filter(Boolean);
       const consignmentId = payload.consignmentId?.trim() || stringValue(task.consignment_id);
-      if (consignmentId) {
+      if (consignmentId || affectedConsignmentIds.length > 0) {
         const consignmentStatus =
           payload.status === "Delivered"
             ? "Delivered"
@@ -2123,15 +2159,15 @@ export async function updateDeliveryTask(taskId: string, payload: {
         await query(
           `UPDATE delivery_consignments
            SET assigned_to = $1, status = $2
-           WHERE id = $3`,
-          [assignedTo, consignmentStatus, consignmentId],
+           WHERE id = ANY($3::text[])`,
+          [assignedTo, consignmentStatus, affectedConsignmentIds.length > 0 ? affectedConsignmentIds : [consignmentId]],
           client
         );
         await query(
           `UPDATE delivery_dockets
            SET status = $1
-           WHERE consignment_id = $2`,
-          [docketStatus, consignmentId],
+           WHERE sales_order_id = ANY($2::text[])`,
+          [docketStatus, affectedSalesOrderIds],
           client
         );
       }
@@ -2183,6 +2219,122 @@ export async function updateDeliveryTask(taskId: string, payload: {
         );
         await recalculateLedger("Purchase", linkedOrderId, client);
       }
+    }
+  });
+  return getSnapshot();
+}
+
+export async function mergeDeliveryTasks(taskIds: string[]) {
+  await ready;
+  const normalizedTaskIds = Array.from(new Set(taskIds.map((item) => item.trim()).filter(Boolean)));
+  if (normalizedTaskIds.length < 2) throw new Error("Select at least two delivery tasks to merge.");
+  await withTransaction(async (client) => {
+    const tasks = await query<Record<string, unknown>>(
+      "SELECT * FROM delivery_tasks WHERE id = ANY($1::text[]) ORDER BY created_at ASC",
+      [normalizedTaskIds],
+      client
+    );
+    if (tasks.rows.length !== normalizedTaskIds.length) throw new Error("One or more delivery tasks were not found.");
+    const parsedTasks = tasks.rows.map((row) => ({
+      id: stringValue(row.id),
+      side: stringValue(row.side) as DeliveryTask["side"],
+      mode: stringValue(row.mode) as DeliveryTask["mode"],
+      status: stringValue(row.status) as DeliveryTask["status"],
+      assignedTo: stringValue(row.assigned_to),
+      linkedOrderIds: Array.isArray(row.linked_order_ids_json) ? (row.linked_order_ids_json as string[]) : [stringValue(row.linked_order_id)],
+      consignmentId: row.consignment_id ? stringValue(row.consignment_id) : "",
+      routeHint: row.route_hint ? stringValue(row.route_hint) : "",
+      routeStops: Array.isArray(row.route_json) ? (row.route_json as DeliveryTask["routeStops"]) : [],
+      pickupAt: row.pickup_at ? stringValue(row.pickup_at) : undefined,
+      dropAt: row.drop_at ? stringValue(row.drop_at) : undefined,
+      paymentAction: stringValue(row.payment_action) as DeliveryTask["paymentAction"],
+      cashCollectionRequired: Boolean(row.cash_collection_required),
+      cashHandoverMarked: Boolean(row.cash_handover_marked),
+      weightProofName: row.weight_proof_name ? stringValue(row.weight_proof_name) : undefined,
+      cashProofName: row.cash_proof_name ? stringValue(row.cash_proof_name) : undefined
+    }));
+    if (parsedTasks.some((task) => task.side !== "Sales" || task.mode !== "Delivery")) throw new Error("Only outbound delivery tasks can be merged.");
+    if (parsedTasks.some((task) => task.status !== "Planned")) throw new Error("Only planned outbound delivery tasks can be merged.");
+    const assignees = Array.from(new Set(parsedTasks.map((task) => task.assignedTo).filter(Boolean)));
+    if (assignees.length > 1) throw new Error("Selected delivery tasks must have the same assigned delivery person.");
+
+    const keeper = parsedTasks[0];
+    const mergedLinkedOrderIds = Array.from(new Set(parsedTasks.flatMap((task) => task.linkedOrderIds)));
+    const mergedRouteStops = Array.from(
+      parsedTasks
+        .flatMap((task) => task.routeStops)
+        .reduce((map, stop) => map.set(stop.orderId, map.get(stop.orderId) || stop), new Map<string, DeliveryTask["routeStops"][number]>())
+        .values()
+    );
+    const mergedRouteHint = Array.from(new Set(parsedTasks.map((task) => task.routeHint).filter(Boolean))).join(" | ");
+    await query(
+      `UPDATE delivery_tasks
+       SET linked_order_id = $1,
+           linked_order_ids_json = $2::jsonb,
+           consignment_id = $3,
+           assigned_to = $4,
+           pickup_at = $5,
+           drop_at = $6,
+           route_hint = $7,
+           route_json = $8::jsonb,
+           payment_action = $9,
+           cash_collection_required = $10,
+           cash_handover_marked = $11,
+           weight_proof_name = $12,
+           cash_proof_name = $13,
+           last_action_at = $14
+       WHERE id = $15`,
+      [
+        mergedLinkedOrderIds[0],
+        JSON.stringify(mergedLinkedOrderIds),
+        keeper.consignmentId || null,
+        keeper.assignedTo,
+        parsedTasks.map((task) => task.pickupAt).find(Boolean) || null,
+        parsedTasks.map((task) => task.dropAt).find(Boolean) || null,
+        mergedRouteHint || null,
+        JSON.stringify(mergedRouteStops),
+        parsedTasks.some((task) => task.paymentAction === "Collect Payment") ? "Collect Payment" : parsedTasks.some((task) => task.paymentAction === "Deliver Payment") ? "Deliver Payment" : "None",
+        parsedTasks.some((task) => task.cashCollectionRequired),
+        parsedTasks.some((task) => task.cashHandoverMarked),
+        keeper.weightProofName || null,
+        keeper.cashProofName || null,
+        now(),
+        keeper.id
+      ],
+      client
+    );
+    const redundantTaskIds = parsedTasks.slice(1).map((task) => task.id);
+    if (redundantTaskIds.length > 0) {
+      await query("DELETE FROM delivery_tasks WHERE id = ANY($1::text[])", [redundantTaskIds], client);
+    }
+    const affectedSalesOrders = await query<Record<string, unknown>>(
+      `SELECT id
+       FROM sales_orders
+       WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+      [mergedLinkedOrderIds],
+      client
+    );
+    const affectedSalesOrderIds = affectedSalesOrders.rows.map((row) => stringValue(row.id)).filter(Boolean);
+    if (affectedSalesOrderIds.length > 0) {
+      const affectedConsignments = await query<Record<string, unknown>>(
+        `SELECT DISTINCT consignment_id
+         FROM delivery_dockets
+         WHERE sales_order_id = ANY($1::text[]) AND consignment_id IS NOT NULL`,
+        [affectedSalesOrderIds],
+        client
+      );
+      const affectedConsignmentIds = affectedConsignments.rows.map((row) => stringValue(row.consignment_id)).filter(Boolean);
+      if (affectedConsignmentIds.length > 0) {
+        await query(
+          `UPDATE delivery_consignments
+           SET assigned_to = $1, status = 'Pending Pickup'
+           WHERE id = ANY($2::text[])`,
+          [keeper.assignedTo, affectedConsignmentIds],
+          client
+        );
+      }
+      await query(`UPDATE delivery_dockets SET status = 'Pending Pickup' WHERE sales_order_id = ANY($1::text[])`, [affectedSalesOrderIds], client);
+      await query(`UPDATE sales_orders SET status = 'Pending Pickup' WHERE id = ANY($1::text[])`, [affectedSalesOrderIds], client);
     }
   });
   return getSnapshot();

@@ -13,6 +13,7 @@ import {
   createSalesDockets,
   createDeliveryConsignment,
   createDeliveryTask,
+  mergeDeliveryTasks,
   createNote,
   createPayment,
   createProduct,
@@ -646,6 +647,11 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
     cashProofName: optionalString(req.body?.cashProofName),
     lastActionAt: optionalString(req.body?.lastActionAt)
   });
+}));
+
+app.post("/delivery-tasks/merge", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Delivery Manager"]);
+  return mergeDeliveryTasks(requiredStringArray(req.body?.taskIds, "Delivery tasks"));
 }));
 
 app.post("/delivery-dockets", async (req, res) => wrap(res, async () => {
