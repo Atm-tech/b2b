@@ -236,6 +236,7 @@ async function seedDatabase() {
   }
   const seededUsers = [
     { username: "dm", fullName: "Delivery Manager", role: "Delivery Manager" as UserRole, password: "dm" },
+    { username: "da", fullName: "Data Analyst", role: "Data Analyst" as UserRole, password: "da" },
     { username: "in", fullName: "In Delivery", role: "In Delivery" as UserRole, password: "in" },
     { username: "out", fullName: "Out Delivery", role: "Out Delivery" as UserRole, password: "out" }
   ];
@@ -249,7 +250,7 @@ async function seedDatabase() {
            roles_json = EXCLUDED.roles_json,
            password = EXCLUDED.password,
            active = TRUE`,
-      [user.username, user.fullName, "", user.role, JSON.stringify([user.role]), JSON.stringify([]), user.password, now()]
+      [user.username.trim().toLowerCase(), user.fullName, "", user.role, JSON.stringify([user.role]), JSON.stringify([]), user.password.trim().toLowerCase(), now()]
     );
   }
 }
@@ -805,8 +806,8 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
 export async function authenticate(username: string, password: string) {
   await ready;
   const row = await one<Record<string, unknown>>(
-    "SELECT * FROM users WHERE username = $1 AND password = $2 AND active = TRUE",
-    [username.trim(), password]
+    "SELECT * FROM users WHERE LOWER(username) = LOWER($1) AND LOWER(password) = LOWER($2) AND active = TRUE",
+    [username.trim(), password.trim()]
   );
   if (!row) return null;
   return {
@@ -864,7 +865,7 @@ export async function createUser(payload: { username: string; fullName: string; 
   await query(
     `INSERT INTO users (username, full_name, mobile_number, role, roles_json, warehouse_ids_json, password, active, created_at)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, TRUE, $8)`,
-    [payload.username.trim(), payload.fullName.trim(), payload.mobileNumber.trim(), roles[0], JSON.stringify(roles), JSON.stringify(warehouseIds), payload.password?.trim() || "1234", now()]
+    [payload.username.trim().toLowerCase(), payload.fullName.trim(), payload.mobileNumber.trim(), roles[0], JSON.stringify(roles), JSON.stringify(warehouseIds), (payload.password?.trim() || "1234").toLowerCase(), now()]
   );
   return getSnapshot();
 }
@@ -1271,10 +1272,6 @@ export async function createSalesOrder(payload: {
   const settings = await mapSettings();
   const id = makeId("SO");
   const createdAt = operationalDate(payload.operationDate);
-  const needsPriceApproval = typeof payload.minimumAllowedRate === "number" && payload.rate < payload.minimumAllowedRate;
-  const priceApprovalNote = needsPriceApproval
-    ? `Admin approval requested: sales rate ${payload.rate} is below last purchase price ${payload.minimumAllowedRate} for ${payload.productSku}. Requested by ${currentUser.fullName}.`
-    : "";
 
   await withTransaction(async (client) => {
     if (payload.location) {
@@ -1284,13 +1281,6 @@ export async function createSalesOrder(payload: {
     const stock = buildStockSummary(await mapWarehouses(client), await mapProducts(client), await mapInventoryLots(client)).find(
       (item) => item.warehouseId === payload.warehouseId && item.productSku === payload.productSku
     );
-    const availableQuantity = stock?.availableQuantity ?? 0;
-    const needsStockApproval = availableQuantity < payload.quantity;
-    const stockApprovalNote = needsStockApproval
-      ? `Admin approval requested: sales quantity ${payload.quantity} exceeds available stock ${availableQuantity} for ${payload.productSku} at ${payload.warehouseId}. Demand raised by ${currentUser.fullName} for purchaser follow-up.`
-      : "";
-    const approvalNotes = [priceApprovalNote, stockApprovalNote].filter(Boolean);
-    const needsApproval = needsPriceApproval || needsStockApproval;
     const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
@@ -1304,26 +1294,14 @@ export async function createSalesOrder(payload: {
         id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
-      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, [payload.note.trim(), ...approvalNotes].filter(Boolean).join(" | "), needsApproval ? "Draft" : (payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked"), createdAt],
+      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
       client
     );
-    if (needsApproval) {
-      for (const approvalNote of approvalNotes) {
-        await query(
-          `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
-           VALUES ($1, 'Sales Order', $2, $3, $4, 'Management', $5)`,
-          [makeId("NOTE"), id, approvalNote, currentUser.fullName, createdAt],
-          client
-        );
-      }
-      if (!payload.skipFinancials) {
-        await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
-        await recalculateLedger("Sales", id, client);
-      }
-      return;
-    }
     if (!payload.skipFinancials) {
       await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
+    }
+    if ((stock?.availableQuantity ?? 0) < payload.quantity) {
+      throw new Error(`Requested quantity ${payload.quantity} exceeds available stock ${stock?.availableQuantity ?? 0} for ${payload.productSku} at ${payload.warehouseId}.`);
     }
     await reserveInventory(payload.warehouseId, payload.productSku, payload.quantity, client);
     if (!payload.skipFinancials) {

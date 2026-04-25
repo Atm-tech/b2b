@@ -62,6 +62,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "Ledger", "Notes"],
   Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "Ledger", "Notes"],
+  "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment", "Notes"]
@@ -74,6 +75,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases"],
   Accounts: ["Overview", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders"],
+  "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   Delivery: ["Overview", "CurrentDelivery", "NewAssignment"]
@@ -181,6 +183,28 @@ function groupSalesRows(orders: SalesOrder[]) {
   });
 }
 
+function toCsvValue(value: string | number) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+  return text;
+}
+
+function downloadCsvFile(fileName: string, headers: string[], rows: Array<Array<string | number>>) {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const csv = [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
 function countGroupedOrders(orders: Array<{ id: string; cartId?: string }>) {
   return new Set(orders.map((order) => order.cartId || order.id)).size;
 }
@@ -243,7 +267,7 @@ function salesPaymentStatus(snapshot: AppSnapshot, orderId: string) {
 
 function salesFulfillmentStatus(lines: SalesOrder[]) {
   if (lines.every((line) => line.status === "Delivered" || line.status === "Closed")) return "Delivered";
-  if (lines.some((line) => line.status === "Draft")) return "Admin approval";
+  if (lines.some((line) => line.status === "Draft")) return "Draft";
   if (lines.some((line) => line.status === "Out for Delivery")) return salesStatusLabel("Out for Delivery");
   if (lines.some((line) => line.status === "Ready for Dispatch")) return salesStatusLabel("Ready for Dispatch");
   if (lines.some((line) => line.status === "Pending Pickup")) return salesStatusLabel("Pending Pickup");
@@ -335,7 +359,7 @@ function statusPillClass(status: string) {
 function salesStatusLabel(status: SalesStatus) {
   switch (status) {
     case "Draft":
-      return "Admin approval";
+      return "Draft";
     case "Booked":
       return "SO booked";
     case "Ready for Dispatch":
@@ -523,12 +547,20 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
       { label: "Cash today", value: snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0) }
     ];
   }
+  if (roles.includes("Data Analyst")) {
+    return [
+      { label: "Purchase carts", value: countGroupedOrders(snapshot.purchaseOrders) },
+      { label: "Sales carts", value: countGroupedOrders(snapshot.salesOrders) },
+      { label: "Available stock", value: snapshot.stockSummary.reduce((sum, item) => sum + item.availableQuantity, 0) },
+      { label: "Inventory lots", value: snapshot.inventoryLots.length }
+    ];
+  }
   if (roles.includes("Sales")) {
     const myOrders = snapshot.salesOrders.filter((item) => item.salesmanId === user.id || item.salesmanName === user.fullName);
     const myIds = new Set(myOrders.map((item) => orderPublicId(item)));
     return [
       { label: "Open sales", value: countGroupedOrders(myOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed")) },
-      { label: "Approval pending", value: countGroupedOrders(myOrders.filter((item) => item.status === "Draft")) },
+      { label: "Draft sales", value: countGroupedOrders(myOrders.filter((item) => item.status === "Draft")) },
       { label: "Collection pending", value: Array.from(myIds).filter((id) => (snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id)) > 0).length },
       { label: "Ready to dispatch", value: countGroupedOrders(myOrders.filter((item) => item.status === "Ready for Dispatch")) }
     ];
@@ -968,6 +1000,7 @@ function App() {
               <p>Govindpura Warehouse: `gp` / `1234`</p>
               <p>C21 Warehouse: `c21` / `1234`</p>
               <p>Delivery Manager: `dm` / `dm`</p>
+              <p>Data Analyst: `da` / `da`</p>
               <p>In Delivery: `in` / `in`</p>
               <p>Out Delivery: `out` / `out`</p>
             </div>
@@ -986,6 +1019,7 @@ function App() {
   const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
   const isAdminUser = currentRoles.includes("Admin");
   const isAccountsUser = currentRoles.includes("Accounts");
+  const isDataAnalyst = currentRoles.includes("Data Analyst");
   const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
   const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");
@@ -1220,7 +1254,7 @@ function App() {
               initialUpdateOrderId={purchaseUpdateOrderId}
             />
           </>) : null}
-          {activeView === "Purchases" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} /> : null}
+          {activeView === "Purchases" ? (isDataAnalyst ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} />) : null}
           {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
@@ -1235,10 +1269,10 @@ function App() {
             setOrderForm={setSalesForm}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, lines.some((line) => Boolean(line.priceApprovalRequested) || Boolean(line.stockApprovalRequested)) ? "Sales cart booked as draft demand for review." : "Sales cart created.")}
+            onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} /> : null}
+          {activeView === "SalesOrders" ? (isDataAnalyst ? <AnalystSalesView orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} />) : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>
@@ -1288,6 +1322,7 @@ function App() {
           ) : null}
           {activeView === "Ledger" ? <TwoCol left={<Panel title="Ledger" eyebrow="Accounts visibility"><DataTable headers={["ID","Side","Order","Party","Goods","Paid","Pending"]} rows={snapshot.ledgerEntries.map((l) => [l.id, l.side, l.linkedOrderId, l.partyName, l.goodsValue, l.paidAmount, l.pendingAmount])} /></Panel>} right={<Panel title="Order Financial State" eyebrow="Pending vs settled"><DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} /></Panel>} /> : null}
           {activeView === "Stock" ? (
+            isDataAnalyst ? <AnalystInventoryView snapshot={snapshot} /> :
             isWarehouseOnly || currentRoles.includes("Warehouse Manager") ? (
               <WarehouseOperationsViewV2
                 snapshot={snapshot}
@@ -1756,13 +1791,13 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       }
     } else if (popup.lastRate > 0 && nextRate < popup.lastRate && !popup.confirmHighRate) {
       setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
-      showCartToast("Rate is below last purchase price. Continue to book it as a draft demand.");
+      showCartToast("Rate is below last purchase price. Tap continue again to confirm.");
       return;
     }
     const quantityText = String(popup.quantity);
     const resolvedWarehouseId = orderForm.warehouseId || popup.product.allowedWarehouseIds[0] || "";
     const lineNote = !isPurchase && popup.lastRate > 0 && nextRate < popup.lastRate
-      ? `Admin approval requested: sales rate ${nextRate} below last purchase price ${popup.lastRate} for ${popup.product.sku}.`
+      ? `Rate below last purchase price: sales rate ${nextRate}, last purchase ${popup.lastRate} for ${popup.product.sku}.`
       : orderForm.note;
     const cartLine: CartLine = {
       productSku: popup.product.sku,
@@ -2048,7 +2083,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   function buildStockApprovalNote(productSku: string, requestedQuantity: number, availableQuantity: number, warehouseId: string) {
-    return `Admin approval requested: sales quantity ${requestedQuantity} exceeds available stock ${availableQuantity} for ${productSku} at ${warehouseId}.`;
+    return `Stock warning: sales quantity ${requestedQuantity} exceeds available stock ${availableQuantity} for ${productSku} at ${warehouseId}.`;
   }
 
   async function savePartyAndContinue() {
@@ -2369,14 +2404,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   Entered rate is higher than the last purchase rate. This will be reported to admin and added to the purchase-order notes for warehouse and accounts.
                 </div> : null}
                 {!isPurchase && ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate ? <div className="rate-warning-box">
-                  Entered sales rate is below the last purchase price. You can still book it now. The line will go in draft for review.
+                  Entered sales rate is below the last purchase price. You can still book it now after confirmation.
                 </div> : null}
                 <div className="cart-actions">
                   <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Cancel</button>
                   <button type="button" className="primary-button" onClick={confirmProductRate}>
                     {isPurchase
                       ? (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate && ratePopup.confirmHighRate ? "Sure and continue" : "Continue")
-                      : (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate && ratePopup.confirmHighRate ? "Request admin" : "Continue")}
+                      : (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate && ratePopup.confirmHighRate ? "Confirm and continue" : "Continue")}
                   </button>
                 </div>
                 </>;
@@ -2428,8 +2463,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       </div>
                     </div> : null}
                     {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
-                    {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}. This line will be booked as draft.</div> : null}
-                    {!isPurchase && Number(line.quantity || 0) > getLineAvailableStock(line.productSku, orderForm.warehouseId || "") ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. This line will be booked as draft demand.</div> : null}
+                    {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}.</div> : null}
+                    {!isPurchase && Number(line.quantity || 0) > getLineAvailableStock(line.productSku, orderForm.warehouseId || "") ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. Reduce quantity to continue.</div> : null}
                     {billTaxOverride.enabled ? <div className="message success top-gap">Whole bill tax override is active for all products in this cart.</div> : null}
                   </article>)}
                 </div>
@@ -3585,7 +3620,7 @@ function SalesPaymentsView({
 }) {
   const myOrders = snapshot.salesOrders.filter((item) => item.salesmanId === currentUser.id || item.salesmanName === currentUser.fullName);
   const myOrderIds = new Set(myOrders.flatMap((item) => [item.id, orderPublicId(item)]));
-  const underPriceOrders = myOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("approval requested"));
+  const underPriceOrders = myOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("rate below last purchase price"));
   const undeliveredOrders = myOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed");
   const pendingCollections = snapshot.ledgerEntries.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId) && item.pendingAmount > 0);
   const payments = snapshot.payments.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -3609,7 +3644,7 @@ function SalesPaymentsView({
 
   return (
     <section className="dashboard-grid">
-      <Panel title="Pending Orders" eyebrow="Undelivered and under-price">
+      <Panel title="Pending Orders" eyebrow="Undelivered and flagged">
         <div className="stack-list payment-update-list">
           {[...undeliveredOrders, ...underPriceOrders.filter((order) => !undeliveredOrders.some((item) => item.id === order.id))].slice(0, 12).map((order) => {
             const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === orderPublicId(order));
@@ -3619,7 +3654,7 @@ function SalesPaymentsView({
                   <strong>{orderPublicId(order)}</strong>
                   <p>{order.shopName} · {order.productSku} · {order.deliveryMode}</p>
                 </div>
-                <span className={`status-pill ${order.status === "Draft" ? "status-rejected" : "status-pending"}`}>{order.status === "Draft" ? "Admin approval" : order.status}</span>
+                <span className={`status-pill ${order.status === "Draft" ? "status-rejected" : "status-pending"}`}>{order.status === "Draft" ? "Draft" : order.status}</span>
               </div>
               <div className="payment-meta-grid">
                 <div><span className="small-label">Amount</span><strong>{order.totalAmount}</strong></div>
@@ -5829,6 +5864,11 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
     quickActions.push({ title: "Check Payments", text: "Verify payment records.", view: "Payments" });
     quickActions.push({ title: "Check Ledger", text: "See pending and settled amounts.", view: "Ledger" });
   }
+  if (roles.includes("Data Analyst")) {
+    quickActions.push({ title: "Purchase Report", text: "See all purchase orders in a simple table.", view: "Purchases" });
+    quickActions.push({ title: "Sales Report", text: "See all sales orders in a simple table.", view: "SalesOrders" });
+    quickActions.push({ title: "Inventory Report", text: "See stock and lot balances with CSV download.", view: "Stock" });
+  }
   if (roles.includes("Delivery")) {
     quickActions.push({ title: "My Delivery Jobs", text: "See pickup and drop tasks.", view: "Delivery" });
   }
@@ -5906,6 +5946,41 @@ function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebro
 function TwoCol({ left, right }: { left: React.ReactNode; right: React.ReactNode }) { return <section className="dashboard-grid">{left}{right}</section>; }
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) { return <div className="table-wrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={headers.length}>No records yet.</td></tr> : rows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((cell, i) => <td key={`${index}-${i}`}>{cell}</td>)}</tr>)}</tbody></table></div>; }
 type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
+
+function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
+  const headers = ["PO / Cart", "Supplier", "Products", "Taxable", "GST", "Total", "Status"];
+  const rows = groupPurchaseRows(orders, snapshot);
+  return (
+    <Panel title="Purchase Report" eyebrow="Analyst view">
+      <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("purchase-report.csv", headers, rows)}>Download CSV</button></div>
+      <DataTable headers={headers} rows={rows} />
+    </Panel>
+  );
+}
+
+function AnalystSalesView({ orders }: { orders: SalesOrder[] }) {
+  const headers = ["SO / Cart", "Shop", "Products", "Taxable", "GST", "Total", "Status"];
+  const rows = groupSalesRows(orders);
+  return (
+    <Panel title="Sales Report" eyebrow="Analyst view">
+      <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button></div>
+      <DataTable headers={headers} rows={rows} />
+    </Panel>
+  );
+}
+
+function AnalystInventoryView({ snapshot }: { snapshot: AppSnapshot }) {
+  const stockHeaders = ["Warehouse", "SKU", "Product", "Available", "Reserved", "Blocked"];
+  const stockRows = snapshot.stockSummary.map((item) => [item.warehouseName, item.productSku, item.productName, item.availableQuantity, item.reservedQuantity, item.blockedQuantity] as Array<string | number>);
+  const lotHeaders = ["Lot", "Order", "Warehouse", "SKU", "Available", "Blocked"];
+  const lotRows = snapshot.inventoryLots.map((item) => [item.lotId, item.sourceOrderId, item.warehouseId, item.productSku, item.quantityAvailable, item.quantityBlocked] as Array<string | number>);
+  return (
+    <TwoCol
+      left={<Panel title="Inventory Summary" eyebrow="Analyst view"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-summary.csv", stockHeaders, stockRows)}>Download CSV</button></div><DataTable headers={stockHeaders} rows={stockRows} /></Panel>}
+      right={<Panel title="Inventory Lots" eyebrow="Traceability"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-lots.csv", lotHeaders, lotRows)}>Download CSV</button></div><DataTable headers={lotHeaders} rows={lotRows} /></Panel>}
+    />
+  );
+}
 
 function ProductAdminView({
   snapshot,
