@@ -1770,6 +1770,21 @@ export async function createDeliveryTask(payload: {
       if (modes.has("Self Collection")) taskMode = "Self Collection";
       else if (modes.has("Dealer Delivery")) taskMode = "Dealer Delivery";
     }
+    if (payload.side === "Sales") {
+      const salesModes = await query<Record<string, unknown>>(
+        `SELECT DISTINCT delivery_mode
+         FROM sales_orders
+         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
+        [linkedOrderIds],
+        client
+      );
+      const modes = new Set(salesModes.rows.map((row) => stringValue(row.delivery_mode)));
+      if (modes.size === 0) throw new Error("Sales order not found.");
+      if (modes.has("Self Collection")) {
+        throw new Error("Customer self-collection stays with warehouse. Do not create outbound delivery tasks for it.");
+      }
+      taskMode = "Delivery";
+    }
     await query(
       `INSERT INTO delivery_tasks (
         id, side, linked_order_id, linked_order_ids_json, consignment_id, mode, source_location, destination_location, assigned_to,
@@ -1872,6 +1887,17 @@ export async function createDeliveryConsignment(payload: {
   if (dockets.rows.length !== docketIds.length) throw new Error("One or more dockets were not found.");
   const mismatchedWarehouse = dockets.rows.some((row) => stringValue(row.warehouse_id) !== payload.warehouseId);
   if (mismatchedWarehouse) throw new Error("All dockets must belong to the selected warehouse.");
+  const salesModes = await query<Record<string, unknown>>(
+    `SELECT DISTINCT so.delivery_mode
+     FROM delivery_dockets dd
+     INNER JOIN sales_orders so ON so.id = dd.sales_order_id
+     WHERE dd.id = ANY($1::text[])`,
+    [docketIds]
+  );
+  const modes = new Set(salesModes.rows.map((row) => stringValue(row.delivery_mode)));
+  if (modes.has("Self Collection")) {
+    throw new Error("Customer self-collection cannot be bundled into a consignment.");
+  }
   const totalWeightKg = dockets.rows.reduce((sum, row) => sum + numberValue(row.weight_kg), 0);
   const id = makeId("CON");
   const createdAt = operationalDate(payload.operationDate);
