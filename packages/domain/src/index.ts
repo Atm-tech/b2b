@@ -1,4 +1,4 @@
-export const userRoles = ["Admin", "Warehouse Manager", "Delivery Manager", "Purchaser", "Accounts", "Sales", "Data Analyst", "In Delivery", "Out Delivery", "Delivery"] as const;
+export const userRoles = ["Admin", "Warehouse Manager", "Delivery Manager", "Purchaser", "Accounts", "Sales", "Collection Agent", "Data Analyst", "In Delivery", "Out Delivery", "Delivery"] as const;
 export type UserRole = (typeof userRoles)[number];
 
 export type AppUser = {
@@ -213,6 +213,9 @@ export type PaymentRecord = {
   proofName?: string;
   verificationStatus: VerificationStatus;
   verificationNote: string;
+  assignedCollector?: string;
+  collectionAssignedBy?: string;
+  collectionStatus: "None" | "Assigned" | "Collected" | "Reconciled";
   createdBy: string;
   verifiedBy?: string;
   createdAt: string;
@@ -295,6 +298,9 @@ export type DeliveryTask = {
   linkedOrderIds: string[];
   consignmentId?: string;
   mode: "Dealer Delivery" | "Self Collection" | "Delivery";
+  transportType: "Internal" | "External";
+  vehicleNumber?: string;
+  freightAmount?: number;
   from: string;
   to: string;
   assignedTo: string;

@@ -488,7 +488,7 @@ app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async
 }));
 
 app.post("/payments", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -512,7 +512,7 @@ app.post("/payments", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -529,7 +529,7 @@ app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
+  await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent"]);
   if (!req.file) {
     throw new Error("Proof file is required.");
   }
@@ -610,6 +610,9 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
     linkedOrderIds,
     consignmentId: optionalString(req.body?.consignmentId),
     mode: requiredString(req.body?.mode, "Mode") as DeliveryTask["mode"],
+    transportType: (optionalString(req.body?.transportType) || "Internal") as DeliveryTask["transportType"],
+    vehicleNumber: optionalString(req.body?.vehicleNumber),
+    freightAmount: req.body?.freightAmount === undefined ? undefined : Number(req.body?.freightAmount || 0),
     from: requiredString(req.body?.from, "From"),
     to: requiredString(req.body?.to, "To"),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
@@ -635,6 +638,9 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
     linkedOrderIds,
     consignmentId: optionalString(req.body?.consignmentId),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
+    transportType: (optionalString(req.body?.transportType) || "Internal") as DeliveryTask["transportType"],
+    vehicleNumber: optionalString(req.body?.vehicleNumber),
+    freightAmount: req.body?.freightAmount === undefined ? undefined : Number(req.body?.freightAmount || 0),
     routeStops: Array.isArray(req.body?.routeStops) ? req.body.routeStops : [],
     pickupAt: optionalString(req.body?.pickupAt),
     dropAt: optionalString(req.body?.dropAt),

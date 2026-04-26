@@ -121,6 +121,9 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE delivery_dockets ADD COLUMN IF NOT EXISTS weighing_proof_name TEXT;
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS route_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS consignment_id TEXT;
+    ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS transport_type TEXT NOT NULL DEFAULT 'Internal';
+    ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS vehicle_number TEXT;
+    ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS freight_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
     UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
@@ -237,6 +240,7 @@ async function seedDatabase() {
   const seededUsers = [
     { username: "dm", fullName: "Delivery Manager", role: "Delivery Manager" as UserRole, password: "dm" },
     { username: "da", fullName: "Data Analyst", role: "Data Analyst" as UserRole, password: "da" },
+    { username: "c", fullName: "Collection Agent", role: "Collection Agent" as UserRole, password: "c" },
     { username: "in", fullName: "In Delivery", role: "In Delivery" as UserRole, password: "in" },
     { username: "out", fullName: "Out Delivery", role: "Out Delivery" as UserRole, password: "out" }
   ];
@@ -517,6 +521,9 @@ async function mapDeliveryTasks(client?: DbClient): Promise<DeliveryTask[]> {
     linkedOrderIds: Array.isArray(row.linked_order_ids_json) ? (row.linked_order_ids_json as string[]) : [],
     consignmentId: row.consignment_id ? stringValue(row.consignment_id) : undefined,
     mode: stringValue(row.mode) as DeliveryTask["mode"],
+    transportType: (row.transport_type ? stringValue(row.transport_type) : "Internal") as DeliveryTask["transportType"],
+    vehicleNumber: row.vehicle_number ? stringValue(row.vehicle_number) : undefined,
+    freightAmount: numberValue(row.freight_amount),
     from: stringValue(row.source_location),
     to: stringValue(row.destination_location),
     assignedTo: stringValue(row.assigned_to),
@@ -1736,6 +1743,9 @@ export async function createDeliveryTask(payload: {
   linkedOrderIds?: string[];
   consignmentId?: string;
   mode: DeliveryTask["mode"];
+  transportType?: DeliveryTask["transportType"];
+  vehicleNumber?: string;
+  freightAmount?: number;
   from: string;
   to: string;
   assignedTo: string;
@@ -1758,6 +1768,13 @@ export async function createDeliveryTask(payload: {
   await withTransaction(async (client) => {
     const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, payload.side);
     let taskMode = payload.mode;
+    const transportType = payload.transportType || "Internal";
+    const vehicleNumber = payload.vehicleNumber?.trim() || "";
+    const freightAmount = Math.max(payload.freightAmount || 0, 0);
+    if (transportType === "External") {
+      if (!vehicleNumber) throw new Error("Vehicle number is required for external delivery.");
+      if (freightAmount <= 0) throw new Error("Freight amount is required for external delivery.");
+    }
     if (payload.side === "Purchase") {
       const purchaseModes = await query<Record<string, unknown>>(
         `SELECT DISTINCT delivery_mode
@@ -1788,9 +1805,9 @@ export async function createDeliveryTask(payload: {
     await query(
       `INSERT INTO delivery_tasks (
         id, side, linked_order_id, linked_order_ids_json, consignment_id, mode, source_location, destination_location, assigned_to,
-        pickup_at, drop_at, route_hint, route_json, payment_action, cash_collection_required, cash_handover_marked,
+        transport_type, vehicle_number, freight_amount, pickup_at, drop_at, route_hint, route_json, payment_action, cash_collection_required, cash_handover_marked,
         weight_proof_name, cash_proof_name, last_action_at, status, created_at
-      ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21)`,
+      ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
       [
         makeId("DL"),
         payload.side,
@@ -1801,6 +1818,9 @@ export async function createDeliveryTask(payload: {
         payload.from.trim(),
         payload.to.trim(),
         assignedTo,
+        transportType,
+        vehicleNumber || null,
+        freightAmount,
         payload.pickupAt || null,
         payload.dropAt || null,
         payload.routeHint?.trim() || null,
@@ -2140,6 +2160,9 @@ export async function updateDeliveryTask(taskId: string, payload: {
   linkedOrderIds?: string[];
   consignmentId?: string;
   assignedTo: string;
+  transportType?: DeliveryTask["transportType"];
+  vehicleNumber?: string;
+  freightAmount?: number;
   routeStops?: DeliveryTask["routeStops"];
   pickupAt?: string;
   dropAt?: string;
@@ -2157,15 +2180,26 @@ export async function updateDeliveryTask(taskId: string, payload: {
     const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1", [taskId], client);
     if (!task) throw new Error("Delivery task not found.");
     const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, stringValue(task.side) as DeliveryTask["side"]);
+    const transportType = payload.transportType || (task.transport_type ? stringValue(task.transport_type) : "Internal");
+    const vehicleNumber = payload.vehicleNumber?.trim() || (task.vehicle_number ? stringValue(task.vehicle_number) : "");
+    const freightAmount = payload.freightAmount !== undefined ? Math.max(payload.freightAmount || 0, 0) : numberValue(task.freight_amount);
+    if (transportType === "External") {
+      if (!vehicleNumber) throw new Error("Vehicle number is required for external delivery.");
+      if (freightAmount <= 0) throw new Error("Freight amount is required for external delivery.");
+    }
     await query(
       `UPDATE delivery_tasks
-       SET linked_order_ids_json = $1::jsonb, consignment_id = $2, assigned_to = $3, pickup_at = $4, drop_at = $5, route_hint = $6, route_json = $7::jsonb, payment_action = $8,
-           status = $9, cash_collection_required = $10, cash_handover_marked = $11, weight_proof_name = $12, cash_proof_name = $13, last_action_at = $14
-       WHERE id = $15`,
+       SET linked_order_ids_json = $1::jsonb, consignment_id = $2, assigned_to = $3, transport_type = $4, vehicle_number = $5, freight_amount = $6,
+           pickup_at = $7, drop_at = $8, route_hint = $9, route_json = $10::jsonb, payment_action = $11,
+           status = $12, cash_collection_required = $13, cash_handover_marked = $14, weight_proof_name = $15, cash_proof_name = $16, last_action_at = $17
+       WHERE id = $18`,
         [
           JSON.stringify(payload.linkedOrderIds || []),
           payload.consignmentId?.trim() || null,
           assignedTo,
+          transportType,
+          vehicleNumber || null,
+          freightAmount,
           payload.pickupAt || null,
           payload.dropAt || null,
           payload.routeHint?.trim() || null,
@@ -2333,6 +2367,9 @@ export async function mergeDeliveryTasks(taskIds: string[]) {
       mode: stringValue(row.mode) as DeliveryTask["mode"],
       status: stringValue(row.status) as DeliveryTask["status"],
       assignedTo: stringValue(row.assigned_to),
+      transportType: (row.transport_type ? stringValue(row.transport_type) : "Internal") as DeliveryTask["transportType"],
+      vehicleNumber: row.vehicle_number ? stringValue(row.vehicle_number) : undefined,
+      freightAmount: numberValue(row.freight_amount),
       linkedOrderIds: Array.isArray(row.linked_order_ids_json) ? (row.linked_order_ids_json as string[]) : [stringValue(row.linked_order_id)],
       consignmentId: row.consignment_id ? stringValue(row.consignment_id) : "",
       routeHint: row.route_hint ? stringValue(row.route_hint) : "",
@@ -2349,6 +2386,12 @@ export async function mergeDeliveryTasks(taskIds: string[]) {
     if (parsedTasks.some((task) => task.status !== "Planned")) throw new Error("Only planned outbound delivery tasks can be merged.");
     const assignees = Array.from(new Set(parsedTasks.map((task) => task.assignedTo).filter(Boolean)));
     if (assignees.length > 1) throw new Error("Selected delivery tasks must have the same assigned delivery person.");
+    const transportTypes = Array.from(new Set(parsedTasks.map((task) => task.transportType)));
+    if (transportTypes.length > 1) throw new Error("Selected delivery tasks must have the same transport type.");
+    const vehicleNumbers = Array.from(new Set(parsedTasks.map((task) => task.vehicleNumber || "").filter(Boolean)));
+    if (vehicleNumbers.length > 1) throw new Error("Selected delivery tasks must have the same vehicle number.");
+    const freightAmounts = Array.from(new Set(parsedTasks.map((task) => task.freightAmount || 0)));
+    if (freightAmounts.length > 1) throw new Error("Selected delivery tasks must have the same freight amount.");
 
     const keeper = parsedTasks[0];
     const mergedLinkedOrderIds = Array.from(new Set(parsedTasks.flatMap((task) => task.linkedOrderIds)));
@@ -2365,22 +2408,28 @@ export async function mergeDeliveryTasks(taskIds: string[]) {
            linked_order_ids_json = $2::jsonb,
            consignment_id = $3,
            assigned_to = $4,
-           pickup_at = $5,
-           drop_at = $6,
-           route_hint = $7,
-           route_json = $8::jsonb,
-           payment_action = $9,
-           cash_collection_required = $10,
-           cash_handover_marked = $11,
-           weight_proof_name = $12,
-           cash_proof_name = $13,
-           last_action_at = $14
-       WHERE id = $15`,
+           transport_type = $5,
+           vehicle_number = $6,
+           freight_amount = $7,
+           pickup_at = $8,
+           drop_at = $9,
+           route_hint = $10,
+           route_json = $11::jsonb,
+           payment_action = $12,
+           cash_collection_required = $13,
+           cash_handover_marked = $14,
+           weight_proof_name = $15,
+           cash_proof_name = $16,
+           last_action_at = $17
+       WHERE id = $18`,
       [
         mergedLinkedOrderIds[0],
         JSON.stringify(mergedLinkedOrderIds),
         keeper.consignmentId || null,
         keeper.assignedTo,
+        keeper.transportType,
+        keeper.vehicleNumber || null,
+        keeper.freightAmount || 0,
         parsedTasks.map((task) => task.pickupAt).find(Boolean) || null,
         parsedTasks.map((task) => task.dropAt).find(Boolean) || null,
         mergedRouteHint || null,

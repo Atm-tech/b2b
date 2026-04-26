@@ -60,8 +60,9 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "Ledger", "Notes"],
-  Accounts: ["Overview", "Payments", "Ledger", "Stock", "Notes"],
+  Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "Ledger", "Notes"],
+  "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
@@ -73,8 +74,9 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases"],
-  Accounts: ["Overview", "Payments", "Ledger"],
+  Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders"],
+  "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
   "Out Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
@@ -163,7 +165,7 @@ function groupPurchaseRows(orders: PurchaseOrder[], snapshot?: AppSnapshot) {
   });
 }
 
-function groupSalesRows(orders: SalesOrder[]) {
+function groupSalesRows(orders: SalesOrder[], snapshot?: AppSnapshot) {
   const grouped = new Map<string, SalesOrder[]>();
   for (const order of orders) {
     const key = order.cartId || order.id;
@@ -178,7 +180,11 @@ function groupSalesRows(orders: SalesOrder[]) {
       lines.reduce((sum, line) => sum + line.taxableAmount, 0),
       lines.reduce((sum, line) => sum + line.gstAmount, 0),
       lines.reduce((sum, line) => sum + line.totalAmount, 0),
-      lines.length > 1 ? `${salesStatusLabel(first.status)} (${lines.length} products)` : salesStatusLabel(first.status)
+      snapshot
+        ? `${salesFulfillmentStatus(lines)} / Payment ${salesPaymentStatus(snapshot, id)}`
+        : lines.length > 1
+          ? `${salesStatusLabel(first.status)} (${lines.length} products)`
+          : salesStatusLabel(first.status)
     ];
   });
 }
@@ -263,6 +269,16 @@ function salesPaymentStatus(snapshot: AppSnapshot, orderId: string) {
   if (ledger && ledger.pendingAmount <= 0 && (latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved")) return "Completed";
   if ((ledger && ledger.paidAmount > 0) || latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved") return "Partial";
   return "Pending";
+}
+
+function salesPaymentsByOrder(snapshot: AppSnapshot, orderId: string) {
+  return snapshot.payments
+    .filter((item) => item.side === "Sales" && item.linkedOrderId === orderId)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function latestSalesPayment(snapshot: AppSnapshot, orderId: string) {
+  return salesPaymentsByOrder(snapshot, orderId)[0];
 }
 
 function salesFulfillmentStatus(lines: SalesOrder[]) {
@@ -754,8 +770,8 @@ function App() {
   const [paymentEditForm, setPaymentEditForm] = useState({ id: "", amount: "0", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "", verificationStatus: "Submitted" as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved", verificationNote: "" });
   const [receiptForm, setReceiptForm] = useState({ purchaseOrderId: "", warehouseId: "", receivedQuantity: "0", actualWeightKg: "0", note: "", confirmPartial: false });
   const [receiptEditForm, setReceiptEditForm] = useState({ grcNumber: "", note: "", flagged: false });
-  const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
-  const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
+  const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
+  const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
   const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
@@ -997,6 +1013,7 @@ function App() {
               <p>Purchaser: `p` / `1234`</p>
               <p>Sales: `s` / `1234`</p>
               <p>Accounts: `a` / `1234`</p>
+              <p>Collection Agent: `c` / `c`</p>
               <p>Govindpura Warehouse: `gp` / `1234`</p>
               <p>C21 Warehouse: `c21` / `1234`</p>
               <p>Delivery Manager: `dm` / `dm`</p>
@@ -1019,6 +1036,7 @@ function App() {
   const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
   const isAdminUser = currentRoles.includes("Admin");
   const isAccountsUser = currentRoles.includes("Accounts");
+  const isCollectionAgent = currentRoles.includes("Collection Agent");
   const isDataAnalyst = currentRoles.includes("Data Analyst");
   const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
@@ -1029,10 +1047,13 @@ function App() {
   const safeVisibleViews: ViewKey[] = visibleViews.length > 0 ? visibleViews : ["Overview"];
   const purchaserBottomViews: ViewKey[] = ["Overview", "Purchase", "Purchases"];
   const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
+  const collectionBottomViews: ViewKey[] = ["Overview", "Payments", "SalesOrders"];
   const bottomNavViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
     ? purchaserBottomViews.filter((view) => safeVisibleViews.includes(view))
     : currentRoles.includes("Sales") && !currentRoles.includes("Purchaser")
       ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
+      : currentRoles.includes("Collection Agent")
+        ? collectionBottomViews.filter((view) => safeVisibleViews.includes(view))
       : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
@@ -1254,7 +1275,7 @@ function App() {
               initialUpdateOrderId={purchaseUpdateOrderId}
             />
           </>) : null}
-          {activeView === "Purchases" ? (isDataAnalyst ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} />) : null}
+          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} />) : null}
           {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
@@ -1272,7 +1293,7 @@ function App() {
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? (isDataAnalyst ? <AnalystSalesView orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} />) : null}
+          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} />) : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>
@@ -1289,7 +1310,18 @@ function App() {
                 snapshot={snapshot}
                 currentUser={currentUser}
                 onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")}
+                onCreatePayment={(body) => post("/payments", body, "Collection submitted to accounts.")}
                 onUpdatePayment={(id, body) => patch(`/payments/${id}`, body, "Payment updated.")}
+                scope="mine"
+              />
+            ) : isCollectionAgent ? (
+              <SalesPaymentsView
+                snapshot={snapshot}
+                currentUser={currentUser}
+                onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")}
+                onCreatePayment={(body) => post("/payments", body, "Collection submitted to accounts.")}
+                onUpdatePayment={(id, body) => patch(`/payments/${id}`, body, "Payment updated.")}
+                scope="all"
               />
             ) : (isAccountsUser || currentRoles.includes("Admin")) ? (
               <AccountsPaymentsView
@@ -1397,7 +1429,7 @@ function App() {
               )
             ) : (isWarehouseOnly || currentRoles.includes("Warehouse Manager")) ? (
               <WarehouseDeliveryBoard snapshot={snapshot} />
-            ) : <TwoCol left={<Panel title="Delivery Task" eyebrow="Pickup and drop"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/delivery-tasks", { ...deliveryForm, linkedOrderIds: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "" }, "Delivery task created."); }}><label>Side<select value={deliveryForm.side} onChange={(e) => setDeliveryForm((c) => ({ ...c, side: e.target.value as DeliveryTask["side"] }))}><option>Purchase</option><option>Sales</option></select></label><label className="wide-field">Orders<input value={deliveryForm.linkedOrderIdsText} onChange={(e) => setDeliveryForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} placeholder="PO-1, SO-2" /></label><label>Mode<select value={deliveryForm.mode} onChange={(e) => setDeliveryForm((c) => ({ ...c, mode: e.target.value as DeliveryTask["mode"] }))}><option>Dealer Delivery</option><option>Self Collection</option><option>Delivery</option></select></label><label>Status<select value={deliveryForm.status} onChange={(e) => setDeliveryForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label>From<input value={deliveryForm.from} onChange={(e) => setDeliveryForm((c) => ({ ...c, from: e.target.value }))} /></label><label>To<input value={deliveryForm.to} onChange={(e) => setDeliveryForm((c) => ({ ...c, to: e.target.value }))} /></label><label>Assigned<input value={deliveryForm.assignedTo} onChange={(e) => setDeliveryForm((c) => ({ ...c, assignedTo: e.target.value }))} placeholder="delivery" /></label><label>Pickup time<input value={deliveryForm.pickupAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, pickupAt: e.target.value }))} placeholder="2026-04-04 10:30" /></label><label>Drop time<input value={deliveryForm.dropAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, dropAt: e.target.value }))} placeholder="2026-04-04 13:00" /></label><label>Route hint<input value={deliveryForm.routeHint} onChange={(e) => setDeliveryForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryForm.paymentAction} onChange={(e) => setDeliveryForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryForm.cashCollectionRequired} onChange={(e) => setDeliveryForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Create task</button></form></Panel>} right={<><Panel title="Update Delivery" eyebrow="Assignment and completion"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/delivery-tasks/${deliveryEditForm.id}`, { linkedOrderIds: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "", assignedTo: deliveryEditForm.assignedTo, pickupAt: deliveryEditForm.pickupAt, dropAt: deliveryEditForm.dropAt, routeHint: deliveryEditForm.routeHint, paymentAction: deliveryEditForm.paymentAction, cashCollectionRequired: deliveryEditForm.cashCollectionRequired, cashHandoverMarked: deliveryEditForm.cashHandoverMarked, weightProofName: deliveryEditForm.weightProofName, cashProofName: deliveryEditForm.cashProofName, status: deliveryEditForm.status }, "Delivery task updated."); }}><label>Task<select value={deliveryEditForm.id} onChange={(e) => { const item = snapshot.deliveryTasks.find((d) => d.id === e.target.value); setDeliveryEditForm(item ? { id: item.id, linkedOrderIdsText: item.linkedOrderIds.join(", "), assignedTo: item.assignedTo, pickupAt: item.pickupAt || "", dropAt: item.dropAt || "", routeHint: item.routeHint || "", paymentAction: item.paymentAction, cashCollectionRequired: item.cashCollectionRequired, cashHandoverMarked: item.cashHandoverMarked, weightProofName: item.weightProofName || "", cashProofName: item.cashProofName || "", status: item.status } : { id: "", linkedOrderIdsText: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None", cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" }); }}>{snapshot.deliveryTasks.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}</select></label><label className="wide-field">Orders<input value={deliveryEditForm.linkedOrderIdsText} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} /></label><label>Assigned<input value={deliveryEditForm.assignedTo} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, assignedTo: e.target.value }))} /></label><label>Pickup time<input value={deliveryEditForm.pickupAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, pickupAt: e.target.value }))} /></label><label>Drop time<input value={deliveryEditForm.dropAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, dropAt: e.target.value }))} /></label><label>Route hint<input value={deliveryEditForm.routeHint} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryEditForm.paymentAction} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label>Status<select value={deliveryEditForm.status} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashCollectionRequired} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashHandoverMarked} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashHandoverMarked: e.target.checked }))} />Cash handover marked</label><button className="primary-button" type="submit">Update task</button></form></Panel><Panel title="Delivery Tasks" eyebrow="Transport flow"><DataTable headers={["ID","Side","Orders","Mode","Assigned","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.mode, d.assignedTo, deliveryTaskStatusLabel(d)])} /></Panel></>} />
+            ) : <TwoCol left={<Panel title="Delivery Task" eyebrow="Pickup and drop"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/delivery-tasks", { ...deliveryForm, freightAmount: Number(deliveryForm.freightAmount || 0), linkedOrderIds: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "" }, "Delivery task created."); }}><label>Side<select value={deliveryForm.side} onChange={(e) => setDeliveryForm((c) => ({ ...c, side: e.target.value as DeliveryTask["side"] }))}><option>Purchase</option><option>Sales</option></select></label><label className="wide-field">Orders<input value={deliveryForm.linkedOrderIdsText} onChange={(e) => setDeliveryForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} placeholder="PO-1, SO-2" /></label><label>Mode<select value={deliveryForm.mode} onChange={(e) => setDeliveryForm((c) => ({ ...c, mode: e.target.value as DeliveryTask["mode"] }))}><option>Dealer Delivery</option><option>Self Collection</option><option>Delivery</option></select></label><label>Transport<select value={deliveryForm.transportType} onChange={(e) => setDeliveryForm((c) => ({ ...c, transportType: e.target.value as DeliveryTask["transportType"] }))}><option>Internal</option><option>External</option></select></label><label>Status<select value={deliveryForm.status} onChange={(e) => setDeliveryForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label>From<input value={deliveryForm.from} onChange={(e) => setDeliveryForm((c) => ({ ...c, from: e.target.value }))} /></label><label>To<input value={deliveryForm.to} onChange={(e) => setDeliveryForm((c) => ({ ...c, to: e.target.value }))} /></label><label>Assigned<input value={deliveryForm.assignedTo} onChange={(e) => setDeliveryForm((c) => ({ ...c, assignedTo: e.target.value }))} placeholder="delivery" /></label><label>Vehicle<input value={deliveryForm.vehicleNumber} onChange={(e) => setDeliveryForm((c) => ({ ...c, vehicleNumber: e.target.value }))} /></label><label>Freight<input type="number" value={deliveryForm.freightAmount} onChange={(e) => setDeliveryForm((c) => ({ ...c, freightAmount: e.target.value }))} /></label><label>Pickup time<input value={deliveryForm.pickupAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, pickupAt: e.target.value }))} placeholder="2026-04-04 10:30" /></label><label>Drop time<input value={deliveryForm.dropAt} onChange={(e) => setDeliveryForm((c) => ({ ...c, dropAt: e.target.value }))} placeholder="2026-04-04 13:00" /></label><label>Route hint<input value={deliveryForm.routeHint} onChange={(e) => setDeliveryForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryForm.paymentAction} onChange={(e) => setDeliveryForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryForm.cashCollectionRequired} onChange={(e) => setDeliveryForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><button className="primary-button" type="submit">Create task</button></form></Panel>} right={<><Panel title="Update Delivery" eyebrow="Assignment and completion"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/delivery-tasks/${deliveryEditForm.id}`, { linkedOrderIds: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean), linkedOrderId: deliveryEditForm.linkedOrderIdsText.split(",").map((item) => item.trim()).filter(Boolean)[0] || "", assignedTo: deliveryEditForm.assignedTo, transportType: deliveryEditForm.transportType, vehicleNumber: deliveryEditForm.vehicleNumber, freightAmount: Number(deliveryEditForm.freightAmount || 0), pickupAt: deliveryEditForm.pickupAt, dropAt: deliveryEditForm.dropAt, routeHint: deliveryEditForm.routeHint, paymentAction: deliveryEditForm.paymentAction, cashCollectionRequired: deliveryEditForm.cashCollectionRequired, cashHandoverMarked: deliveryEditForm.cashHandoverMarked, weightProofName: deliveryEditForm.weightProofName, cashProofName: deliveryEditForm.cashProofName, status: deliveryEditForm.status }, "Delivery task updated."); }}><label>Task<select value={deliveryEditForm.id} onChange={(e) => { const item = snapshot.deliveryTasks.find((d) => d.id === e.target.value); setDeliveryEditForm(item ? { id: item.id, linkedOrderIdsText: item.linkedOrderIds.join(", "), assignedTo: item.assignedTo, transportType: item.transportType, vehicleNumber: item.vehicleNumber || "", freightAmount: String(item.freightAmount || 0), pickupAt: item.pickupAt || "", dropAt: item.dropAt || "", routeHint: item.routeHint || "", paymentAction: item.paymentAction, cashCollectionRequired: item.cashCollectionRequired, cashHandoverMarked: item.cashHandoverMarked, weightProofName: item.weightProofName || "", cashProofName: item.cashProofName || "", status: item.status } : { id: "", linkedOrderIdsText: "", assignedTo: "", transportType: "Internal", vehicleNumber: "", freightAmount: "0", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None", cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" }); }}>{snapshot.deliveryTasks.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}</select></label><label className="wide-field">Orders<input value={deliveryEditForm.linkedOrderIdsText} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, linkedOrderIdsText: e.target.value }))} /></label><label>Assigned<input value={deliveryEditForm.assignedTo} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, assignedTo: e.target.value }))} /></label><label>Transport<select value={deliveryEditForm.transportType} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, transportType: e.target.value as DeliveryTask["transportType"] }))}><option>Internal</option><option>External</option></select></label><label>Vehicle<input value={deliveryEditForm.vehicleNumber} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, vehicleNumber: e.target.value }))} /></label><label>Freight<input type="number" value={deliveryEditForm.freightAmount} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, freightAmount: e.target.value }))} /></label><label>Pickup time<input value={deliveryEditForm.pickupAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, pickupAt: e.target.value }))} /></label><label>Drop time<input value={deliveryEditForm.dropAt} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, dropAt: e.target.value }))} /></label><label>Route hint<input value={deliveryEditForm.routeHint} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, routeHint: e.target.value }))} /></label><label>Payment action<select value={deliveryEditForm.paymentAction} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, paymentAction: e.target.value as DeliveryTask["paymentAction"] }))}><option>None</option><option>Collect Payment</option><option>Deliver Payment</option></select></label><label>Status<select value={deliveryEditForm.status} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, status: e.target.value as DeliveryTask["status"] }))}><option>Planned</option><option>Picked</option><option>Handed Over</option><option>Delivered</option></select></label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashCollectionRequired} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashCollectionRequired: e.target.checked }))} />Cash collection required</label><label className="checkbox-line"><input type="checkbox" checked={deliveryEditForm.cashHandoverMarked} onChange={(e) => setDeliveryEditForm((c) => ({ ...c, cashHandoverMarked: e.target.checked }))} />Cash handover marked</label><button className="primary-button" type="submit">Update task</button></form></Panel><Panel title="Delivery Tasks" eyebrow="Transport flow"><DataTable headers={["ID","Side","Orders","Mode","Transport","Assigned","Status"]} rows={snapshot.deliveryTasks.map((d) => [d.id, d.side, d.linkedOrderIds.join(", "), d.mode, `${d.transportType}${d.vehicleNumber ? ` / ${d.vehicleNumber}` : ""}${d.freightAmount ? ` / ${d.freightAmount.toFixed(2)}` : ""}`, d.assignedTo, deliveryTaskStatusLabel(d)])} /></Panel></>} />
           ) : null}
           {activeView === "Settings" ? <Panel title="Admin Settings" eyebrow="Payment methods and delivery"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/settings", snapshot.settings, "Settings updated."); }}>{snapshot.settings.paymentMethods.map((item, index) => <label key={item.code}>{item.code}<div className="settings-line"><input type="checkbox" checked={item.active} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, active: e.target.checked } : method) } }) : current)} />Active<input type="checkbox" checked={item.allowsCashTiming} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, allowsCashTiming: e.target.checked } : method) } }) : current)} />Cash timing</div></label>)}<label>Delivery model<select value={snapshot.settings.deliveryCharge.model} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, model: e.target.value as "Fixed" | "Per Km" } } }) : current)}><option>Fixed</option><option>Per Km</option></select></label><label>Delivery amount<input type="number" value={snapshot.settings.deliveryCharge.amount} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, amount: Number(e.target.value) } } }) : current)} /></label><button className="primary-button" type="submit">Save settings</button></form></Panel> : null}
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
@@ -2855,6 +2887,9 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
   const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
   const paymentPendingCount = groups.filter((group) => purchasePaymentStatus(snapshot, group.id) !== "Completed").length;
+  const completedPayments = snapshot.payments
+    .filter((item) => item.side === "Purchase" && (item.verificationStatus === "Verified" || item.verificationStatus === "Resolved"))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
   for (const group of groups) {
     const status = purchaseWorkflowStatus(snapshot, group.id);
@@ -2866,9 +2901,27 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
     return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
   });
   const [openStatus, setOpenStatus] = useState("");
+  const [viewMode, setViewMode] = useState<"orders" | "payments">("orders");
+  const [openPaymentId, setOpenPaymentId] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const filteredStatusSections = statusSections
+    .map(([status, statusGroups]) => [status, statusGroups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()))] as const)
+    .filter(([, statusGroups]) => statusGroups.length > 0);
+  const filteredCompletedPayments = completedPayments.filter((payment) => {
+    const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
+    return `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
+  });
 
   return (
     <section className="collapse-stack">
+      <div className="summary-switch-bar">
+        <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
+        <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={completedPayments.length} /></button>
+      </div>
+      <div className="form-grid">
+        <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
+      </div>
+      {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card">
         <div className="payment-meta-grid">
           <div><span className="small-label">Pickup queue</span><strong><LabelWithBadge label="Pickup pending" count={pickupPendingCount} /></strong></div>
@@ -2876,7 +2929,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
           <div><span className="small-label">Accounts follow-up</span><strong><LabelWithBadge label="Payment pending" count={paymentPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {statusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
+      {filteredStatusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : filteredStatusSections.map(([status, statusGroups]) => (
         <CollapsiblePanel
           key={status}
           eyebrow="Purchases"
@@ -2912,6 +2965,35 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
           </div>
         </CollapsiblePanel>
       ))}
+      </> : <Panel title="Settled Payments" eyebrow="Purchase proofs">
+        <div className="stack-list payment-update-list">
+          {filteredCompletedPayments.length === 0 ? <div className="empty-card">No settled purchase payments yet.</div> : filteredCompletedPayments.map((payment) => {
+            const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
+            const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : "";
+            const expanded = openPaymentId === payment.id;
+            return <article className="list-card payment-update-card" key={payment.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{payment.linkedOrderId}</strong>
+                  <p>{order?.supplierName || "Supplier"} · {payment.mode}</p>
+                </div>
+                <span className="status-pill status-completed">{payment.amount.toFixed(2)}</span>
+              </div>
+              <div className="payment-card-actions top-gap">
+                <button className="ghost-button" type="button" onClick={() => setOpenPaymentId((current) => current === payment.id ? "" : payment.id)}>{expanded ? "Hide details" : "Expand"}</button>
+              </div>
+              {expanded ? <div className="payment-meta-grid top-gap">
+                <div><span className="small-label">Payment</span><strong>{payment.verificationStatus}</strong></div>
+                <div><span className="small-label">Reference</span><strong>{payment.referenceNumber || "Pending"}</strong></div>
+                <div><span className="small-label">UTR</span><strong>{payment.utrNumber || "-"}</strong></div>
+                <div><span className="small-label">Supplier</span><strong>{order?.supplierName || "Supplier"}</strong></div>
+                <div className="wide-field"><span className="small-label">Note</span><strong>{payment.verificationNote || "No note"}</strong></div>
+                {proofUrl ? <div className="wide-field"><a className="primary-button" href={proofUrl} target="_blank" rel="noreferrer">Open payment proof</a></div> : null}
+              </div> : null}
+            </article>;
+          })}
+        </div>
+      </Panel>}
     </section>
   );
 }
@@ -3156,7 +3238,7 @@ function PurchaseCartEditor({
   );
 }
 
-function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void }) {
+function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; }) {
   const groups = groupSalesOrders(orders.filter(isOpenSalesOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const dispatchPendingCount = groups.filter((group) => {
     const status = salesFulfillmentStatus(group.lines);
@@ -3169,6 +3251,30 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
     return !task || isDeliveryTaskPending(task);
   }).length;
   const collectionPendingCount = groups.filter((group) => salesPaymentStatus(snapshot, group.id) !== "Completed").length;
+  const today = new Date().toISOString().slice(0, 10);
+  const roles = userRoleList(currentUser);
+  const canCollectAll = roles.includes("Collection Agent");
+  const collectionGroups = groupSalesOrders(orders)
+    .map((group) => {
+      const first = group.lines[0];
+      const totalAmount = salesOrderPublicTotal(snapshot.salesOrders, group.id);
+      const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      return {
+        id: group.id,
+        lines: group.lines,
+        shopName: first?.shopName || "Customer",
+        pendingAmount: ledger?.pendingAmount ?? totalAmount,
+        paidAmount: ledger?.paidAmount ?? 0,
+        totalAmount,
+        paymentMode: first?.paymentMode || "Cash",
+        cashTiming: first?.cashTiming || "",
+        deliveryMode: first?.deliveryMode || "Delivery"
+      };
+    })
+    .filter((group) => group.pendingAmount > 0 && (canCollectAll || group.lines.some((line) => line.salesmanId === currentUser.id || line.salesmanName === currentUser.fullName)));
+  const unsettledCollections = snapshot.payments
+    .filter((item) => item.side === "Sales" && item.createdBy === currentUser.fullName && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved" && item.verificationStatus !== "Rejected")
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   const groupedByStatus = new Map<string, ReturnType<typeof groupSalesOrders>>();
   for (const group of groups) {
     const status = `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`;
@@ -3180,9 +3286,50 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
     return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
   });
   const [openStatus, setOpenStatus] = useState("");
+  const [viewMode, setViewMode] = useState<"orders" | "collections">("orders");
+  const [searchText, setSearchText] = useState("");
+  const [expandedCollectionOrder, setExpandedCollectionOrder] = useState("");
+  const [showSettlementSummary, setShowSettlementSummary] = useState(false);
+  const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; operationDate: string }>>({});
+  const filteredStatusSections = statusSections
+    .map(([status, statusGroups]) => [status, statusGroups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()))] as const)
+    .filter(([, statusGroups]) => statusGroups.length > 0);
+  const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
+
+  function getCollectionDraft(orderId: string) {
+    const group = collectionGroups.find((item) => item.id === orderId);
+    return collectionDrafts[orderId] || {
+      amount: String(group?.pendingAmount || 0),
+      mode: (group?.paymentMode || "Cash") as PaymentMode,
+      cashTiming: group?.cashTiming || "",
+      operationDate: today
+    };
+  }
+
+  function setCollectionDraftValue(orderId: string, field: "amount" | "mode" | "cashTiming" | "operationDate", value: string) {
+    setCollectionDrafts((current) => ({ ...current, [orderId]: { ...getCollectionDraft(orderId), [field]: value } }));
+  }
+
+  const settlementWhatsappText = encodeURIComponent([
+    "Aapoorti collection settlement",
+    ...unsettledCollections.map((payment) => {
+      const order = findSalesOrderByPublicId(snapshot.salesOrders, payment.linkedOrderId);
+      return `${payment.linkedOrderId} | ${order?.shopName || "Customer"} | ${payment.mode} | ${payment.amount.toFixed(2)} | Ref ${payment.referenceNumber || "-"}${payment.utrNumber ? ` | UTR ${payment.utrNumber}` : ""}`;
+    }),
+    `Total cash: ${unsettledCollections.filter((payment) => payment.mode === "Cash").reduce((sum, payment) => sum + payment.amount, 0).toFixed(2)}`,
+    `Total collection: ${unsettledCollections.reduce((sum, payment) => sum + payment.amount, 0).toFixed(2)}`
+  ].join("\n"));
 
   return (
     <section className="collapse-stack">
+      <div className="summary-switch-bar">
+        <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
+        <button className={viewMode === "collections" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("collections")}><LabelWithBadge label="Collection" count={collectionGroups.length} /></button>
+      </div>
+      <div className="form-grid">
+        <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
+      </div>
+      {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card">
         <div className="payment-meta-grid">
           <div><span className="small-label">Warehouse queue</span><strong><LabelWithBadge label="Dispatch pending" count={dispatchPendingCount} /></strong></div>
@@ -3190,7 +3337,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
           <div><span className="small-label">Collection queue</span><strong><LabelWithBadge label="Collection pending" count={collectionPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {statusSections.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : statusSections.map(([status, statusGroups]) => (
+      {filteredStatusSections.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : filteredStatusSections.map(([status, statusGroups]) => (
         <CollapsiblePanel
           key={status}
           eyebrow="Sales"
@@ -3226,6 +3373,86 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo }: { snap
           </div>
         </CollapsiblePanel>
       ))}
+      </> : <Panel title="Collection Work" eyebrow="Pending customer payment">
+        <div className="stack-list payment-update-list">
+          <div className="payment-card-actions">
+            <button className="ghost-button" type="button" onClick={() => setShowSettlementSummary((current) => !current)}>{showSettlementSummary ? "Hide settle" : "Settle"}</button>
+            {showSettlementSummary && unsettledCollections.length > 0 ? <a className="primary-button" href={`https://wa.me/?text=${settlementWhatsappText}`} target="_blank" rel="noreferrer">Share on WhatsApp</a> : null}
+          </div>
+          {showSettlementSummary ? <article className="list-card">
+            <div className="payment-meta-grid">
+              <div><span className="small-label">Entries</span><strong>{unsettledCollections.length}</strong></div>
+              <div><span className="small-label">Cash total</span><strong>{unsettledCollections.filter((payment) => payment.mode === "Cash").reduce((sum, payment) => sum + payment.amount, 0).toFixed(2)}</strong></div>
+              <div><span className="small-label">Overall total</span><strong>{unsettledCollections.reduce((sum, payment) => sum + payment.amount, 0).toFixed(2)}</strong></div>
+            </div>
+            <div className="stack-list top-gap">
+              {unsettledCollections.length === 0 ? <div className="empty-card">No collection entries pending accounts reconciliation.</div> : unsettledCollections.map((payment) => {
+                const order = findSalesOrderByPublicId(snapshot.salesOrders, payment.linkedOrderId);
+                return <article className="list-card" key={payment.id}>
+                  <div className="payment-update-head">
+                    <div>
+                      <strong>{payment.linkedOrderId}</strong>
+                      <p>{order?.shopName || "Customer"} · {payment.mode}</p>
+                    </div>
+                    <span className="status-pill status-pending">{payment.amount.toFixed(2)}</span>
+                  </div>
+                  <div className="payment-meta-grid">
+                    <div><span className="small-label">Reference</span><strong>{payment.referenceNumber || "-"}</strong></div>
+                    <div><span className="small-label">UTR</span><strong>{payment.utrNumber || "-"}</strong></div>
+                    <div><span className="small-label">Status</span><strong>{payment.verificationStatus}</strong></div>
+                  </div>
+                </article>;
+              })}
+            </div>
+          </article> : null}
+          {filteredCollectionGroups.length === 0 ? <div className="empty-card">No unsettled sales orders found.</div> : filteredCollectionGroups.map((group) => {
+            const expanded = expandedCollectionOrder === group.id;
+            const draft = getCollectionDraft(group.id);
+            const collectedAmount = Number(draft.amount || 0);
+            return <article className="list-card payment-update-card" key={group.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{group.id}</strong>
+                  <p>{group.shopName} · {group.paymentMode}{group.cashTiming ? ` / ${group.cashTiming}` : ""}</p>
+                </div>
+                <span className="status-pill status-pending">{group.pendingAmount.toFixed(2)} pending</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Total</span><strong>{group.totalAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Paid</span><strong>{group.paidAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Pending</span><strong>{group.pendingAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Delivery</span><strong>{group.deliveryMode}</strong></div>
+              </div>
+              <div className="payment-card-actions top-gap">
+                <button className="ghost-button" type="button" onClick={() => setExpandedCollectionOrder((current) => current === group.id ? "" : group.id)}>{expanded ? "Hide" : "Collect"}</button>
+              </div>
+              {expanded ? <div className="form-grid top-gap">
+                <label>Amount<input type="number" min="0" max={group.pendingAmount} value={draft.amount} onChange={(e) => setCollectionDraftValue(group.id, "amount", e.target.value)} /></label>
+                <label>Mode<select value={draft.mode} onChange={(e) => setCollectionDraftValue(group.id, "mode", e.target.value)}>
+                  <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
+                </select></label>
+                <label>Date<input type="date" value={draft.operationDate} onChange={(e) => setCollectionDraftValue(group.id, "operationDate", e.target.value)} /></label>
+                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+                <div className="payment-card-actions wide-field">
+                  <button className="ghost-button" type="button" onClick={() => setCollectionDraftValue(group.id, "amount", group.pendingAmount.toFixed(2))}>Set full</button>
+                  <button className="primary-button" type="button" disabled={collectedAmount <= 0} onClick={() => void onCreatePayment({
+                    side: "Sales",
+                    linkedOrderId: group.id,
+                    amount: collectedAmount,
+                    mode: draft.mode,
+                    cashTiming: draft.mode === "Cash" ? draft.cashTiming as "In Hand" | "At Delivery" : undefined,
+                    referenceNumber: draft.mode === "Cash" ? `COL-${group.id}` : "",
+                    verificationStatus: "Submitted",
+                    verificationNote: `${roles.includes("Collection Agent") ? "Collected by collection agent" : "Collected by sales"} from ${group.shopName}`,
+                    operationDate: draft.operationDate || undefined
+                  })}>Collected</button>
+                </div>
+                {collectedAmount > 0 && collectedAmount < group.pendingAmount ? <p className="message success wide-field">This will settle partially. Remaining amount stays pending.</p> : null}
+              </div> : null}
+            </article>;
+          })}
+        </div>
+      </Panel>}
     </section>
   );
 }
@@ -3606,11 +3833,27 @@ function SalesPaymentsView({
   snapshot,
   currentUser,
   onUploadProof,
-  onUpdatePayment
+  onCreatePayment,
+  onUpdatePayment,
+  scope
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   onUploadProof: (file: File) => Promise<unknown>;
+  onCreatePayment: (body: {
+    side: "Purchase" | "Sales";
+    linkedOrderId: string;
+    amount: number;
+    mode: PaymentMode;
+    cashTiming?: string;
+    referenceNumber: string;
+    voucherNumber?: string;
+    utrNumber?: string;
+    proofName?: string;
+    verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
+    verificationNote: string;
+    operationDate?: string;
+  }) => Promise<boolean | void>;
   onUpdatePayment: (id: string, body: {
     amount: number;
     referenceNumber: string;
@@ -3620,14 +3863,41 @@ function SalesPaymentsView({
     verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
     verificationNote: string;
   }) => Promise<boolean | void>;
+  scope: "mine" | "all";
 }) {
-  const myOrders = snapshot.salesOrders.filter((item) => item.salesmanId === currentUser.id || item.salesmanName === currentUser.fullName);
-  const myOrderIds = new Set(myOrders.flatMap((item) => [item.id, orderPublicId(item)]));
-  const underPriceOrders = myOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("rate below last purchase price"));
-  const undeliveredOrders = myOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed");
-  const pendingCollections = snapshot.ledgerEntries.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId) && item.pendingAmount > 0);
-  const payments = snapshot.payments.filter((item) => item.side === "Sales" && myOrderIds.has(item.linkedOrderId)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const today = new Date().toISOString().slice(0, 10);
+  const visibleOrders = scope === "all"
+    ? snapshot.salesOrders
+    : snapshot.salesOrders.filter((item) => item.salesmanId === currentUser.id || item.salesmanName === currentUser.fullName);
+  const visibleOrderIds = new Set(visibleOrders.flatMap((item) => [item.id, orderPublicId(item)]));
+  const underPriceOrders = visibleOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("rate below last purchase price"));
+  const undeliveredOrders = visibleOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed");
+  const pendingCollections = snapshot.ledgerEntries.filter((item) => item.side === "Sales" && visibleOrderIds.has(item.linkedOrderId) && item.pendingAmount > 0);
+  const payments = snapshot.payments.filter((item) => item.side === "Sales" && visibleOrderIds.has(item.linkedOrderId)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const collectionGroups = groupSalesOrders(visibleOrders)
+    .map((group) => {
+      const first = group.lines[0];
+      const totalAmount = salesOrderPublicTotal(snapshot.salesOrders, group.id);
+      const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      return {
+        id: group.id,
+        lines: group.lines,
+        shopName: first?.shopName || "Customer",
+        searchText: `${group.id} ${first?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase(),
+        totalAmount,
+        paidAmount: ledger?.paidAmount ?? 0,
+        pendingAmount: ledger?.pendingAmount ?? totalAmount,
+        paymentMode: first?.paymentMode || "Cash",
+        cashTiming: first?.cashTiming || "",
+        deliveryMode: first?.deliveryMode || "Delivery",
+        latestPayment: latestSalesPayment(snapshot, group.id)
+      };
+    })
+    .filter((group) => group.pendingAmount > 0);
   const [drafts, setDrafts] = useState<Record<string, { amount: string; referenceNumber: string; voucherNumber: string; utrNumber: string; proofName: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string }>>({});
+  const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; referenceNumber: string; voucherNumber: string; utrNumber: string; proofName: string; verificationNote: string; operationDate: string }>>({});
+  const [searchText, setSearchText] = useState("");
+  const [expandedOrderId, setExpandedOrderId] = useState("");
 
   function getDraft(payment: AppSnapshot["payments"][number]) {
     return drafts[payment.id] || {
@@ -3645,8 +3915,95 @@ function SalesPaymentsView({
     setDrafts((current) => ({ ...current, [paymentId]: { ...getDraft(payments.find((item) => item.id === paymentId)!), [field]: value } }));
   }
 
+  function getCollectionDraft(orderId: string) {
+    const order = collectionGroups.find((item) => item.id === orderId);
+    return collectionDrafts[orderId] || {
+      amount: String(order?.pendingAmount || 0),
+      mode: (order?.paymentMode || "Cash") as PaymentMode,
+      cashTiming: order?.cashTiming || "",
+      referenceNumber: "",
+      voucherNumber: "",
+      utrNumber: "",
+      proofName: "",
+      verificationNote: scope === "all" ? "Collection recorded by collection agent" : "Collection recorded by sales",
+      operationDate: today
+    };
+  }
+
+  function setCollectionDraftValue(orderId: string, field: string, value: string) {
+    setCollectionDrafts((current) => ({ ...current, [orderId]: { ...getCollectionDraft(orderId), [field]: value } }));
+  }
+
+  const filteredGroups = collectionGroups.filter((group) => group.searchText.includes(searchText.trim().toLowerCase()));
+
   return (
     <section className="dashboard-grid">
+      <Panel title={scope === "all" ? "Customer Collections" : "My Customer Collections"} eyebrow="Search and settle unpaid SOs">
+        <div className="form-grid">
+          <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
+        </div>
+        <div className="stack-list payment-update-list top-gap">
+          {filteredGroups.length === 0 ? <div className="empty-card">No unsettled sales orders found.</div> : filteredGroups.map((group) => {
+            const draft = getCollectionDraft(group.id);
+            const proofUrl = draft.proofName ? `${API_BASE}/uploads/payment-proofs/${draft.proofName}` : group.latestPayment?.proofName ? `${API_BASE}/uploads/payment-proofs/${group.latestPayment.proofName}` : "";
+            const expanded = expandedOrderId === group.id;
+            return <article className="list-card payment-update-card" key={group.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{group.id}</strong>
+                  <p>{group.shopName} · {group.lines.length} line(s) · {group.deliveryMode}</p>
+                </div>
+                <span className="status-pill status-pending">{group.pendingAmount.toFixed(2)} pending</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">Total</span><strong>{group.totalAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Paid</span><strong>{group.paidAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Pending</span><strong>{group.pendingAmount.toFixed(2)}</strong></div>
+                <div><span className="small-label">Order payment</span><strong>{group.paymentMode}{group.cashTiming ? ` / ${group.cashTiming}` : ""}</strong></div>
+              </div>
+              <div className="payment-card-actions top-gap">
+                <button className="ghost-button" type="button" onClick={() => setExpandedOrderId((current) => current === group.id ? "" : group.id)}>{expanded ? "Hide collection" : "Collect / update"}</button>
+              </div>
+              {expanded ? <form className="form-grid top-gap" onSubmit={async (event) => {
+                event.preventDefault();
+                await onCreatePayment({
+                  side: "Sales",
+                  linkedOrderId: group.id,
+                  amount: Number(draft.amount || 0),
+                  mode: draft.mode,
+                  cashTiming: draft.mode === "Cash" ? draft.cashTiming as "In Hand" | "At Delivery" : undefined,
+                  referenceNumber: draft.referenceNumber,
+                  voucherNumber: draft.voucherNumber || undefined,
+                  utrNumber: draft.utrNumber || undefined,
+                  proofName: draft.proofName || undefined,
+                  verificationStatus: "Submitted",
+                  verificationNote: draft.verificationNote,
+                  operationDate: draft.operationDate || undefined
+                });
+              }}>
+                <label>Amount<input type="number" min="0" max={group.pendingAmount} value={draft.amount} onChange={(e) => setCollectionDraftValue(group.id, "amount", e.target.value)} /></label>
+                <label>Mode<select value={draft.mode} onChange={(e) => setCollectionDraftValue(group.id, "mode", e.target.value)}>
+                  <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
+                </select></label>
+                <label>Date<input type="date" value={draft.operationDate} onChange={(e) => setCollectionDraftValue(group.id, "operationDate", e.target.value)} /></label>
+                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+                <label>Reference<input value={draft.referenceNumber} onChange={(e) => setCollectionDraftValue(group.id, "referenceNumber", e.target.value)} placeholder={draft.mode === "Cash" ? "Receipt / slip no." : "Reference no."} /></label>
+                <label>Voucher<input value={draft.voucherNumber} onChange={(e) => setCollectionDraftValue(group.id, "voucherNumber", e.target.value)} /></label>
+                <label>UTR<input value={draft.utrNumber} onChange={(e) => setCollectionDraftValue(group.id, "utrNumber", e.target.value)} placeholder="For bank receipt / transfer" /></label>
+                <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setCollectionDraftValue(group.id, "proofName", String((uploaded as { fileName: string }).fileName)); }} /></label>
+                <label>Proof name<input value={draft.proofName} onChange={(e) => setCollectionDraftValue(group.id, "proofName", e.target.value)} /></label>
+                <label className="wide-field">Note<input value={draft.verificationNote} onChange={(e) => setCollectionDraftValue(group.id, "verificationNote", e.target.value)} placeholder="Cash collected or bank-received note" /></label>
+                <div className="payment-card-actions wide-field">
+                  <button className="ghost-button" type="button" onClick={() => setCollectionDraftValue(group.id, "amount", group.pendingAmount.toFixed(2))}>Set full</button>
+                  <button className="primary-button" type="submit">Submit collection</button>
+                  {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                </div>
+                {Number(draft.amount || 0) > 0 && Number(draft.amount || 0) < group.pendingAmount ? <p className="message success wide-field">This will settle the order partially. Remaining amount stays pending.</p> : null}
+              </form> : null}
+            </article>;
+          })}
+        </div>
+      </Panel>
       <Panel title="Pending Orders" eyebrow="Undelivered and flagged">
         <div className="stack-list payment-update-list">
           {[...undeliveredOrders, ...underPriceOrders.filter((order) => !undeliveredOrders.some((item) => item.id === order.id))].slice(0, 12).map((order) => {
@@ -3670,7 +4027,7 @@ function SalesPaymentsView({
           {undeliveredOrders.length === 0 && underPriceOrders.length === 0 ? <div className="empty-card">No pending sales orders.</div> : null}
         </div>
       </Panel>
-      <Panel title="Payment Proof Updates" eyebrow="Show to shopkeeper or share">
+      <Panel title="Payment Proof Updates" eyebrow="Show to customer or share">
         <div className="stack-list payment-update-list">
           {payments.length === 0 ? <div className="empty-card">No sales payments found yet.</div> : payments.map((payment) => {
             const draft = getDraft(payment);
@@ -3739,21 +4096,56 @@ function AccountsPaymentsView({
     proofName?: string;
     verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
     verificationNote: string;
+    operationDate?: string;
   }) => Promise<boolean | void>;
-  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
+  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; transportType?: DeliveryTask["transportType"]; vehicleNumber?: string; freightAmount?: number; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onVerify: (paymentId: string, verificationStatus: "Verified" | "Rejected" | "Resolved", verificationNote: string) => Promise<boolean | void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-    const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
-    const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified" || item.verificationStatus === "Resolved");
+  const pending = snapshot.payments.filter((item) => item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved");
+  const completed = snapshot.payments.filter((item) => item.verificationStatus === "Verified" || item.verificationStatus === "Resolved");
   const dayCash = snapshot.payments.filter((item) => item.mode === "Cash" && item.createdAt.slice(0, 10) === today).reduce((sum, item) => sum + item.amount, 0);
   const deliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
-    const accountOrderOptions = [
-      ...groupPurchaseOrders(snapshot.purchaseOrders).map((group) => ({ id: group.id, side: "Purchase" as const, party: group.lines[0]?.supplierName || "Supplier", pendingAmount: purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id) })),
-      ...Array.from(new Set(snapshot.salesOrders.map((order) => orderPublicId(order)))).map((id) => ({ id, side: "Sales" as const, party: findSalesOrderByPublicId(snapshot.salesOrders, id)?.shopName || "Customer", pendingAmount: snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, id) }))
-    ].filter((item) => item.pendingAmount > 0);
-    const purchaseOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Purchase");
-    const salesOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Sales");
+  const purchaseOrderRows = groupPurchaseOrders(snapshot.purchaseOrders)
+    .map((group) => {
+      const first = group.lines[0];
+      const totalAmount = purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id);
+      const ledger = purchaseLedgerByOrder(snapshot, group.id);
+      return {
+        id: group.id,
+        side: "Purchase" as const,
+        party: group.lines[0]?.supplierName || "Supplier",
+        pendingAmount: ledger?.pendingAmount ?? totalAmount,
+        paidAmount: ledger?.paidAmount ?? 0,
+        totalAmount,
+        workflowStatus: purchaseWorkflowStatus(snapshot, group.id),
+        paymentMode: first?.paymentMode || "Cash",
+        cashTiming: first?.cashTiming || "",
+        latestPayment: latestPurchasePayment(snapshot, group.id)
+      };
+    })
+    .sort((left, right) => Number(right.pendingAmount > 0) - Number(left.pendingAmount > 0) || right.id.localeCompare(left.id));
+  const salesOrderRows = groupSalesOrders(snapshot.salesOrders)
+    .map((group) => {
+      const totalAmount = salesOrderPublicTotal(snapshot.salesOrders, group.id);
+      const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      return {
+        id: group.id,
+        side: "Sales" as const,
+        party: group.lines[0]?.shopName || "Customer",
+        pendingAmount: ledger?.pendingAmount ?? totalAmount,
+        paidAmount: ledger?.paidAmount ?? 0,
+        totalAmount,
+        workflowStatus: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
+        paymentMode: group.lines[0]?.paymentMode || "Cash",
+        cashTiming: group.lines[0]?.cashTiming || "",
+        latestPayment: latestSalesPayment(snapshot, group.id)
+      };
+    })
+    .sort((left, right) => Number(right.pendingAmount > 0) - Number(left.pendingAmount > 0) || right.id.localeCompare(left.id));
+  const accountOrderOptions = [...purchaseOrderRows, ...salesOrderRows].filter((item) => item.pendingAmount > 0);
+  const purchaseOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Purchase");
+  const salesOrderPendingOptions = accountOrderOptions.filter((item) => item.side === "Sales");
   const [createForm, setCreateForm] = useState({
     side: (accountOrderOptions[0]?.side || "Purchase") as "Purchase" | "Sales",
     linkedOrderId: accountOrderOptions[0]?.id || "",
@@ -3765,20 +4157,111 @@ function AccountsPaymentsView({
     utrNumber: "",
     proofName: "",
     verificationStatus: "Verified" as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved",
-    verificationNote: "Payment recorded by accounts"
+    verificationNote: "Payment recorded by accounts",
+    operationDate: today
   });
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
+  const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
+
+  function loadOrderIntoForm(side: "Purchase" | "Sales", linkedOrderId: string) {
+    const order = accountOrderOptions.find((item) => item.side === side && item.id === linkedOrderId);
+    setCreateForm((current) => ({
+      ...current,
+      side,
+      linkedOrderId,
+      amount: String(order?.pendingAmount || current.amount),
+      mode: order?.paymentMode || current.mode,
+      cashTiming: order?.cashTiming || "",
+      referenceNumber: "",
+      voucherNumber: "",
+      utrNumber: "",
+      proofName: "",
+      verificationStatus: "Verified",
+      verificationNote: side === "Purchase" ? "Purchase payment recorded by accounts" : "Customer payment recorded by accounts",
+      operationDate: current.operationDate || today
+    }));
+  }
+
   return (
     <section className="dashboard-grid">
-        <Panel title="Orders Awaiting Accounts Action" eyebrow="Order-wise pending balance">
-          <DataTable
-            headers={["Side","Order","Party","Pending"]}
-            rows={accountOrderOptions.length === 0
-              ? []
-              : accountOrderOptions.map((item) => [item.side, item.id, item.party, item.pendingAmount.toFixed(2)])}
-          />
-        </Panel>
-        <Panel title="Record Payment" eyebrow="Accounts entry">
+      <Panel title="Accounts Queue" eyebrow="Pending vs completed">
+        <div className="simple-summary payment-summary-grid">
+          <div className="list-card"><div><strong>{purchaseOrderRows.filter((item) => item.pendingAmount > 0).length}</strong><p>Purchase pending</p></div></div>
+          <div className="list-card"><div><strong>{salesOrderRows.filter((item) => item.pendingAmount > 0).length}</strong><p>Sales pending</p></div></div>
+          <div className="list-card"><div><strong>{pending.length}</strong><p>Payment proofs pending</p></div></div>
+          <div className="list-card"><div><strong>{completed.length}</strong><p>Payments completed</p></div></div>
+          <div className="list-card"><div><strong>{dayCash.toFixed(2)}</strong><p>Cash entered today</p></div></div>
+        </div>
+      </Panel>
+      <TwoCol
+        left={<Panel title="Purchase Orders" eyebrow="Accounts visibility">
+          <div className="stack-list payment-update-list">
+            {purchaseOrderRows.length === 0 ? <div className="empty-card">No purchase orders yet.</div> : purchaseOrderRows.map((item) => (
+              <article className="list-card payment-update-card" key={`purchase-${item.id}`}>
+                <div className="payment-update-head">
+                  <div>
+                    <strong>{item.id}</strong>
+                    <p>{item.party}</p>
+                  </div>
+                  <span className={`status-pill ${item.pendingAmount > 0 ? "status-pending" : "status-completed"}`}>{item.pendingAmount > 0 ? "Payment Pending" : "Payment Completed"}</span>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Total</span><strong>{item.totalAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Paid</span><strong>{item.paidAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Pending</span><strong>{item.pendingAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Order payment</span><strong>{item.paymentMode}{item.cashTiming ? ` / ${item.cashTiming}` : ""}</strong></div>
+                  <div className="wide-field"><span className="small-label">Status</span><strong>{item.workflowStatus}</strong></div>
+                </div>
+                <div className="payment-card-actions top-gap">
+                  <button className="ghost-button" type="button" onClick={() => setExpandedAccountsOrder((current) => current === `purchase-${item.id}` ? "" : `purchase-${item.id}`)}>{expandedAccountsOrder === `purchase-${item.id}` ? "Hide details" : "Expand"}</button>
+                </div>
+                {expandedAccountsOrder === `purchase-${item.id}` ? <div className="payment-meta-grid top-gap">
+                  <div><span className="small-label">Latest ref</span><strong>{item.latestPayment?.referenceNumber || item.latestPayment?.utrNumber || "Pending"}</strong></div>
+                  <div><span className="small-label">Latest proof</span><strong>{item.latestPayment?.proofName || "Not uploaded"}</strong></div>
+                  <div className="wide-field"><span className="small-label">Accounts action</span><strong>{item.paymentMode === "Cash" ? "Check cash receipt / handover" : "Check bank credit and reference before completing"}</strong></div>
+                </div> : null}
+                {item.pendingAmount > 0 ? <div className="payment-card-actions top-gap">
+                  <button className="primary-button" type="button" onClick={() => loadOrderIntoForm("Purchase", item.id)}>Tag payment</button>
+                </div> : null}
+              </article>
+            ))}
+          </div>
+        </Panel>}
+        right={<Panel title="Sales Orders" eyebrow="Accounts visibility">
+          <div className="stack-list payment-update-list">
+            {salesOrderRows.length === 0 ? <div className="empty-card">No sales orders yet.</div> : salesOrderRows.map((item) => (
+              <article className="list-card payment-update-card" key={`sales-${item.id}`}>
+                <div className="payment-update-head">
+                  <div>
+                    <strong>{item.id}</strong>
+                    <p>{item.party}</p>
+                  </div>
+                  <span className={`status-pill ${item.pendingAmount > 0 ? "status-pending" : "status-completed"}`}>{item.pendingAmount > 0 ? "Payment Pending" : "Payment Completed"}</span>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Total</span><strong>{item.totalAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Paid</span><strong>{item.paidAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Pending</span><strong>{item.pendingAmount.toFixed(2)}</strong></div>
+                  <div><span className="small-label">Order payment</span><strong>{item.paymentMode}{item.cashTiming ? ` / ${item.cashTiming}` : ""}</strong></div>
+                  <div className="wide-field"><span className="small-label">Status</span><strong>{item.workflowStatus}</strong></div>
+                </div>
+                <div className="payment-card-actions top-gap">
+                  <button className="ghost-button" type="button" onClick={() => setExpandedAccountsOrder((current) => current === `sales-${item.id}` ? "" : `sales-${item.id}`)}>{expandedAccountsOrder === `sales-${item.id}` ? "Hide details" : "Expand"}</button>
+                </div>
+                {expandedAccountsOrder === `sales-${item.id}` ? <div className="payment-meta-grid top-gap">
+                  <div><span className="small-label">Latest ref</span><strong>{item.latestPayment?.referenceNumber || item.latestPayment?.utrNumber || "Pending"}</strong></div>
+                  <div><span className="small-label">Latest proof</span><strong>{item.latestPayment?.proofName || "Not uploaded"}</strong></div>
+                  <div className="wide-field"><span className="small-label">Accounts action</span><strong>{item.paymentMode === "Cash" ? "Mark cash received when collection is handed over" : "Enter UTR / bank reference when money hits the bank"}</strong></div>
+                </div> : null}
+                {item.pendingAmount > 0 ? <div className="payment-card-actions top-gap">
+                  <button className="primary-button" type="button" onClick={() => loadOrderIntoForm("Sales", item.id)}>Tag payment</button>
+                </div> : null}
+              </article>
+            ))}
+          </div>
+        </Panel>}
+      />
+      <Panel title="Record Payment" eyebrow="Accounts entry">
         <form className="form-grid" onSubmit={async (event) => {
           event.preventDefault();
           await onCreatePayment({
@@ -3792,7 +4275,8 @@ function AccountsPaymentsView({
             utrNumber: createForm.utrNumber || undefined,
             proofName: createForm.proofName || undefined,
             verificationStatus: createForm.verificationStatus,
-            verificationNote: createForm.verificationNote
+            verificationNote: createForm.verificationNote,
+            operationDate: createForm.operationDate || undefined
           });
         }}>
           <label>Side<select value={createForm.side} onChange={(e) => {
@@ -3805,6 +4289,7 @@ function AccountsPaymentsView({
               setCreateForm((current) => ({ ...current, linkedOrderId: e.target.value, amount: String(next?.pendingAmount || current.amount) }));
             }}>{(createForm.side === "Purchase" ? purchaseOrderPendingOptions : salesOrderPendingOptions).map((item) => <option key={`${item.side}-${item.id}`} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
           <label>Amount<input type="number" value={createForm.amount} onChange={(e) => setCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
+          <label>Payment date<input type="date" value={createForm.operationDate} onChange={(e) => setCreateForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
           <label>Mode<select value={createForm.mode} onChange={(e) => setCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
           {createForm.mode === "Cash" ? <label>Cash timing<select value={createForm.cashTiming} onChange={(e) => setCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
           <label>Reference<input value={createForm.referenceNumber} onChange={(e) => setCreateForm((current) => ({ ...current, referenceNumber: e.target.value }))} /></label>
@@ -3889,7 +4374,7 @@ function WarehouseOperationsView({
   onUploadProof: (file: File) => Promise<unknown>;
   onReceive: (body: { purchaseOrderId: string; warehouseId: string; receivedQuantity: number; actualWeightKg: number; containerWeightKg?: number; weighingProofName?: string; note: string; confirmPartial: boolean }) => Promise<boolean | void>;
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; containerWeightKg?: number; weighingProofName?: string }) => Promise<boolean | void>;
-  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
+  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; transportType?: DeliveryTask["transportType"]; vehicleNumber?: string; freightAmount?: number; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<boolean | void>;
 }) {
   const incomingOrders = snapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed").sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -4103,7 +4588,7 @@ function WarehouseOperationsViewV2({
   }) => Promise<boolean | void>;
   onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; containerWeightKg?: number; weighingProofName?: string }) => Promise<boolean | void>;
   onCreateDockets: (body: { linkedOrderIds: string[] }) => Promise<boolean | void>;
-  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; consignmentId?: string; mode: DeliveryTask["mode"]; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
+  onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; consignmentId?: string; mode: DeliveryTask["mode"]; transportType?: DeliveryTask["transportType"]; vehicleNumber?: string; freightAmount?: number; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onMergeDeliveryTasks: (body: { taskIds: string[] }) => Promise<boolean | void>;
   onCreateConsignment: (body: { docketIds: string[]; warehouseId: string; assignedTo: string; status: string }) => Promise<boolean | void>;
   screen?: "full" | "in" | "out";
@@ -4129,6 +4614,12 @@ function WarehouseOperationsViewV2({
   const [selectedPlannedOutboundTaskIds, setSelectedPlannedOutboundTaskIds] = useState<string[]>([]);
   const [inboundAssignedTo, setInboundAssignedTo] = useState<string[]>(["in"]);
   const [outboundAssignedTo, setOutboundAssignedTo] = useState<string[]>(["out"]);
+  const [inboundTransportType, setInboundTransportType] = useState<DeliveryTask["transportType"]>("Internal");
+  const [outboundTransportType, setOutboundTransportType] = useState<DeliveryTask["transportType"]>("Internal");
+  const [inboundExternalVehicleNumber, setInboundExternalVehicleNumber] = useState("");
+  const [outboundExternalVehicleNumber, setOutboundExternalVehicleNumber] = useState("");
+  const [inboundExternalFreightAmount, setInboundExternalFreightAmount] = useState("0");
+  const [outboundExternalFreightAmount, setOutboundExternalFreightAmount] = useState("0");
   const [submittingInboundTag, setSubmittingInboundTag] = useState(false);
   const [submittingOutboundTag, setSubmittingOutboundTag] = useState(false);
   const [submittingConsignment, setSubmittingConsignment] = useState(false);
@@ -4627,10 +5118,13 @@ function WarehouseOperationsViewV2({
           <span>{groups.length} stops</span>
           <span>{totalPendingQty} pending</span>
           <span>{totalPendingWeight.toFixed(2)} kg</span>
+          <span>{task.transportType}</span>
+          {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
           <span>{new Date(task.createdAt).toLocaleString("en-IN")}</span>
         </div>
         <span className="status-pill status-pending">{docketStatus}</span>
       </button>
+      {task.transportType === "External" && task.freightAmount ? <p className="message success">External vehicle {task.vehicleNumber || "Pending"} · Freight {task.freightAmount.toFixed(2)}</p> : null}
       {expanded ? <div className="stack-list top-gap">
         {vendorGroups.map((group) => {
           const first = group.lines[0];
@@ -4807,10 +5301,13 @@ function WarehouseOperationsViewV2({
           <span>{totalQty} qty</span>
           <span>{totalAmount.toFixed(2)}</span>
           {consignment ? <span>{consignment.totalWeightKg.toFixed(2)} kg</span> : null}
+          <span>{task.transportType}</span>
+          {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
           <span>{new Date(task.createdAt).toLocaleString("en-IN")}</span>
         </div>
         <span className="status-pill status-pending">{deliveryTaskStatusLabel(task)}</span>
       </button>
+      {task.transportType === "External" && task.freightAmount ? <p className="message success">External vehicle {task.vehicleNumber || "Pending"} · Freight {task.freightAmount.toFixed(2)}</p> : null}
       {expanded ? <div className="stack-list top-gap">
         {groups.map((group) => {
           const stopKey = `${task.id}:${group.id}`;
@@ -4995,9 +5492,12 @@ function WarehouseOperationsViewV2({
                 linkedOrderId: chosenGroups[0].id,
                 linkedOrderIds: chosenGroups.map((group) => group.id),
                 mode: "Self Collection",
+                transportType: inboundTransportType,
+                vehicleNumber: inboundTransportType === "External" ? inboundExternalVehicleNumber : undefined,
+                freightAmount: inboundTransportType === "External" ? Number(inboundExternalFreightAmount || 0) : undefined,
                 from: routeStops.map((stop) => stop.supplierName).join(", "),
                 to: destination?.name || chosenGroups[0].lines[0].warehouseId,
-                assignedTo: inboundAssignedTo.join(", "),
+                assignedTo: inboundTransportType === "External" ? inboundExternalVehicleNumber : inboundAssignedTo.join(", "),
                 paymentAction: routeStops.some((stop) => stop.paymentRequired) ? "Deliver Payment" : "None",
                 cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired),
                 routeHint: routeLabels.join(" -> "),
@@ -5010,7 +5510,11 @@ function WarehouseOperationsViewV2({
               setSubmittingInboundTag(false);
             }
           }}>
-            <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+            <label>Transport<select value={inboundTransportType} disabled={submittingInboundTag} onChange={(e) => setInboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
+            {inboundTransportType === "Internal" ? <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
+              <label>Vehicle number<input value={inboundExternalVehicleNumber} disabled={submittingInboundTag} onChange={(e) => setInboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
+              <label>Freight amount<input type="number" value={inboundExternalFreightAmount} disabled={submittingInboundTag} onChange={(e) => setInboundExternalFreightAmount(e.target.value)} /></label>
+            </>}
             <div className="wide-field stack-list warehouse-order-list">
               {inboundSuggestionGroups().map((bucket, index) => {
                 const mapUrl = mapsDirectionsUrl([...bucket.map((group) => supplierAddress(group)), warehouseById.get(bucket[0]?.lines[0]?.warehouseId || "")?.name || "Warehouse"]);
@@ -5147,9 +5651,12 @@ function WarehouseOperationsViewV2({
                   linkedOrderIds: chosenGroups.map((group) => group.id),
                   consignmentId: selectedConsignments[0].id,
                   mode: "Delivery",
+                  transportType: outboundTransportType,
+                  vehicleNumber: outboundTransportType === "External" ? outboundExternalVehicleNumber : undefined,
+                  freightAmount: outboundTransportType === "External" ? Number(outboundExternalFreightAmount || 0) : undefined,
                   from: chosenGroups[0].lines[0].warehouseId,
                   to: routeStops.map((stop) => stop.supplierName).join(", "),
-                  assignedTo: outboundAssignedTo.join(", "),
+                  assignedTo: outboundTransportType === "External" ? outboundExternalVehicleNumber : outboundAssignedTo.join(", "),
                   paymentAction: routeStops.some((stop) => stop.paymentRequired) ? "Collect Payment" : "None",
                   cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash"),
                   routeHint: routeStops.map((stop) => stop.locationLabel || stop.supplierName).join(" -> "),
@@ -5162,7 +5669,11 @@ function WarehouseOperationsViewV2({
                 setSubmittingOutboundTag(false);
               }
             }}>
-              <label>Out delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label>
+              <label>Transport<select value={outboundTransportType} disabled={submittingOutboundTag} onChange={(e) => setOutboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
+              {outboundTransportType === "Internal" ? <label>Out delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
+                <label>Vehicle number<input value={outboundExternalVehicleNumber} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
+                <label>Freight amount<input type="number" value={outboundExternalFreightAmount} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalFreightAmount(e.target.value)} /></label>
+              </>}
               <div className="wide-field stack-list warehouse-order-list">
                 {bundleReadyConsignments.length === 0 ? <div className="empty-card">{openDockets.length > 0 ? `${openDockets.length} docket(s) are ready, but not bundled yet. Open Bundle first, create a consignment, then come back to Tag.` : "No bundled consignments waiting for delivery tagging."}</div> : bundleReadyConsignments.map((consignment) => {
                   const groups = sortOrdersForOutboundTag(consignmentGroups(consignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
@@ -5747,6 +6258,9 @@ function DeliveryManagerHome({
     linkedOrderIds: string[];
     consignmentId?: string;
     assignedTo: string;
+    transportType?: DeliveryTask["transportType"];
+    vehicleNumber?: string;
+    freightAmount?: number;
     routeStops?: DeliveryTask["routeStops"];
     pickupAt?: string;
     dropAt?: string;
@@ -5930,6 +6444,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
     quickActions.push({ title: "Check Payments", text: "Verify payment records.", view: "Payments" });
     quickActions.push({ title: "Check Ledger", text: "See pending and settled amounts.", view: "Ledger" });
   }
+  if (roles.includes("Collection Agent")) {
+    quickActions.push({ title: "Collect Cash", text: "Search unpaid sales orders and record collections.", view: "SalesOrders" });
+    quickActions.push({ title: "Sales Report", text: "See customer orders before collection.", view: "SalesOrders" });
+  }
   if (roles.includes("Data Analyst")) {
     quickActions.push({ title: "Purchase Report", text: "See all purchase orders in a simple table.", view: "Purchases" });
     quickActions.push({ title: "Sales Report", text: "See all sales orders in a simple table.", view: "SalesOrders" });
@@ -6024,9 +6542,9 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
   );
 }
 
-function AnalystSalesView({ orders }: { orders: SalesOrder[] }) {
+function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders: SalesOrder[] }) {
   const headers = ["SO / Cart", "Shop", "Products", "Taxable", "GST", "Total", "Status"];
-  const rows = groupSalesRows(orders);
+  const rows = groupSalesRows(orders, snapshot);
   return (
     <Panel title="Sales Report" eyebrow="Analyst view">
       <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button></div>

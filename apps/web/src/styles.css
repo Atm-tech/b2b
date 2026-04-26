@@ -550,6 +550,10 @@ textarea {
 
 .simple-tab-bar .tab-button {
   min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.74);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0)),
@@ -671,6 +675,10 @@ textarea {
 
 .purchase-module-tab-bar .tab-button {
   min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   background: rgba(255, 255, 255, 0.88);
 }
 
@@ -682,6 +690,33 @@ textarea {
 .purchase-module-tab-bar .po-tab-button {
   font-size: 1.05rem;
   font-weight: 900;
+}
+
+.summary-switch-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.summary-switch-bar .tab-button {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.88);
+  font-weight: 800;
+}
+
+.summary-switch-bar .tab-button.active {
+  background: linear-gradient(135deg, #4f9494, #3d7f7f);
+  box-shadow: inset 0 0 0 1px rgba(35, 93, 93, 0.35);
+  color: #fff;
 }
 
 .purchase-status-title {
@@ -722,6 +757,10 @@ textarea {
 
 .delivery-module-tab-bar .tab-button {
   min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   background: rgba(255, 255, 255, 0.88);
 }
 
@@ -1917,11 +1956,29 @@ textarea {
     padding: clamp(6px, 1.8vw, 10px);
   }
 
+  .summary-switch-bar {
+    display: flex;
+    gap: clamp(4px, 1.4vw, 8px);
+    padding: clamp(6px, 1.8vw, 10px);
+  }
+
   .purchase-module-tab-bar .tab-button {
     flex: 1 1 0;
     min-width: 0;
     padding: clamp(8px, 2vw, 12px) clamp(4px, 1.8vw, 10px);
     font-size: clamp(0.62rem, 2.4vw, 0.82rem);
+    border-radius: 16px;
+    min-height: clamp(42px, 10vw, 54px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .summary-switch-bar .tab-button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: clamp(8px, 2vw, 12px) clamp(4px, 1.8vw, 10px);
+    font-size: clamp(0.7rem, 2.5vw, 0.86rem);
     border-radius: 16px;
     min-height: clamp(42px, 10vw, 54px);
     white-space: nowrap;
