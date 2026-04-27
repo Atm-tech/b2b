@@ -219,6 +219,19 @@ function orderPublicId(order: { id: string; cartId?: string }) {
   return order.cartId || order.id;
 }
 
+function prioritizeWarehouseIds(warehouseIds: string[]) {
+  return [...warehouseIds].sort((left, right) => {
+    const leftPriority = left.trim().toLowerCase() === "gp" ? 0 : 1;
+    const rightPriority = right.trim().toLowerCase() === "gp" ? 0 : 1;
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+    return left.localeCompare(right);
+  });
+}
+
+function preferredWarehouseId(warehouseIds: string[]) {
+  return prioritizeWarehouseIds(warehouseIds)[0] || "";
+}
+
 function groupOldestCreatedAt<T extends { createdAt: string }>(lines: T[]) {
   return Math.min(...lines.map((line) => new Date(line.createdAt).getTime()));
 }
@@ -1830,7 +1843,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       return;
     }
     const quantityText = String(popup.quantity);
-    const resolvedWarehouseId = orderForm.warehouseId || popup.product.allowedWarehouseIds[0] || "";
+    const resolvedWarehouseId = orderForm.warehouseId || preferredWarehouseId(popup.product.allowedWarehouseIds);
     const lineNote = !isPurchase && popup.lastRate > 0 && nextRate < popup.lastRate
       ? `Rate below last purchase price: sales rate ${nextRate}, last purchase ${popup.lastRate} for ${popup.product.sku}.`
       : orderForm.note;
@@ -1864,7 +1877,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       productSku: popup.product.sku,
       rate: String(nextRate),
       previousRate: String(popup.lastRate || 0),
-      warehouseId: current.warehouseId || popup.product.allowedWarehouseIds[0] || "",
+      warehouseId: current.warehouseId || preferredWarehouseId(popup.product.allowedWarehouseIds),
       taxableAmount: lineTotals.taxableAmount,
       gstRate: popup.gstRate,
       gstAmount: lineTotals.gstAmount,
@@ -2922,11 +2935,11 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
       </div>
       {viewMode === "orders" ? <>
-      {groups.length > 0 ? <article className="list-card">
+      {groups.length > 0 ? <article className="list-card purchase-summary-stats">
         <div className="payment-meta-grid">
-          <div><span className="small-label">Pickup queue</span><strong><LabelWithBadge label="Pickup pending" count={pickupPendingCount} /></strong></div>
-          <div><span className="small-label">Warehouse queue</span><strong><LabelWithBadge label="Receiving" count={receivingPendingCount} /></strong></div>
-          <div><span className="small-label">Accounts follow-up</span><strong><LabelWithBadge label="Payment pending" count={paymentPendingCount} /></strong></div>
+          <div><span className="small-label">Pickup queue</span><strong className="summary-stat-value"><span>Pickup pending</span><PendingBadge count={pickupPendingCount} /></strong></div>
+          <div><span className="small-label">Warehouse queue</span><strong className="summary-stat-value"><span>Receiving</span><PendingBadge count={receivingPendingCount} /></strong></div>
+          <div><span className="small-label">Accounts follow-up</span><strong className="summary-stat-value"><span>Payment pending</span><PendingBadge count={paymentPendingCount} /></strong></div>
         </div>
       </article> : null}
       {filteredStatusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : filteredStatusSections.map(([status, statusGroups]) => (
@@ -6591,7 +6604,7 @@ function ProductAdminView({
   onBulkImport: (rows: object[]) => void;
   onBulkUpload: () => Promise<void>;
 }) {
-  const emptyForm: ProductFormState = { sku: "", name: "", division: "", department: "", section: "", category: "", unit: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: snapshot.warehouses.map((warehouse) => warehouse.id) };
+  const emptyForm: ProductFormState = { sku: "", name: "", division: "", department: "", section: "", category: "", unit: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id)) };
   const [selectedSku, setSelectedSku] = useState("");
   const [skuSearch, setSkuSearch] = useState("");
   const filteredProductOptions = snapshot.products.filter((product) => `${product.sku} ${product.name} ${product.division} ${product.department} ${product.section}`.toLowerCase().includes(skuSearch.trim().toLowerCase()));
@@ -6608,7 +6621,7 @@ function ProductAdminView({
       defaultWeightKg: Number(form.defaultWeightKg),
       toleranceKg: Number(form.toleranceKg),
       tolerancePercent: Number(form.tolerancePercent),
-      allowedWarehouseIds: form.allowedWarehouseIds.length > 0 ? form.allowedWarehouseIds : snapshot.warehouses.map((warehouse) => warehouse.id)
+      allowedWarehouseIds: prioritizeWarehouseIds(form.allowedWarehouseIds.length > 0 ? form.allowedWarehouseIds : snapshot.warehouses.map((warehouse) => warehouse.id))
     };
   }
 
@@ -6655,7 +6668,7 @@ function ProductAdminView({
           <label>Per item / bundle weight<input type="number" value={productForm.defaultWeightKg} onChange={(event) => setProductForm((current) => ({ ...current, defaultWeightKg: event.target.value }))} /></label>
           <label>Tol. Kg<input type="number" value={productForm.toleranceKg} onChange={(event) => setProductForm((current) => ({ ...current, toleranceKg: event.target.value }))} /></label>
           <label>Tol. %<input type="number" value={productForm.tolerancePercent} onChange={(event) => setProductForm((current) => ({ ...current, tolerancePercent: event.target.value }))} /></label>
-          <label>Warehouses<select multiple value={productForm.allowedWarehouseIds.length > 0 ? productForm.allowedWarehouseIds : snapshot.warehouses.map((warehouse) => warehouse.id)} onChange={(event) => setProductForm((current) => ({ ...current, allowedWarehouseIds: Array.from(event.target.selectedOptions).map((option) => option.value) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
+          <label>Warehouses<select multiple value={productForm.allowedWarehouseIds.length > 0 ? productForm.allowedWarehouseIds : prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id))} onChange={(event) => setProductForm((current) => ({ ...current, allowedWarehouseIds: prioritizeWarehouseIds(Array.from(event.target.selectedOptions).map((option) => option.value)) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
           <div className="payment-card-actions wide-field">
             <button className="primary-button" type="submit">{selectedSku ? "Modify product" : "Create product"}</button>
             <button className="ghost-button" type="button" onClick={() => { setSelectedSku(""); setSkuSearch(""); setProductForm(emptyForm); }}>Clear form</button>
