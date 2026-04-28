@@ -1190,6 +1190,7 @@ function salesPaymentStatus(snapshot: AppSnapshot, orderId: string) {
   if (latest?.verificationStatus === "Disputed") return "Disputed";
   if (latest?.verificationStatus === "Rejected") return "Flagged";
   if (ledger && ledger.pendingAmount <= 0 && (latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved")) return "Completed";
+  if (ledger && ledger.pendingAmount <= 0 && (latest?.verificationStatus === "Submitted" || latest?.verificationStatus === "Pending")) return "Paid";
   if ((ledger && ledger.paidAmount > 0) || latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved") return "Partial";
   return "Pending";
 }
@@ -1198,6 +1199,15 @@ function salesPaymentsByOrder(snapshot: AppSnapshot, orderId: string) {
   return snapshot.payments
     .filter((item) => item.side === "Sales" && item.linkedOrderId === orderId)
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function collectionAssignment(snapshot: AppSnapshot, orderId: string) {
+  const notes = snapshot.notes
+    .filter((note) => note.entityType === "Sales Order" && note.entityId === orderId && note.note.startsWith("Collection assignment:"))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const latest = notes[0];
+  if (!latest) return "";
+  return latest.note.replace(/^Collection assignment:\s*/i, "").trim();
 }
 
 function latestSalesPayment(snapshot: AppSnapshot, orderId: string) {
@@ -2226,7 +2236,7 @@ function App() {
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} />) : null}
+          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} />) : null}
           {activeView === "SalesReturns" ? <ReturnsWorkspace
             side="Sales"
             snapshot={snapshot}
@@ -4172,7 +4182,7 @@ function PurchaseCartEditor({
   );
 }
 
-function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; }) {
+function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; }) {
   const groups = groupSalesOrders(orders.filter(isOpenSalesOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const dispatchPendingCount = groups.filter((group) => {
     const status = salesFulfillmentStatus(group.lines);
@@ -4184,7 +4194,10 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
     const task = salesDeliveryTask(snapshot, group.id);
     return !task || isDeliveryTaskPending(task);
   }).length;
-  const collectionPendingCount = groups.filter((group) => salesPaymentStatus(snapshot, group.id) !== "Completed").length;
+  const collectionPendingCount = groups.filter((group) => {
+    const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+    return (ledger?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id)) > 0;
+  }).length;
   const today = new Date().toISOString().slice(0, 10);
   const roles = userRoleList(currentUser);
   const canCollectAll = roles.includes("Collection Agent");
@@ -4220,6 +4233,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   const [expandedCollectionOrder, setExpandedCollectionOrder] = useState("");
   const [showSettlementSummary, setShowSettlementSummary] = useState(false);
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; operationDate: string }>>({});
+  const [collectionAgentDrafts, setCollectionAgentDrafts] = useState<Record<string, string>>({});
+  const collectionAgents = snapshot.users.filter((user) => user.active && user.roles.includes("Collection Agent"));
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
 
@@ -4235,6 +4250,14 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
 
   function setCollectionDraftValue(orderId: string, field: "amount" | "mode" | "cashTiming" | "operationDate", value: string) {
     setCollectionDrafts((current) => ({ ...current, [orderId]: { ...getCollectionDraft(orderId), [field]: value } }));
+  }
+
+  function getCollectionAgentDraft(orderId: string) {
+    return collectionAgentDrafts[orderId] || collectionAgents[0]?.fullName || collectionAgents[0]?.username || "";
+  }
+
+  function setCollectionAgentDraft(orderId: string, value: string) {
+    setCollectionAgentDrafts((current) => ({ ...current, [orderId]: value }));
   }
 
   const settlementWhatsappText = encodeURIComponent([
@@ -4340,6 +4363,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
             const expanded = expandedCollectionOrder === group.id;
             const draft = getCollectionDraft(group.id);
             const collectedAmount = Number(draft.amount || 0);
+            const assignedCollector = collectionAssignment(snapshot, group.id);
+            const collectionAgentDraft = getCollectionAgentDraft(group.id);
             return <article className="list-card payment-update-card" key={group.id}>
               <div className="payment-update-head">
                 <div>
@@ -4353,11 +4378,20 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                 <div><span className="small-label">Paid</span><strong>{group.paidAmount.toFixed(2)}</strong></div>
                 <div><span className="small-label">Pending</span><strong>{group.pendingAmount.toFixed(2)}</strong></div>
                 <div><span className="small-label">Delivery</span><strong>{group.deliveryMode}</strong></div>
+                <div><span className="small-label">Collection Agent</span><strong>{assignedCollector || "Not tagged"}</strong></div>
               </div>
               <div className="payment-card-actions top-gap">
                 <button className="ghost-button" type="button" onClick={() => setExpandedCollectionOrder((current) => current === group.id ? "" : group.id)}>{expanded ? "Hide" : "Collect"}</button>
               </div>
               {expanded ? <div className="form-grid top-gap">
+                {collectionAgents.length > 0 ? <>
+                  <label>Collection agent<select value={collectionAgentDraft} onChange={(e) => setCollectionAgentDraft(group.id, e.target.value)}>
+                    {collectionAgents.map((agent) => <option key={agent.id} value={agent.fullName || agent.username}>{agent.fullName || agent.username}</option>)}
+                  </select></label>
+                  <div className="payment-card-actions">
+                    <button className="ghost-button" type="button" onClick={() => void onTagCollectionAgent(group.id, collectionAgentDraft)}>Tag agent</button>
+                  </div>
+                </> : null}
                 <label>Amount<input type="number" step="any" min="0" max={group.pendingAmount} value={draft.amount} onChange={(e) => setCollectionDraftValue(group.id, "amount", e.target.value)} /></label>
                 <label>Mode<select value={draft.mode} onChange={(e) => setCollectionDraftValue(group.id, "mode", e.target.value)}>
                   <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>

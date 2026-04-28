@@ -735,11 +735,14 @@ async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, p
 }
 
 async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: string, client?: DbClient) {
+  const payableStatuses = side === "Sales"
+    ? ["Submitted", "Verified", "Resolved"]
+    : ["Verified", "Resolved"];
   const payments = await one<{ paid: number }>(
     `SELECT COALESCE(SUM(amount), 0) AS paid
      FROM payments
-     WHERE side = $1 AND linked_order_id = $2 AND verification_status IN ('Verified', 'Resolved')`,
-    [side, linkedOrderId],
+     WHERE side = $1 AND linked_order_id = $2 AND verification_status = ANY($3::text[])`,
+    [side, linkedOrderId, payableStatuses],
     client
   );
   const paidAmount = numberValue(payments?.paid);
