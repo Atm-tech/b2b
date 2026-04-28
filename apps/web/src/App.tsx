@@ -504,11 +504,30 @@ function isNonGstInvoice(lines: Array<{ gstRate: GstRate; gstAmount: number; tax
 function displayOrderNote(note?: string) {
   const text = (note || "").trim();
   if (!text) return "";
+  if (/Imported from\s+/i.test(text)) {
+    return "";
+  }
   const warehouseSourceMatch = text.match(/Warehouse source\s+([^|]+)/i);
   if (warehouseSourceMatch) {
     return `Fulfillment Source: ${warehouseSourceMatch[1].trim()}`;
   }
   return text;
+}
+
+function invoiceValue(value?: string | number | null) {
+  if (value === null || value === undefined) return "N/A";
+  const text = String(value).trim();
+  return text ? text : "N/A";
+}
+
+function purchaseInvoiceCounterparty(snapshot: AppSnapshot, group: { lines: PurchaseOrder[] }) {
+  const first = group.lines[0];
+  return snapshot.counterparties.find((item) => item.type === "Supplier" && item.id === first?.supplierId);
+}
+
+function salesInvoiceCounterparty(snapshot: AppSnapshot, group: { lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  return snapshot.counterparties.find((item) => item.type === "Shop" && item.id === first?.shopId);
 }
 
 type InvoicePdfRow = {
@@ -715,15 +734,22 @@ function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lin
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const nonGst = isNonGstInvoice(group.lines);
+  const supplier = purchaseInvoiceCounterparty(snapshot, group);
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "purchase-tax-invoice"}.pdf`),
     documentTitle: "Purchase Tax Invoice",
     partyLabel: "Supplier",
-    partyName: first?.supplierName || "Supplier",
+    partyName: `${invoiceValue(first?.supplierName || supplier?.name)} | GST ${invoiceValue(supplier?.gstNumber)}`,
     warehouseName,
     createdAt: first?.createdAt,
     statusLabel: purchaseWorkflowStatus(snapshot, group.id),
-    note: displayOrderNote(first?.note),
+    note: nonGst ? displayOrderNote(first?.note) : [
+      `Purchaser: ${invoiceValue(first?.purchaserName)}`,
+      `Contact: ${invoiceValue(supplier?.contactPerson)}`,
+      `Mobile: ${invoiceValue(supplier?.mobileNumber)}`,
+      `Address: ${invoiceValue(supplier?.deliveryAddress || supplier?.address)}`,
+      `City: ${invoiceValue(supplier?.deliveryCity || supplier?.city)}`
+    ].join(" | "),
     rows: group.lines.map((line) => ({
       product: line.productSku,
       quantity: line.quantityOrdered,
@@ -747,15 +773,22 @@ function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines:
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const nonGst = isNonGstInvoice(group.lines);
+  const customer = salesInvoiceCounterparty(snapshot, group);
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "sales-tax-invoice"}.pdf`),
     documentTitle: "Sales Tax Invoice",
     partyLabel: "Customer",
-    partyName: first?.shopName || "Customer",
+    partyName: `${invoiceValue(first?.shopName || customer?.name)} | GST ${invoiceValue(customer?.gstNumber)}`,
     warehouseName,
     createdAt: first?.createdAt,
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
-    note: displayOrderNote(first?.note),
+    note: nonGst ? displayOrderNote(first?.note) : [
+      `Salesman: ${invoiceValue(first?.salesmanName)}`,
+      `Contact: ${invoiceValue(customer?.contactPerson)}`,
+      `Mobile: ${invoiceValue(customer?.mobileNumber)}`,
+      `Address: ${invoiceValue(customer?.deliveryAddress || customer?.address)}`,
+      `City: ${invoiceValue(customer?.deliveryCity || customer?.city)}`
+    ].join(" | "),
     rows: group.lines.map((line) => ({
       product: line.productSku,
       quantity: line.quantity,
@@ -798,6 +831,7 @@ async function shareSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
 
 function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
   const first = group.lines[0];
+  const supplier = purchaseInvoiceCounterparty(snapshot, group);
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
@@ -873,10 +907,14 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
         </div>
         <div class="invoice-meta invoice-meta-wide">
-          <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
+          <div><span>Supplier</span><strong>${escapeHtml(invoiceValue(first?.supplierName || supplier?.name))}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
           <div><span>Bill Type</span><strong>GST</strong></div>
+          <div><span>Supplier GST</span><strong>${escapeHtml(invoiceValue(supplier?.gstNumber))}</strong></div>
+          <div><span>Purchaser</span><strong>${escapeHtml(invoiceValue(first?.purchaserName))}</strong></div>
+          <div><span>Contact</span><strong>${escapeHtml(invoiceValue(supplier?.contactPerson))}</strong></div>
+          <div><span>Address</span><strong>${escapeHtml(invoiceValue(supplier?.deliveryAddress || supplier?.address))}</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -897,7 +935,6 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
           <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
         </div>
-        ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
       </section>
     </main>
   `;
@@ -905,6 +942,7 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
 
 function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
   const first = group.lines[0];
+  const customer = salesInvoiceCounterparty(snapshot, group);
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
@@ -981,10 +1019,14 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
         </div>
         <div class="invoice-meta invoice-meta-wide">
-          <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
+          <div><span>Customer</span><strong>${escapeHtml(invoiceValue(first?.shopName || customer?.name))}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
           <div><span>Bill Type</span><strong>GST</strong></div>
+          <div><span>Customer GST</span><strong>${escapeHtml(invoiceValue(customer?.gstNumber))}</strong></div>
+          <div><span>Salesman</span><strong>${escapeHtml(invoiceValue(first?.salesmanName))}</strong></div>
+          <div><span>Contact</span><strong>${escapeHtml(invoiceValue(customer?.contactPerson))}</strong></div>
+          <div><span>Address</span><strong>${escapeHtml(invoiceValue(customer?.deliveryAddress || customer?.address))}</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -1006,7 +1048,6 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
           <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
         </div>
-        ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
       </section>
     </main>
   `;
