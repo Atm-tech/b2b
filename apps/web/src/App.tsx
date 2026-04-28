@@ -1210,6 +1210,18 @@ function collectionAssignment(snapshot: AppSnapshot, orderId: string) {
   return latest.note.replace(/^Collection assignment:\s*/i, "").trim();
 }
 
+function collectionVisibleToUser(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }, user: AppUser) {
+  const assignedCollector = collectionAssignment(snapshot, group.id);
+  const userNames = [user.fullName, user.username].map((value) => value.trim().toLowerCase()).filter(Boolean);
+  const ownsOrder = group.lines.some((line) => line.salesmanId === user.id || line.salesmanName === user.fullName);
+  const isCollectionAgent = user.roles.includes("Collection Agent");
+  if (assignedCollector) {
+    return isCollectionAgent && userNames.includes(assignedCollector.trim().toLowerCase());
+  }
+  if (isCollectionAgent) return false;
+  return ownsOrder;
+}
+
 function latestSalesPayment(snapshot: AppSnapshot, orderId: string) {
   return salesPaymentsByOrder(snapshot, orderId)[0];
 }
@@ -1941,19 +1953,6 @@ function App() {
             <span className="eyebrow">B2B Supply Management</span>
             <h1>Operations Console</h1>
             <p>Manage supplier purchase, warehouse receipt, accounts settlement, sales dispatch, and delivery tracking.</p>
-            <div className="credential-list">
-              <p>Admin: `admin` / `1234`</p>
-              <p>Purchaser: `p` / `1234`</p>
-              <p>Sales: `s` / `1234`</p>
-              <p>Accounts: `a` / `1234`</p>
-              <p>Collection Agent: `c` / `c`</p>
-              <p>Govindpura Warehouse: `gp` / `1234`</p>
-              <p>C21 Warehouse: `c21` / `1234`</p>
-              <p>Delivery Manager: `dm` / `dm`</p>
-              <p>Data Analyst: `da` / `da`</p>
-              <p>In Delivery: `in` / `in`</p>
-              <p>Out Delivery: `out` / `out`</p>
-            </div>
           </div>
           <form className="form-shell" onSubmit={doLogin}>
             <label>Username<input value={login.username} onChange={(e) => setLogin((c) => ({ ...c, username: e.target.value }))} /></label>
@@ -2019,6 +2018,48 @@ function App() {
   const deliveryManagerHomePendingCount = deliveryManagerSnapshot.deliveryTasks.filter((task) => task.status !== "Delivered").length;
   const deliveryManagerInboundPendingCount = countGroupedOrders(deliveryManagerSnapshot.purchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed"));
   const deliveryManagerDispatchPendingCount = countGroupedOrders(deliveryManagerSnapshot.salesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup"));
+  const totalPurchaseValue = purchaseOrdersView.reduce((sum, order) => sum + order.totalAmount, 0);
+  const totalSalesValue = salesOrdersView.reduce((sum, order) => sum + order.totalAmount + order.deliveryCharge, 0);
+  const purchasePendingValue = snapshot.ledgerEntries.filter((entry) => entry.side === "Purchase").reduce((sum, entry) => sum + entry.pendingAmount, 0);
+  const salesPendingValue = snapshot.ledgerEntries.filter((entry) => entry.side === "Sales").reduce((sum, entry) => sum + entry.pendingAmount, 0);
+  const verifiedPurchaseCashOut = snapshot.payments
+    .filter((payment) => payment.side === "Purchase" && (payment.verificationStatus === "Verified" || payment.verificationStatus === "Resolved"))
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const verifiedSalesCashIn = snapshot.payments
+    .filter((payment) => payment.side === "Sales" && (payment.verificationStatus === "Verified" || payment.verificationStatus === "Resolved"))
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const pnlSpreadValue = totalSalesValue - totalPurchaseValue;
+  const cashflowNetValue = verifiedSalesCashIn - verifiedPurchaseCashOut;
+  const latestPurchaseRateBySku = new Map<string, number>();
+  [...snapshot.purchaseOrders]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .forEach((order) => {
+      if (!latestPurchaseRateBySku.has(order.productSku)) latestPurchaseRateBySku.set(order.productSku, order.rate);
+    });
+  const stockValue = stockSummaryView.reduce((sum, item) => {
+    const units = item.availableQuantity + item.reservedQuantity + item.blockedQuantity;
+    return sum + units * (latestPurchaseRateBySku.get(item.productSku) || 0);
+  }, 0);
+  const topMetricCards = isAccountsUser
+    ? [
+      { label: "Total Purchase", value: formatCurrencyInr(totalPurchaseValue), note: "Booked supplier value", size: "large" as const, tone: "danger" as const, onOpen: () => setActiveView("Purchases") },
+      { label: "Total Sales", value: formatCurrencyInr(totalSalesValue), note: "Billed customer value", size: "large" as const, tone: "good" as const, onOpen: () => setActiveView("SalesOrders") },
+      { label: "Stock Value", value: formatCurrencyInr(stockValue), note: "Current inventory value", size: "large" as const, tone: "pending" as const, onOpen: () => setActiveView("Stock") },
+      { label: "Cashflow", value: formatCurrencyInr(cashflowNetValue), note: "Verified in minus out", size: "large" as const, tone: cashflowNetValue >= 0 ? "good" as const : "danger" as const, onOpen: () => setActiveView("Payments") },
+      { label: "P&L Spread", value: formatCurrencyInr(pnlSpreadValue), note: "Sales minus purchase", tone: pnlSpreadValue >= 0 ? "good" as const : "danger" as const, onOpen: () => setActiveView("Ledger") },
+      { label: "Pending Purchase", value: formatCurrencyInr(purchasePendingValue), note: "Supplier dues open", tone: "pending" as const, onOpen: () => setActiveView("Payments") },
+      { label: "Pending Sales", value: formatCurrencyInr(salesPendingValue), note: "Customer dues open", tone: "pending" as const, onOpen: () => setActiveView("SalesOrders") },
+      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live SKUs", onOpen: () => setActiveView("Stock") },
+      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => setActiveView("Parties") }
+    ]
+    : [
+      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live catalogue", onOpen: () => setActiveView("Products") },
+      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => setActiveView("Parties") },
+      { label: "Pending Purchase Pay", value: String(snapshot.metrics.pendingPurchasePayments), note: "Supplier follow-up", tone: "pending" as const, onOpen: () => setActiveView("Purchases") },
+      { label: "Pending Sales Pay", value: String(snapshot.metrics.pendingSalesPayments), note: "Customer collection", tone: "pending" as const, onOpen: () => setActiveView("SalesOrders") },
+      { label: "Partial Receipts", value: String(snapshot.metrics.partialReceipts), note: "Warehouse exceptions", onOpen: () => setActiveView("Receipts") },
+      { label: "Available Stock", value: String(snapshot.metrics.availableInventoryUnits), note: "Ready units", onOpen: () => setActiveView("Stock") }
+    ];
 
   function isNaGst(value: string) {
     return value.trim().toUpperCase() === "N/A";
@@ -2072,10 +2113,10 @@ function App() {
   const partiesView = isAdminUser ? (
     <section className="collapse-stack">
       <CollapsiblePanel title="Supplier Master" eyebrow="Admin view" open={openPartyPanel === "supplier-master"} onToggle={() => setOpenPartyPanel((current) => current === "supplier-master" ? "" : "supplier-master")}>
-        <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={suppliers.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
+        <PartyVitalsList snapshot={snapshot} parties={suppliers} type="Supplier" />
       </CollapsiblePanel>
       <CollapsiblePanel title="Customer Master" eyebrow="Admin view" open={openPartyPanel === "customer-master"} onToggle={() => setOpenPartyPanel((current) => current === "customer-master" ? "" : "customer-master")}>
-        <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={shops.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
+        <PartyVitalsList snapshot={snapshot} parties={shops} type="Shop" />
       </CollapsiblePanel>
     </section>
   ) : (
@@ -2115,7 +2156,7 @@ function App() {
         </form>
       </CollapsiblePanel>
       <CollapsiblePanel title={`${partyRoleLabel} Database`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"} open={openPartyPanel === "database"} onToggle={() => setOpenPartyPanel((current) => current === "database" ? "" : "database")}>
-        <DataTable headers={["Name","GST","Account","IFSC","City"]} rows={partyItems.map((p) => [p.name, p.gstNumber, p.bankAccountNumber, p.ifscCode, p.city])} />
+        <PartyVitalsList snapshot={snapshot} parties={partyItems} type={currentUser.role === "Sales" ? "Shop" : "Supplier"} />
       </CollapsiblePanel>
     </section>
   );
@@ -2175,13 +2216,18 @@ function App() {
           </nav>
         </aside> : null}
         <div className="content-shell">
-          {!simpleMode ? <section className="metric-grid">
-            <MetricCard label="Products" value={String(snapshot.metrics.productCount)} />
-            <MetricCard label="Parties" value={String(snapshot.metrics.partyCount)} />
-            <MetricCard label="Pending Purchase Pay" value={String(snapshot.metrics.pendingPurchasePayments)} />
-            <MetricCard label="Pending Sales Pay" value={String(snapshot.metrics.pendingSalesPayments)} />
-            <MetricCard label="Partial Receipts" value={String(snapshot.metrics.partialReceipts)} />
-            <MetricCard label="Available Stock" value={String(snapshot.metrics.availableInventoryUnits)} />
+          {!simpleMode ? <section className="metric-grid metric-collage-grid">
+            {topMetricCards.map((card) => (
+              <MetricCard
+                key={card.label}
+                label={card.label}
+                value={card.value}
+                note={card.note}
+                size={card.size}
+                tone={card.tone}
+                onOpen={card.onOpen}
+              />
+            ))}
           </section> : null}
 
           {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={simpleMode} onOpen={setActiveView} /> : null}
@@ -2189,7 +2235,7 @@ function App() {
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
           {activeView === "Parties" ? partiesView : null}
-          {activeView === "Purchase" ? (isAdminUser ? <Panel title="Purchase Orders" eyebrow="Live status"><DataTable headers={["PO","Supplier","Products","Taxable","GST","Total","Status"]} rows={groupPurchaseRows(snapshot.purchaseOrders, snapshot)} /></Panel> : <>
+          {activeView === "Purchase" ? (isAdminUser ? <AnalystPurchaseView snapshot={snapshot} orders={snapshot.purchaseOrders} /> : <>
             <PurchaserPurchaseWorkspace
               snapshot={snapshot}
               currentUser={currentUser}
@@ -2219,7 +2265,7 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
           /> : null}
-          {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Customer order booking"
@@ -4200,7 +4246,6 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   }).length;
   const today = new Date().toISOString().slice(0, 10);
   const roles = userRoleList(currentUser);
-  const canCollectAll = roles.includes("Collection Agent");
   const collectionGroups = groupSalesOrders(orders)
     .map((group) => {
       const first = group.lines[0];
@@ -4218,7 +4263,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         deliveryMode: first?.deliveryMode || "Delivery"
       };
     })
-    .filter((group) => group.pendingAmount > 0 && (canCollectAll || group.lines.some((line) => line.salesmanId === currentUser.id || line.salesmanName === currentUser.fullName)));
+    .filter((group) => group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
   const unsettledCollections = snapshot.payments
     .filter((item) => item.side === "Sales" && item.createdBy === currentUser.fullName && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved" && item.verificationStatus !== "Rejected")
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -4943,9 +4988,12 @@ function SalesPaymentsView({
   scope: "mine" | "all";
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const visibleOrders = scope === "all"
+  const allVisibleOrders = scope === "all"
     ? snapshot.salesOrders
     : snapshot.salesOrders.filter((item) => item.salesmanId === currentUser.id || item.salesmanName === currentUser.fullName);
+  const visibleOrders = groupSalesOrders(allVisibleOrders)
+    .filter((group) => collectionVisibleToUser(snapshot, group, currentUser) || group.lines.some((line) => line.salesmanId === currentUser.id || line.salesmanName === currentUser.fullName))
+    .flatMap((group) => group.lines);
   const visibleOrderIds = new Set(visibleOrders.flatMap((item) => [item.id, orderPublicId(item)]));
   const underPriceOrders = visibleOrders.filter((item) => item.status === "Draft" || item.note.toLowerCase().includes("rate below last purchase price"));
   const undeliveredOrders = visibleOrders.filter((item) => item.status !== "Delivered" && item.status !== "Closed");
@@ -4970,7 +5018,7 @@ function SalesPaymentsView({
         latestPayment: latestSalesPayment(snapshot, group.id)
       };
     })
-    .filter((group) => group.pendingAmount > 0);
+    .filter((group) => group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
   const [drafts, setDrafts] = useState<Record<string, { amount: string; referenceNumber: string; voucherNumber: string; utrNumber: string; proofName: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string }>>({});
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; referenceNumber: string; voucherNumber: string; utrNumber: string; proofName: string; verificationNote: string; operationDate: string }>>({});
   const [searchText, setSearchText] = useState("");
@@ -7583,7 +7631,8 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
   );
 }
 
-function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen: (view: ViewKey) => void }) {
+function AccountsOverviewLegacy({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen: (view: ViewKey) => void }) {
+  const [expandedSummaryCard, setExpandedSummaryCard] = useState<"purchase" | "sales" | "pnl" | "stock" | "">("");
   const purchaseGroups = groupPurchaseOrders(snapshot.purchaseOrders);
   const salesGroups = groupSalesOrders(snapshot.salesOrders);
   const pendingPayments = snapshot.payments
@@ -7606,10 +7655,24 @@ function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen:
     .reduce((sum, entry) => sum + entry.pendingAmount, 0);
   const inventoryAvailable = snapshot.stockSummary.reduce((sum, item) => sum + item.availableQuantity, 0);
   const inventoryBlocked = snapshot.stockSummary.reduce((sum, item) => sum + item.blockedQuantity, 0);
+  const inventoryReserved = snapshot.stockSummary.reduce((sum, item) => sum + item.reservedQuantity, 0);
   const inboundUnits = snapshot.receiptChecks.reduce((sum, item) => sum + item.receivedQuantity, 0);
   const outboundUnits = snapshot.salesOrders
     .filter((order) => order.status === "Out for Delivery" || order.status === "Delivered" || order.status === "Closed")
     .reduce((sum, order) => sum + order.quantity, 0);
+  const totalPurchaseValue = snapshot.purchaseOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+  const totalSalesValue = snapshot.salesOrders.reduce((sum, order) => sum + order.totalAmount + order.deliveryCharge, 0);
+  const totalPnLValue = totalSalesValue - totalPurchaseValue;
+  const latestPurchaseRateBySku = new Map<string, number>();
+  [...snapshot.purchaseOrders]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .forEach((order) => {
+      if (!latestPurchaseRateBySku.has(order.productSku)) latestPurchaseRateBySku.set(order.productSku, order.rate);
+    });
+  const stockValue = snapshot.stockSummary.reduce((sum, item) => {
+    const units = item.availableQuantity + item.reservedQuantity + item.blockedQuantity;
+    return sum + units * (latestPurchaseRateBySku.get(item.productSku) || 0);
+  }, 0);
   const openPurchaseCount = purchaseGroups.filter((group) => purchaseWorkflowStatus(snapshot, group.id).includes("Pending") || purchaseWorkflowStatus(snapshot, group.id).includes("Partial") || purchaseWorkflowStatus(snapshot, group.id).includes("Flagged") || purchaseWorkflowStatus(snapshot, group.id).includes("Disputed")).length;
   const openSalesCollections = salesGroups.filter((group) => salesPaymentStatus(snapshot, group.id) !== "Completed").length;
   const paymentAlerts = [
@@ -7655,6 +7718,64 @@ function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen:
   const topProducts = [...snapshot.stockSummary]
     .sort((left, right) => (right.availableQuantity + right.blockedQuantity) - (left.availableQuantity + left.blockedQuantity))
     .slice(0, 6);
+  const summaryCards = [
+    {
+      id: "purchase" as const,
+      eyebrow: "Purchase",
+      title: "Total Purchase",
+      value: formatCurrencyInr(totalPurchaseValue),
+      tone: "danger",
+      detail: [
+        { label: "PO lines", value: String(snapshot.purchaseOrders.length) },
+        { label: "PO groups", value: String(purchaseGroups.length) },
+        { label: "Pending due", value: formatCurrencyInr(purchasePending) },
+        { label: "Verified payout", value: formatCurrencyInr(verifiedPurchaseCashOut) }
+      ],
+      action: "Purchases" as ViewKey
+    },
+    {
+      id: "sales" as const,
+      eyebrow: "Sales",
+      title: "Total Sales",
+      value: formatCurrencyInr(totalSalesValue),
+      tone: "good",
+      detail: [
+        { label: "SO lines", value: String(snapshot.salesOrders.length) },
+        { label: "SO groups", value: String(salesGroups.length) },
+        { label: "Pending collection", value: formatCurrencyInr(salesPending) },
+        { label: "Verified receipt", value: formatCurrencyInr(verifiedSalesCashIn) }
+      ],
+      action: "SalesOrders" as ViewKey
+    },
+    {
+      id: "pnl" as const,
+      eyebrow: "P&L",
+      title: "Spread",
+      value: formatCurrencyInr(totalPnLValue),
+      tone: totalPnLValue >= 0 ? "good" : "danger",
+      detail: [
+        { label: "Sales billed", value: formatCurrencyInr(totalSalesValue) },
+        { label: "Purchase billed", value: formatCurrencyInr(totalPurchaseValue) },
+        { label: "Net realized cash", value: formatCurrencyInr(verifiedSalesCashIn - verifiedPurchaseCashOut) },
+        { label: "Net outstanding", value: formatCurrencyInr(salesPending - purchasePending) }
+      ],
+      action: "Ledger" as ViewKey
+    },
+    {
+      id: "stock" as const,
+      eyebrow: "Stock",
+      title: "Stock Value",
+      value: formatCurrencyInr(stockValue),
+      tone: "pending",
+      detail: [
+        { label: "Available units", value: formatShortNumber(inventoryAvailable) },
+        { label: "Reserved units", value: formatShortNumber(inventoryReserved) },
+        { label: "Blocked units", value: formatShortNumber(inventoryBlocked) },
+        { label: "Products live", value: String(snapshot.products.length) }
+      ],
+      action: "Stock" as ViewKey
+    }
+  ];
 
   return (
     <section className="dashboard-grid accounts-home-grid">
@@ -7680,6 +7801,49 @@ function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen:
               <strong>{item.count}</strong>
             </button>
           ))}
+        </div>
+      </article>
+
+      <article className="panel accounts-summary-panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Summary Deck</span>
+            <h2>Headline accounting numbers</h2>
+          </div>
+        </div>
+        <div className="accounts-summary-grid">
+          {summaryCards.map((card) => {
+            const expanded = expandedSummaryCard === card.id;
+            return (
+              <article
+                key={card.id}
+                className={`accounts-summary-card tone-${card.tone}${expanded ? " expanded" : ""}`}
+                onClick={() => setExpandedSummaryCard((current) => current === card.id ? "" : card.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setExpandedSummaryCard((current) => current === card.id ? "" : card.id);
+                  }
+                }}
+              >
+                <span className="small-label">{card.eyebrow}</span>
+                <strong>{card.title}</strong>
+                <h3>{card.value}</h3>
+                <p>{expanded ? "Tap to collapse" : "Tap to expand"}</p>
+                {expanded ? <div className="accounts-summary-detail">
+                  {card.detail.map((item) => (
+                    <div key={item.label}>
+                      <span className="small-label">{item.label}</span>
+                      <strong>{item.value}</strong>
+                    </div>
+                  ))}
+                  <button className="ghost-button" type="button" onClick={(event) => { event.stopPropagation(); onOpen(card.action); }}>Open detail</button>
+                </div> : null}
+              </article>
+            );
+          })}
         </div>
       </article>
 
@@ -7828,6 +7992,157 @@ function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen:
         <div className="accounts-mini-stat">
           <span className="small-label">Suppliers live</span>
           <strong>{snapshot.counterparties.filter((item) => item.type === "Supplier").length}</strong>
+        </div>
+      </article>
+    </section>
+  );
+}
+
+function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen: (view: ViewKey) => void }) {
+  const purchaseGroups = groupPurchaseOrders(snapshot.purchaseOrders);
+  const salesGroups = groupSalesOrders(snapshot.salesOrders);
+  const pendingPayments = snapshot.payments
+    .filter((payment) => payment.verificationStatus !== "Verified" && payment.verificationStatus !== "Resolved")
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const flaggedPayments = pendingPayments.filter((payment) => payment.verificationStatus === "Disputed" || payment.verificationStatus === "Rejected");
+  const pendingPurchaseQueue = purchaseGroups
+    .map((group) => {
+      const ledger = purchaseLedgerByOrder(snapshot, group.id);
+      const latest = latestPurchasePayment(snapshot, group.id);
+      return {
+        id: group.id,
+        party: group.lines[0]?.supplierName || "Supplier",
+        total: ledger?.goodsValue ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id),
+        paid: ledger?.paidAmount ?? 0,
+        pending: ledger?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id),
+        mode: latest?.mode || group.lines[0]?.paymentMode || "N/A",
+        date: latest?.createdAt || group.lines[0]?.createdAt || "",
+        status: purchasePaymentStatus(snapshot, group.id)
+      };
+    })
+    .filter((item) => item.pending > 0)
+    .sort((left, right) => right.pending - left.pending);
+  const pendingSalesQueue = salesGroups
+    .map((group) => {
+      const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      const latest = latestSalesPayment(snapshot, group.id);
+      return {
+        id: group.id,
+        party: group.lines[0]?.shopName || "Customer",
+        total: ledger?.goodsValue ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
+        paid: ledger?.paidAmount ?? 0,
+        pending: ledger?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
+        mode: latest?.mode || group.lines[0]?.paymentMode || "N/A",
+        date: latest?.createdAt || group.lines[0]?.createdAt || "",
+        status: salesPaymentStatus(snapshot, group.id),
+        collector: collectionAssignment(snapshot, group.id) || group.lines[0]?.salesmanName || "Sales self"
+      };
+    })
+    .filter((item) => item.pending > 0)
+    .sort((left, right) => right.pending - left.pending);
+  const paymentAlerts = [
+    { label: "Pending proofs", count: pendingPayments.length, tone: "pending" },
+    { label: "Disputes", count: flaggedPayments.length, tone: flaggedPayments.length > 0 ? "danger" : "good" },
+    { label: "Supplier dues", count: pendingPurchaseQueue.length, tone: "pending" },
+    { label: "Customer collections", count: pendingSalesQueue.length, tone: "good" }
+  ];
+
+  return (
+    <section className="dashboard-grid accounts-home-grid accounts-home-simple-grid">
+      <article className="panel accounts-hero-panel accounts-home-hero">
+        <div className="accounts-hero-copy">
+          <span className="eyebrow">Accounts Command</span>
+          <h2>Pending payouts and pending collections only.</h2>
+          <p>Use this screen as the working desk. Supplier dues stay on the left, customer collections stay on the right.</p>
+        </div>
+        <div className="accounts-hero-actions">
+          <button className="primary-button" type="button" onClick={() => onOpen("Payments")}>Open payment desk</button>
+          <button className="ghost-button" type="button" onClick={() => onOpen("SalesOrders")}>Open collection desk</button>
+        </div>
+        <div className="accounts-notification-strip">
+          {paymentAlerts.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`accounts-alert-chip tone-${item.tone}`}
+              onClick={() => onOpen(item.label === "Customer collections" ? "SalesOrders" : "Payments")}
+            >
+              <span>{item.label}</span>
+              <strong>{item.count}</strong>
+            </button>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel accounts-home-panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Pending Payments</span>
+            <h2>Supplier dues</h2>
+          </div>
+          <button className="ghost-button" type="button" onClick={() => onOpen("Payments")}>Open Payments</button>
+        </div>
+        <div className="accounts-home-list">
+          {pendingPurchaseQueue.length === 0 ? <div className="empty-card">No pending supplier payment.</div> : pendingPurchaseQueue.map((item) => (
+            <button key={item.id} type="button" className="accounts-home-row" onClick={() => onOpen("Payments")}>
+              <div className="accounts-home-main">
+                <span className="small-label">{item.id}</span>
+                <strong>{item.party}</strong>
+                <p>{formatShortDate(item.date)} | {item.mode || "N/A"}</p>
+              </div>
+              <div className="accounts-home-metrics">
+                <span>
+                  <small>Total</small>
+                  <strong>{formatCurrencyInr(item.total)}</strong>
+                </span>
+                <span>
+                  <small>Paid</small>
+                  <strong>{formatCurrencyInr(item.paid)}</strong>
+                </span>
+                <span>
+                  <small>Pending</small>
+                  <strong>{formatCurrencyInr(item.pending)}</strong>
+                </span>
+              </div>
+              <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+            </button>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel accounts-home-panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Sales Collections</span>
+            <h2>Customer dues</h2>
+          </div>
+          <button className="ghost-button" type="button" onClick={() => onOpen("SalesOrders")}>Open Sales</button>
+        </div>
+        <div className="accounts-home-list">
+          {pendingSalesQueue.length === 0 ? <div className="empty-card">No pending customer collection.</div> : pendingSalesQueue.map((item) => (
+            <button key={item.id} type="button" className="accounts-home-row" onClick={() => onOpen("SalesOrders")}>
+              <div className="accounts-home-main">
+                <span className="small-label">{item.id}</span>
+                <strong>{item.party}</strong>
+                <p>{formatShortDate(item.date)} | {item.mode || "N/A"} | {item.collector}</p>
+              </div>
+              <div className="accounts-home-metrics">
+                <span>
+                  <small>Total</small>
+                  <strong>{formatCurrencyInr(item.total)}</strong>
+                </span>
+                <span>
+                  <small>Paid</small>
+                  <strong>{formatCurrencyInr(item.paid)}</strong>
+                </span>
+                <span>
+                  <small>Pending</small>
+                  <strong>{formatCurrencyInr(item.pending)}</strong>
+                </span>
+              </div>
+              <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+            </button>
+          ))}
         </div>
       </article>
     </section>
@@ -8012,7 +8327,36 @@ function ReturnsWorkspace({
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) { return <article className="metric-card panel"><span className="small-label">{label}</span><strong>{value}</strong></article>; }
+function MetricCard({
+  label,
+  value,
+  note,
+  size = "small",
+  tone = "default",
+  onOpen
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  size?: "small" | "large";
+  tone?: "default" | "good" | "danger" | "pending";
+  onOpen?: () => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`metric-card panel ${size} tone-${tone}${focused ? " focused" : ""}`}
+      onClick={() => setFocused((current) => !current)}
+      onDoubleClick={() => onOpen?.()}
+    >
+      <span className="small-label">{label}</span>
+      <strong>{value}</strong>
+      {note ? <p>{note}</p> : null}
+      <span className="metric-card-hint">{focused ? "Double tap to open" : "Tap to zoom"}</span>
+    </button>
+  );
+}
 function Panel({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) { return <article className="panel"><div className="section-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div></div>{children}</article>; }
 function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebrow: string; title: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
@@ -8030,24 +8374,204 @@ function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<str
 type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
 
 function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
+  const [openId, setOpenId] = useState("");
   const headers = ["PO / Cart", "Supplier", "Products", "Taxable", "GST", "Total", "Status"];
   const rows = groupPurchaseRows(orders, snapshot);
+  const groups = groupPurchaseOrders(orders)
+    .map((group) => {
+      const first = group.lines[0];
+      const ledger = purchaseLedgerByOrder(snapshot, group.id);
+      return {
+        id: group.id,
+        party: first?.supplierName || "Supplier",
+        createdAt: first?.createdAt || "",
+        products: group.lines.map((line) => line.productSku),
+        total: group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
+        taxable: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
+        gst: group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
+        pending: ledger?.pendingAmount ?? group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
+        paid: ledger?.paidAmount ?? 0,
+        status: purchaseWorkflowStatus(snapshot, group.id),
+        warehouse: purchaseWarehouseStatus(group.lines),
+        delivery: purchaseDeliveryStatus(snapshot, group.id)
+      };
+    })
+    .sort((left, right) => {
+      const pendingDiff = Number(right.pending > 0) - Number(left.pending > 0);
+      if (pendingDiff !== 0) return pendingDiff;
+      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    });
   return (
-    <Panel title="Purchase Report" eyebrow="Analyst view">
+    <Panel title="Purchase Report" eyebrow="Oldest unsettled first">
       <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("purchase-report.csv", headers, rows)}>Download CSV</button></div>
-      <DataTable headers={headers} rows={rows} />
+      <div className="report-accordion-list">
+        {groups.length === 0 ? <div className="empty-card">No purchase orders yet.</div> : groups.map((item) => {
+          const open = openId === item.id;
+          return <article className="list-card report-accordion-card" key={item.id}>
+            <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
+              <div className="report-accordion-main">
+                <span className="small-label">{item.id}</span>
+                <strong>{item.party}</strong>
+                <p>{formatShortDate(item.createdAt)} | {item.products.length} products</p>
+              </div>
+              <div className="report-accordion-vitals">
+                <span><small>Total</small><strong>{formatCurrencyInr(item.total)}</strong></span>
+                <span><small>Pending</small><strong>{formatCurrencyInr(item.pending)}</strong></span>
+              </div>
+              <div className="report-accordion-side">
+                <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+                <span className="status-pill">{open ? "Close" : "Open"}</span>
+              </div>
+            </button>
+            {open ? <div className="payment-meta-grid top-gap">
+              <div><span className="small-label">Products</span><strong>{item.products.join(", ")}</strong></div>
+              <div><span className="small-label">Taxable</span><strong>{formatCurrencyInr(item.taxable)}</strong></div>
+              <div><span className="small-label">GST</span><strong>{formatCurrencyInr(item.gst)}</strong></div>
+              <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(item.paid)}</strong></div>
+              <div><span className="small-label">Warehouse</span><strong>{item.warehouse}</strong></div>
+              <div><span className="small-label">Delivery</span><strong>{item.delivery}</strong></div>
+            </div> : null}
+          </article>;
+        })}
+      </div>
     </Panel>
   );
 }
 
 function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders: SalesOrder[] }) {
+  const [openId, setOpenId] = useState("");
   const headers = ["SO / Cart", "Shop", "Products", "Taxable", "GST", "Total", "Status"];
   const rows = groupSalesRows(orders, snapshot);
+  const groups = groupSalesOrders(orders)
+    .map((group) => {
+      const first = group.lines[0];
+      const ledger = snapshot?.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+      return {
+        id: group.id,
+        party: first?.shopName || "Customer",
+        createdAt: first?.createdAt || "",
+        products: group.lines.map((line) => line.productSku),
+        total,
+        taxable: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
+        gst: group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
+        pending: ledger?.pendingAmount ?? total,
+        paid: ledger?.paidAmount ?? 0,
+        status: snapshot ? `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}` : salesStatusLabel(first?.status || "Booked"),
+        delivery: snapshot ? salesDeliveryStatus(snapshot, group.id) : first?.deliveryMode || "N/A",
+        fulfillment: salesFulfillmentStatus(group.lines)
+      };
+    })
+    .sort((left, right) => {
+      const pendingDiff = Number(right.pending > 0) - Number(left.pending > 0);
+      if (pendingDiff !== 0) return pendingDiff;
+      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    });
   return (
-    <Panel title="Sales Report" eyebrow="Analyst view">
+    <Panel title="Sales Report" eyebrow="Oldest unsettled first">
       <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button></div>
-      <DataTable headers={headers} rows={rows} />
+      <div className="report-accordion-list">
+        {groups.length === 0 ? <div className="empty-card">No sales orders yet.</div> : groups.map((item) => {
+          const open = openId === item.id;
+          return <article className="list-card report-accordion-card" key={item.id}>
+            <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
+              <div className="report-accordion-main">
+                <span className="small-label">{item.id}</span>
+                <strong>{item.party}</strong>
+                <p>{formatShortDate(item.createdAt)} | {item.products.length} products</p>
+              </div>
+              <div className="report-accordion-vitals">
+                <span><small>Total</small><strong>{formatCurrencyInr(item.total)}</strong></span>
+                <span><small>Pending</small><strong>{formatCurrencyInr(item.pending)}</strong></span>
+              </div>
+              <div className="report-accordion-side">
+                <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+                <span className="status-pill">{open ? "Close" : "Open"}</span>
+              </div>
+            </button>
+            {open ? <div className="payment-meta-grid top-gap">
+              <div><span className="small-label">Products</span><strong>{item.products.join(", ")}</strong></div>
+              <div><span className="small-label">Taxable</span><strong>{formatCurrencyInr(item.taxable)}</strong></div>
+              <div><span className="small-label">GST</span><strong>{formatCurrencyInr(item.gst)}</strong></div>
+              <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(item.paid)}</strong></div>
+              <div><span className="small-label">Fulfillment</span><strong>{item.fulfillment}</strong></div>
+              <div><span className="small-label">Delivery</span><strong>{item.delivery}</strong></div>
+            </div> : null}
+          </article>;
+        })}
+      </div>
     </Panel>
+  );
+}
+
+function PartyVitalsList({ snapshot, parties, type }: { snapshot: AppSnapshot; parties: Counterparty[]; type: "Supplier" | "Shop" }) {
+  const [openId, setOpenId] = useState("");
+  const purchaseGroups = groupPurchaseOrders(snapshot.purchaseOrders);
+  const salesGroups = groupSalesOrders(snapshot.salesOrders);
+  const items = parties.map((party) => {
+    if (type === "Supplier") {
+      const related = purchaseGroups.filter((group) => group.lines[0]?.supplierId === party.id);
+      return {
+        id: party.id,
+        name: party.name,
+        count: related.length,
+        total: related.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.totalAmount, 0), 0),
+        pending: related.reduce((sum, group) => sum + (purchaseLedgerByOrder(snapshot, group.id)?.pendingAmount ?? 0), 0),
+        phone: party.mobileNumber || "N/A",
+        city: party.city || "N/A",
+        gst: party.gstNumber || "N/A",
+        contact: party.contactPerson || "N/A",
+        address: party.address || "N/A"
+      };
+    }
+    const related = salesGroups.filter((group) => group.lines[0]?.shopId === party.id);
+    return {
+      id: party.id,
+      name: party.name,
+      count: related.length,
+      total: related.reduce((sum, group) => sum + group.lines.reduce((lineSum, line) => lineSum + line.totalAmount, 0), 0),
+      pending: related.reduce((sum, group) => sum + (snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? 0), 0),
+      phone: party.mobileNumber || "N/A",
+      city: party.city || "N/A",
+      gst: party.gstNumber || "N/A",
+      contact: party.contactPerson || "N/A",
+      address: party.address || "N/A"
+    };
+  }).sort((left, right) => {
+    const pendingDiff = right.pending - left.pending;
+    if (pendingDiff !== 0) return pendingDiff;
+    return right.total - left.total;
+  });
+
+  return (
+    <div className="report-accordion-list">
+      {items.length === 0 ? <div className="empty-card">No parties yet.</div> : items.map((item) => {
+        const open = openId === item.id;
+        return <article className="list-card report-accordion-card" key={item.id}>
+          <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
+            <div className="report-accordion-main">
+              <span className="small-label">{type === "Supplier" ? "Supplier" : "Customer"}</span>
+              <strong>{item.name}</strong>
+              <p>{item.city} | {item.phone}</p>
+            </div>
+            <div className="report-accordion-vitals">
+              <span><small>Total</small><strong>{formatCurrencyInr(item.total)}</strong></span>
+              <span><small>Pending</small><strong>{formatCurrencyInr(item.pending)}</strong></span>
+              <span><small>Orders</small><strong>{item.count}</strong></span>
+            </div>
+            <div className="report-accordion-side">
+              <span className={`status-pill ${item.pending > 0 ? "status-pending" : "status-verified"}`}>{item.pending > 0 ? "Unsettled" : "Settled"}</span>
+              <span className="status-pill">{open ? "Close" : "Open"}</span>
+            </div>
+          </button>
+          {open ? <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Contact</span><strong>{item.contact}</strong></div>
+            <div><span className="small-label">GST</span><strong>{item.gst}</strong></div>
+            <div className="wide-field"><span className="small-label">Address</span><strong>{item.address}</strong></div>
+          </div> : null}
+        </article>;
+      })}
+    </div>
   );
 }
 
