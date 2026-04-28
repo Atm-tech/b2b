@@ -2216,7 +2216,7 @@ function App() {
           </nav>
         </aside> : null}
         <div className="content-shell">
-          {!simpleMode ? <section className="metric-grid metric-collage-grid">
+          {!simpleMode ? <section className={isAccountsUser ? "metric-grid metric-collage-grid metric-collage-grid-accounts" : "metric-grid metric-collage-grid"}>
             {topMetricCards.map((card) => (
               <MetricCard
                 key={card.label}
