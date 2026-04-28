@@ -1,4 +1,5 @@
 import axios from "axios";
+import { jsPDF } from "jspdf";
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import type {
@@ -15,6 +16,8 @@ import type {
   SalesOrder,
   SalesReturn,
   SalesStatus,
+  GstRate,
+  TaxMode,
   UserRole
 } from "@aapoorti-b2b/domain";
 import { userRoles } from "@aapoorti-b2b/domain";
@@ -303,6 +306,18 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
         font-size: 28px;
         line-height: 1;
       }
+      .invoice-brand {
+        color: #0f766e;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .invoice-subhead {
+        margin-top: 6px;
+        color: #475569;
+        font-size: 13px;
+      }
       .invoice-badge {
         display: inline-flex;
         padding: 6px 12px;
@@ -317,6 +332,9 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
       .invoice-meta {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         margin: 18px 0;
+      }
+      .invoice-meta-wide {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
       .invoice-meta div,
       .invoice-totals div {
@@ -364,6 +382,96 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         margin-top: 18px;
       }
+      .invoice-kachcha-shell {
+        width: 100%;
+        max-width: 740px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .invoice-kachcha-card {
+        border: 2px solid #0f172a;
+        border-radius: 8px;
+        padding: 18px;
+      }
+      .invoice-kachcha-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        padding-bottom: 12px;
+        border-bottom: 1px dashed #94a3b8;
+      }
+      .invoice-kachcha-title {
+        margin: 4px 0 0;
+        font-size: 26px;
+        line-height: 1;
+      }
+      .invoice-kachcha-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 14px 0;
+      }
+      .invoice-kachcha-meta div {
+        padding: 8px 10px;
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+      }
+      .invoice-kachcha-meta span {
+        display: block;
+        color: #64748b;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .invoice-kachcha-meta strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 14px;
+      }
+      .invoice-kachcha-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      .invoice-kachcha-table th,
+      .invoice-kachcha-table td {
+        padding: 9px 8px;
+        border: 1px solid #cbd5e1;
+        font-size: 13px;
+        text-align: left;
+      }
+      .invoice-kachcha-table th:last-child,
+      .invoice-kachcha-table td:last-child,
+      .invoice-kachcha-table th:nth-last-child(2),
+      .invoice-kachcha-table td:nth-last-child(2),
+      .invoice-kachcha-table th:nth-last-child(3),
+      .invoice-kachcha-table td:nth-last-child(3) {
+        text-align: right;
+      }
+      .invoice-kachcha-total {
+        margin-top: 14px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .invoice-kachcha-total div {
+        min-width: 220px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: #f8fafc;
+      }
+      .invoice-kachcha-total span {
+        display: block;
+        color: #64748b;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .invoice-kachcha-total strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 20px;
+      }
       .invoice-note {
         margin-top: 18px;
         padding: 12px 14px;
@@ -389,13 +497,321 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
   }, 250);
 }
 
+function isNonGstInvoice(lines: Array<{ gstRate: GstRate; gstAmount: number; taxMode: TaxMode }>) {
+  return lines.every((line) => line.gstRate === "NA" || line.taxMode === "NA" || Math.abs(line.gstAmount) < 0.01);
+}
+
+function displayOrderNote(note?: string) {
+  const text = (note || "").trim();
+  if (!text) return "";
+  const warehouseSourceMatch = text.match(/Warehouse source\s+([^|]+)/i);
+  if (warehouseSourceMatch) {
+    return `Fulfillment Source: ${warehouseSourceMatch[1].trim()}`;
+  }
+  return text;
+}
+
+type InvoicePdfRow = {
+  product: string;
+  quantity: number;
+  rate: number;
+  taxableAmount: number;
+  gstAmount: number;
+  totalAmount: number;
+};
+
+type InvoicePdfConfig = {
+  fileName: string;
+  documentTitle: string;
+  partyLabel: string;
+  partyName: string;
+  warehouseName: string;
+  createdAt?: string;
+  statusLabel: string;
+  note?: string;
+  rows: InvoicePdfRow[];
+  totals: Array<{ label: string; value: number }>;
+  nonGst: boolean;
+};
+
+function safePdfFileName(value: string) {
+  return value.replace(/[<>:"/\\|?*]+/g, "-").replace(/\s+/g, " ").trim() || "invoice";
+}
+
+function downloadBlobFile(fileName: string, blob: Blob) {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
+async function shareInvoicePdfFile(fileName: string, blob: Blob, title: string) {
+  if (typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof File !== "undefined") {
+    const file = new File([blob], fileName, { type: "application/pdf" });
+    const shareData = { title, files: [file] };
+    if (typeof navigator.canShare !== "function" || navigator.canShare(shareData)) {
+      await navigator.share(shareData);
+      return;
+    }
+  }
+  downloadBlobFile(fileName, blob);
+  if (typeof window !== "undefined") {
+    window.alert("Direct WhatsApp PDF share is not supported on this browser. PDF downloaded instead.");
+  }
+}
+
+function buildInvoicePdfBlob(config: InvoicePdfConfig) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 12;
+  const contentWidth = pageWidth - margin * 2;
+  let cursorY = 14;
+
+  const drawMetaCard = (x: number, y: number, width: number, label: string, value: string) => {
+    doc.setDrawColor(215, 222, 231);
+    doc.roundedRect(x, y, width, 16, 3, 3);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(label.toUpperCase(), x + 3, y + 5);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    const lines = doc.splitTextToSize(value || "-", width - 6);
+    doc.text(lines.slice(0, 2), x + 3, y + 10);
+  };
+
+  const drawTableHeader = (y: number) => {
+    doc.setFillColor(config.nonGst ? 248 : 230, config.nonGst ? 250 : 255, config.nonGst ? 252 : 251);
+    doc.roundedRect(margin, y, contentWidth, 9, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    const headers = config.nonGst
+      ? [
+        { label: "#", x: margin + 3, align: "left" as const },
+        { label: "Product", x: margin + 14, align: "left" as const },
+        { label: "Qty", x: margin + 118, align: "right" as const },
+        { label: "Rate", x: margin + 144, align: "right" as const },
+        { label: "Amount", x: margin + 182, align: "right" as const }
+      ]
+      : [
+        { label: "#", x: margin + 3, align: "left" as const },
+        { label: "Product", x: margin + 14, align: "left" as const },
+        { label: "Qty", x: margin + 104, align: "right" as const },
+        { label: "Rate", x: margin + 126, align: "right" as const },
+        { label: "Taxable", x: margin + 148, align: "right" as const },
+        { label: "GST", x: margin + 166, align: "right" as const },
+        { label: "Total", x: margin + 182, align: "right" as const }
+      ];
+    headers.forEach((header) => doc.text(header.label, header.x, y + 6, { align: header.align }));
+  };
+
+  doc.setFillColor(15, 118, 110);
+  doc.roundedRect(margin, cursorY, contentWidth, 24, 5, 5, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("AAPOORTI B2B", margin + 4, cursorY + 6);
+  doc.setFontSize(18);
+  doc.text(config.nonGst ? "Estimate" : config.documentTitle, margin + 4, cursorY + 16);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(config.fileName.replace(/\.pdf$/i, ""), pageWidth - margin - 4, cursorY + 8, { align: "right" });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(config.statusLabel || "-", pageWidth - margin - 4, cursorY + 16, { align: "right" });
+  cursorY += 30;
+
+  const metaWidth = (contentWidth - 6) / 2;
+  drawMetaCard(margin, cursorY, metaWidth, config.partyLabel, config.partyName);
+  drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Warehouse", config.warehouseName);
+  cursorY += 20;
+  drawMetaCard(margin, cursorY, metaWidth, "Date", formatShortDate(config.createdAt));
+  drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Bill Type", config.nonGst ? "Estimate" : "GST");
+  cursorY += 24;
+
+  drawTableHeader(cursorY);
+  cursorY += 12;
+
+  config.rows.forEach((row, index) => {
+    const productLines = doc.splitTextToSize(row.product, config.nonGst ? 90 : 76);
+    const rowHeight = Math.max(8, productLines.length * 4.5 + 2);
+    if (cursorY + rowHeight + 28 > pageHeight - margin) {
+      doc.addPage();
+      cursorY = 16;
+      drawTableHeader(cursorY);
+      cursorY += 12;
+    }
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margin, cursorY + rowHeight, pageWidth - margin, cursorY + rowHeight);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(index + 1), margin + 3, cursorY + 5);
+    doc.text(productLines, margin + 14, cursorY + 5);
+    if (config.nonGst) {
+      doc.text(String(row.quantity), margin + 118, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.rate), margin + 144, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.totalAmount), margin + 182, cursorY + 5, { align: "right" });
+    } else {
+      doc.text(String(row.quantity), margin + 104, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.rate), margin + 126, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.taxableAmount), margin + 148, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.gstAmount), margin + 166, cursorY + 5, { align: "right" });
+      doc.text(formatMoney(row.totalAmount), margin + 182, cursorY + 5, { align: "right" });
+    }
+    cursorY += rowHeight + 2;
+  });
+
+  if (cursorY + 16 + config.totals.length * 11 > pageHeight - margin) {
+    doc.addPage();
+    cursorY = 16;
+  }
+
+  const totalsBoxWidth = 72;
+  const totalsBoxX = pageWidth - margin - totalsBoxWidth;
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(totalsBoxX, cursorY + 4, totalsBoxWidth, 10 + config.totals.length * 9, 3, 3, "F");
+  config.totals.forEach((item, index) => {
+    const y = cursorY + 11 + index * 9;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(item.label.toUpperCase(), totalsBoxX + 4, y);
+    doc.setFont("helvetica", index === config.totals.length - 1 ? "bold" : "normal");
+    doc.setFontSize(index === config.totals.length - 1 ? 12 : 10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(formatMoney(item.value), totalsBoxX + totalsBoxWidth - 4, y, { align: "right" });
+  });
+  cursorY += 18 + config.totals.length * 9;
+
+  if (config.note) {
+    if (cursorY + 18 > pageHeight - margin) {
+      doc.addPage();
+      cursorY = 16;
+    }
+    doc.setFillColor(255, 247, 237);
+    doc.roundedRect(margin, cursorY, contentWidth, 16, 3, 3, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(154, 52, 18);
+    doc.text("NOTE", margin + 4, cursorY + 5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(doc.splitTextToSize(config.note, contentWidth - 8), margin + 4, cursorY + 11);
+  }
+
+  return doc.output("blob");
+}
+
+function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const first = group.lines[0];
+  const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
+  const nonGst = isNonGstInvoice(group.lines);
+  return buildInvoicePdfBlob({
+    fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "purchase-tax-invoice"}.pdf`),
+    documentTitle: "Purchase Tax Invoice",
+    partyLabel: "Supplier",
+    partyName: first?.supplierName || "Supplier",
+    warehouseName,
+    createdAt: first?.createdAt,
+    statusLabel: purchaseWorkflowStatus(snapshot, group.id),
+    note: displayOrderNote(first?.note),
+    rows: group.lines.map((line) => ({
+      product: line.productSku,
+      quantity: line.quantityOrdered,
+      rate: line.rate,
+      taxableAmount: line.taxableAmount,
+      gstAmount: line.gstAmount,
+      totalAmount: line.totalAmount
+    })),
+    totals: nonGst
+      ? [{ label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount, 0) }]
+      : [
+        { label: "Taxable", value: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0) },
+        { label: "GST", value: group.lines.reduce((sum, line) => sum + line.gstAmount, 0) },
+        { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount, 0) }
+      ],
+    nonGst
+  });
+}
+
+function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
+  const nonGst = isNonGstInvoice(group.lines);
+  return buildInvoicePdfBlob({
+    fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "sales-tax-invoice"}.pdf`),
+    documentTitle: "Sales Tax Invoice",
+    partyLabel: "Customer",
+    partyName: first?.shopName || "Customer",
+    warehouseName,
+    createdAt: first?.createdAt,
+    statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
+    note: displayOrderNote(first?.note),
+    rows: group.lines.map((line) => ({
+      product: line.productSku,
+      quantity: line.quantity,
+      rate: line.rate,
+      taxableAmount: line.taxableAmount,
+      gstAmount: line.gstAmount,
+      totalAmount: line.totalAmount + line.deliveryCharge
+    })),
+    totals: nonGst
+      ? [{ label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }]
+      : [
+        { label: "Taxable", value: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0) },
+        { label: "GST", value: group.lines.reduce((sum, line) => sum + line.gstAmount, 0) },
+        { label: "Delivery", value: group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0) },
+        { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }
+      ],
+    nonGst
+  });
+}
+
+function downloadPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const blob = buildPurchaseInvoicePdf(snapshot, group);
+  downloadBlobFile(safePdfFileName(`${group.id}.pdf`), blob);
+}
+
+function downloadSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const blob = buildSalesInvoicePdf(snapshot, group);
+  downloadBlobFile(safePdfFileName(`${group.id}.pdf`), blob);
+}
+
+async function sharePurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const blob = buildPurchaseInvoicePdf(snapshot, group);
+  await shareInvoicePdfFile(safePdfFileName(`${group.id}.pdf`), blob, `Purchase invoice ${group.id}`);
+}
+
+async function shareSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const blob = buildSalesInvoicePdf(snapshot, group);
+  await shareInvoicePdfFile(safePdfFileName(`${group.id}.pdf`), blob, `Sales invoice ${group.id}`);
+}
+
 function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
   const first = group.lines[0];
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
-  const rows = group.lines.map((line, index) => `
+  const nonGstBill = isNonGstInvoice(group.lines);
+  const rows = group.lines.map((line, index) => nonGstBill ? `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(line.productSku)}</td>
+      <td>${line.quantityOrdered}</td>
+      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.totalAmount)}</td>
+    </tr>
+  ` : `
     <tr>
       <td>${index + 1}</td>
       <td>${escapeHtml(line.productSku)}</td>
@@ -406,20 +822,61 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
       <td>${formatMoney(line.totalAmount)}</td>
     </tr>
   `).join("");
+  if (nonGstBill) {
+    return `
+      <main class="invoice-kachcha-shell">
+        <section class="invoice-kachcha-card">
+          <div class="invoice-kachcha-head">
+            <div>
+              <div class="invoice-brand">AAPOORTI B2B</div>
+              <h1 class="invoice-kachcha-title">Purchase Estimate</h1>
+              <div class="invoice-subhead">${escapeHtml(group.id)}</div>
+            </div>
+            <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+          </div>
+          <div class="invoice-kachcha-meta">
+            <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
+            <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
+            <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+            <div><span>Bill Type</span><strong>Non GST</strong></div>
+          </div>
+          <table class="invoice-kachcha-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="invoice-kachcha-total">
+            <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
+          </div>
+          ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
+        </section>
+      </main>
+    `;
+  }
   return `
     <main class="invoice-shell">
       <section class="invoice-card">
         <div class="invoice-head">
           <div>
-            <span class="invoice-badge">Purchase Bill</span>
+            <div class="invoice-brand">AAPOORTI B2B</div>
+            <span class="invoice-badge">Purchase Tax Invoice</span>
             <h1>${escapeHtml(group.id)}</h1>
+            <div class="invoice-subhead">Professional purchase bill format</div>
           </div>
           <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
         </div>
-        <div class="invoice-meta">
+        <div class="invoice-meta invoice-meta-wide">
           <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+          <div><span>Bill Type</span><strong>GST</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -440,7 +897,7 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
           <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
         </div>
-        ${first?.note ? `<div class="invoice-note">${escapeHtml(first.note)}</div>` : ""}
+        ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
       </section>
     </main>
   `;
@@ -453,7 +910,16 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
   const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
-  const rows = group.lines.map((line, index) => `
+  const nonGstBill = isNonGstInvoice(group.lines);
+  const rows = group.lines.map((line, index) => nonGstBill ? `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(line.productSku)}</td>
+      <td>${line.quantity}</td>
+      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.totalAmount + line.deliveryCharge)}</td>
+    </tr>
+  ` : `
     <tr>
       <td>${index + 1}</td>
       <td>${escapeHtml(line.productSku)}</td>
@@ -464,20 +930,61 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${formatMoney(line.totalAmount + line.deliveryCharge)}</td>
     </tr>
   `).join("");
+  if (nonGstBill) {
+    return `
+      <main class="invoice-kachcha-shell">
+        <section class="invoice-kachcha-card">
+          <div class="invoice-kachcha-head">
+            <div>
+              <div class="invoice-brand">AAPOORTI B2B</div>
+              <h1 class="invoice-kachcha-title">Sales Estimate</h1>
+              <div class="invoice-subhead">${escapeHtml(group.id)}</div>
+            </div>
+            <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+          </div>
+          <div class="invoice-kachcha-meta">
+            <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
+            <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
+            <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+            <div><span>Bill Type</span><strong>Non GST</strong></div>
+          </div>
+          <table class="invoice-kachcha-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="invoice-kachcha-total">
+            <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
+          </div>
+          ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
+        </section>
+      </main>
+    `;
+  }
   return `
     <main class="invoice-shell">
       <section class="invoice-card">
         <div class="invoice-head">
           <div>
-            <span class="invoice-badge">Sales Bill</span>
+            <div class="invoice-brand">AAPOORTI B2B</div>
+            <span class="invoice-badge">Sales Tax Invoice</span>
             <h1>${escapeHtml(group.id)}</h1>
+            <div class="invoice-subhead">Professional sales bill format</div>
           </div>
           <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
         </div>
-        <div class="invoice-meta">
+        <div class="invoice-meta invoice-meta-wide">
           <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+          <div><span>Bill Type</span><strong>GST</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -499,7 +1006,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
           <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
         </div>
-        ${first?.note ? `<div class="invoice-note">${escapeHtml(first.note)}</div>` : ""}
+        ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
       </section>
     </main>
   `;
@@ -507,26 +1014,70 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
 
 function purchaseInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
   const first = group.lines[0];
+  const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
+  const nonGstBill = isNonGstInvoice(group.lines);
+  const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
+  const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
-  return encodeURIComponent([
-    "Aapoorti Purchase Bill",
-    `PO: ${group.id}`,
-    `Supplier: ${first?.supplierName || "Supplier"}`,
-    ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantityOrdered} | Rate ${formatMoney(line.rate)} | Total ${formatMoney(line.totalAmount)}`),
-    `Grand Total: ${formatMoney(total)}`
-  ].join("\n"));
+  const lines = nonGstBill
+    ? [
+      "AAPOORTI B2B",
+      "Purchase Estimate",
+      `PO: ${group.id}`,
+      `Supplier: ${first?.supplierName || "Supplier"}`,
+      `Warehouse: ${warehouseNames.join(", ")}`,
+      `Date: ${formatShortDate(first?.createdAt)}`,
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantityOrdered} | Rate ${formatMoney(line.rate)} | Amount ${formatMoney(line.totalAmount)}`),
+      `Grand Total: ${formatMoney(total)}`
+    ]
+    : [
+      "AAPOORTI B2B",
+      "Purchase Tax Invoice",
+      `PO: ${group.id}`,
+      `Supplier: ${first?.supplierName || "Supplier"}`,
+      `Warehouse: ${warehouseNames.join(", ")}`,
+      `Date: ${formatShortDate(first?.createdAt)}`,
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantityOrdered} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount)}`),
+      `Taxable Total: ${formatMoney(taxable)}`,
+      `GST Total: ${formatMoney(gst)}`,
+      `Grand Total: ${formatMoney(total)}`
+    ];
+  return encodeURIComponent(lines.join("\n"));
 }
 
 function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
   const first = group.lines[0];
+  const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
+  const nonGstBill = isNonGstInvoice(group.lines);
+  const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
+  const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
+  const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
-  return encodeURIComponent([
-    "Aapoorti Sales Bill",
-    `SO: ${group.id}`,
-    `Customer: ${first?.shopName || "Customer"}`,
-    ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Total ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
-    `Grand Total: ${formatMoney(total)}`
-  ].join("\n"));
+  const lines = nonGstBill
+    ? [
+      "AAPOORTI B2B",
+      "Sales Estimate",
+      `SO: ${group.id}`,
+      `Customer: ${first?.shopName || "Customer"}`,
+      `Warehouse: ${warehouseNames.join(", ")}`,
+      `Date: ${formatShortDate(first?.createdAt)}`,
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Amount ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
+      `Grand Total: ${formatMoney(total)}`
+    ]
+    : [
+      "AAPOORTI B2B",
+      "Sales Tax Invoice",
+      `SO: ${group.id}`,
+      `Customer: ${first?.shopName || "Customer"}`,
+      `Warehouse: ${warehouseNames.join(", ")}`,
+      `Date: ${formatShortDate(first?.createdAt)}`,
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
+      `Taxable Total: ${formatMoney(taxable)}`,
+      `GST Total: ${formatMoney(gst)}`,
+      `Delivery: ${formatMoney(delivery)}`,
+      `Grand Total: ${formatMoney(total)}`
+    ];
+  return encodeURIComponent(lines.join("\n"));
 }
 
 function countGroupedOrders(orders: Array<{ id: string; cartId?: string }>) {
@@ -3301,8 +3852,8 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                   <div><span className="small-label">Warehouse</span><strong>{purchaseWarehouseStatus(group.lines)}</strong></div>
                   <div className="payment-card-actions wide-field top-gap">
                     {editState.editable && onUpdatePo ? <button className="primary-button" type="button" onClick={() => onUpdatePo(group.id)}>Update PO</button> : <span className="small-label">{editState.reason}</span>}
-                    <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
-                    <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
+                    <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, group)}>WhatsApp Share</button>
+                    <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, group)}>Download PDF</button>
                   </div>
                 </div> : null}
               </article>
@@ -3336,8 +3887,8 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                 <div className="wide-field"><span className="small-label">Note</span><strong>{payment.verificationNote || "No note"}</strong></div>
                 <div className="payment-card-actions wide-field">
                   {proofUrl ? <a className="primary-button" href={proofUrl} target="_blank" rel="noreferrer">Open payment proof</a> : null}
-                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">WhatsApp Share</a> : null}
-                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, invoiceGroup)}>WhatsApp Share</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, invoiceGroup)}>Download PDF</button> : null}
                 </div>
               </div> : null}
             </article>;
@@ -3703,8 +4254,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                   <div><span className="small-label">Status</span><strong>{salesFulfillmentStatus(group.lines)}</strong></div>
                   <div className="payment-card-actions wide-field top-gap">
                     {editState.editable ? <button className="primary-button" type="button" onClick={() => onUpdateSo(group.id)}>Update SO</button> : <span className="small-label">{editState.reason}</span>}
-                    <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
-                    <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${group.id}`, salesInvoiceHtml(snapshot, group))}>Print to PDF</button>
+                    <button className="ghost-button" type="button" onClick={() => void shareSalesInvoicePdf(snapshot, group)}>WhatsApp Share</button>
+                    <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, group)}>Download PDF</button>
                   </div>
                 </div> : null}
               </article>
@@ -3785,8 +4336,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                     verificationNote: `${roles.includes("Collection Agent") ? "Collected by collection agent" : "Collected by sales"} from ${group.shopName}`,
                     operationDate: draft.operationDate || undefined
                   })}>Collected</button>
-                  <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, { id: group.id, lines: group.lines })}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
-                  <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${group.id}`, salesInvoiceHtml(snapshot, { id: group.id, lines: group.lines }))}>Print to PDF</button>
+                  <button className="ghost-button" type="button" onClick={() => void shareSalesInvoicePdf(snapshot, { id: group.id, lines: group.lines })}>WhatsApp Share</button>
+                  <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, { id: group.id, lines: group.lines })}>Download PDF</button>
                 </div>
                 {collectedAmount > 0 && collectedAmount < group.pendingAmount ? <p className="message success wide-field">This will settle partially. Remaining amount stays pending.</p> : null}
               </div> : null}
@@ -4171,13 +4722,13 @@ function PurchaserPaymentsView({
                   <button className="primary-button" type="submit">Submit payment proof</button>
                   {uploadingId === group.id ? <span className="small-label">Uploading proof...</span> : null}
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
-                  <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
-                  <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
+                  <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, group)}>WhatsApp Share</button>
+                  <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, group)}>Download PDF</button>
                 </div>
               </form> : <div className="payment-card-actions top-gap">
                 {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
-                <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
-                <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
+                <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, group)}>WhatsApp Share</button>
+                <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, group)}>Download PDF</button>
               </div>}
             </article>;
           })}
@@ -4262,14 +4813,14 @@ function PurchaserPaymentsView({
                     {uploadingId === payment.id ? <span className="small-label">Uploading proof...</span> : null}
                     {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                     {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
-                    {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
-                    {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
+                    {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, invoiceGroup)}>Invoice Share</button> : null}
+                    {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, invoiceGroup)}>Download PDF</button> : null}
                   </div>
                 </form> : <div className="payment-card-actions top-gap">
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                   {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
-                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
-                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, invoiceGroup)}>Invoice Share</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, invoiceGroup)}>Download PDF</button> : null}
                 </div>}
               </article>
             );
@@ -4471,7 +5022,7 @@ function SalesPaymentsView({
                 <div><span className="small-label">Amount</span><strong>{order.totalAmount}</strong></div>
                 <div><span className="small-label">Payment pending</span><strong>{ledger?.pendingAmount ?? order.totalAmount}</strong></div>
                 <div><span className="small-label">Payment status</span><strong>{(ledger?.pendingAmount || 0) > 0 ? "Pending" : "Settled"}</strong></div>
-                <div><span className="small-label">Note</span><strong>{order.note || "No note"}</strong></div>
+                <div><span className="small-label">Note</span><strong>{displayOrderNote(order.note) || "No note"}</strong></div>
               </div>
             </article>;
           })}
@@ -4517,8 +5068,8 @@ function SalesPaymentsView({
                   <button className="primary-button" type="submit">Submit to accounts</button>
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                   {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
-                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
-                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${invoiceGroup.id}`, salesInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => void shareSalesInvoicePdf(snapshot, invoiceGroup)}>Invoice Share</button> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, invoiceGroup)}>Download PDF</button> : null}
                 </div>
               </form>
             </article>;
