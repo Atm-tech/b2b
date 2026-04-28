@@ -219,6 +219,316 @@ function downloadCsvFile(fileName: string, headers: string[], rows: Array<Array<
   window.URL.revokeObjectURL(url);
 }
 
+function formatCurrencyInr(value: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatShortNumber(value: number) {
+  return new Intl.NumberFormat("en-IN", {
+    notation: "compact",
+    maximumFractionDigits: value >= 1000 ? 1 : 0
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatShortDate(value?: string) {
+  if (!value) return "Pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Pending";
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function printInvoiceDocument(title: string, bodyHtml: string) {
+  if (typeof window === "undefined") return;
+  const popup = window.open("", "_blank", "noopener,noreferrer,width=900,height=1200");
+  if (!popup) return;
+  popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        color: #0f172a;
+        background: #fff;
+      }
+      .invoice-shell {
+        width: 100%;
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .invoice-card {
+        border: 1px solid #d7dee7;
+        border-radius: 18px;
+        padding: 20px;
+      }
+      .invoice-head,
+      .invoice-meta,
+      .invoice-totals {
+        display: grid;
+        gap: 12px;
+      }
+      .invoice-head {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .invoice-head h1 {
+        margin: 6px 0 0;
+        font-size: 28px;
+        line-height: 1;
+      }
+      .invoice-badge {
+        display: inline-flex;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #e6fffb;
+        color: #0f766e;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .invoice-meta {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin: 18px 0;
+      }
+      .invoice-meta div,
+      .invoice-totals div {
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: #f8fafc;
+      }
+      .invoice-meta span,
+      .invoice-totals span,
+      .invoice-line-table th {
+        display: block;
+        color: #64748b;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .invoice-meta strong,
+      .invoice-totals strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 15px;
+      }
+      .invoice-line-table {
+        width: 100%;
+        margin-top: 18px;
+        border-collapse: collapse;
+      }
+      .invoice-line-table th,
+      .invoice-line-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid #e2e8f0;
+        text-align: left;
+        vertical-align: top;
+        font-size: 13px;
+      }
+      .invoice-line-table th:last-child,
+      .invoice-line-table td:last-child,
+      .invoice-line-table th:nth-last-child(2),
+      .invoice-line-table td:nth-last-child(2),
+      .invoice-line-table th:nth-last-child(3),
+      .invoice-line-table td:nth-last-child(3) {
+        text-align: right;
+      }
+      .invoice-totals {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 18px;
+      }
+      .invoice-note {
+        margin-top: 18px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: #fff7ed;
+        color: #9a3412;
+        font-size: 13px;
+      }
+      @media print {
+        body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .invoice-shell { padding: 0; max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    ${bodyHtml}
+  </body>
+</html>`);
+  popup.document.close();
+  popup.focus();
+  window.setTimeout(() => {
+    popup.print();
+  }, 250);
+}
+
+function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const first = group.lines[0];
+  const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
+  const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
+  const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
+  const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+  const rows = group.lines.map((line, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(line.productSku)}</td>
+      <td>${line.quantityOrdered}</td>
+      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.taxableAmount)}</td>
+      <td>${formatMoney(line.gstAmount)}</td>
+      <td>${formatMoney(line.totalAmount)}</td>
+    </tr>
+  `).join("");
+  return `
+    <main class="invoice-shell">
+      <section class="invoice-card">
+        <div class="invoice-head">
+          <div>
+            <span class="invoice-badge">Purchase Bill</span>
+            <h1>${escapeHtml(group.id)}</h1>
+          </div>
+          <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+        </div>
+        <div class="invoice-meta">
+          <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
+          <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
+          <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+        </div>
+        <table class="invoice-line-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Rate</th>
+              <th>Taxable</th>
+              <th>GST</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="invoice-totals">
+          <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
+          <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
+          <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
+        </div>
+        ${first?.note ? `<div class="invoice-note">${escapeHtml(first.note)}</div>` : ""}
+      </section>
+    </main>
+  `;
+}
+
+function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
+  const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
+  const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
+  const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
+  const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
+  const rows = group.lines.map((line, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(line.productSku)}</td>
+      <td>${line.quantity}</td>
+      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.taxableAmount)}</td>
+      <td>${formatMoney(line.gstAmount)}</td>
+      <td>${formatMoney(line.totalAmount + line.deliveryCharge)}</td>
+    </tr>
+  `).join("");
+  return `
+    <main class="invoice-shell">
+      <section class="invoice-card">
+        <div class="invoice-head">
+          <div>
+            <span class="invoice-badge">Sales Bill</span>
+            <h1>${escapeHtml(group.id)}</h1>
+          </div>
+          <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+        </div>
+        <div class="invoice-meta">
+          <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
+          <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
+          <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+        </div>
+        <table class="invoice-line-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Rate</th>
+              <th>Taxable</th>
+              <th>GST</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="invoice-totals">
+          <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
+          <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
+          <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
+          <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
+        </div>
+        ${first?.note ? `<div class="invoice-note">${escapeHtml(first.note)}</div>` : ""}
+      </section>
+    </main>
+  `;
+}
+
+function purchaseInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const first = group.lines[0];
+  const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+  return encodeURIComponent([
+    "Aapoorti Purchase Bill",
+    `PO: ${group.id}`,
+    `Supplier: ${first?.supplierName || "Supplier"}`,
+    ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantityOrdered} | Rate ${formatMoney(line.rate)} | Total ${formatMoney(line.totalAmount)}`),
+    `Grand Total: ${formatMoney(total)}`
+  ].join("\n"));
+}
+
+function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
+  return encodeURIComponent([
+    "Aapoorti Sales Bill",
+    `SO: ${group.id}`,
+    `Customer: ${first?.shopName || "Customer"}`,
+    ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Total ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
+    `Grand Total: ${formatMoney(total)}`
+  ].join("\n"));
+}
+
 function countGroupedOrders(orders: Array<{ id: string; cartId?: string }>) {
   return new Set(orders.map((order) => order.cartId || order.id)).size;
 }
@@ -2991,6 +3301,8 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                   <div><span className="small-label">Warehouse</span><strong>{purchaseWarehouseStatus(group.lines)}</strong></div>
                   <div className="payment-card-actions wide-field top-gap">
                     {editState.editable && onUpdatePo ? <button className="primary-button" type="button" onClick={() => onUpdatePo(group.id)}>Update PO</button> : <span className="small-label">{editState.reason}</span>}
+                    <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+                    <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
                   </div>
                 </div> : null}
               </article>
@@ -3002,6 +3314,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <div className="stack-list payment-update-list">
           {filteredCompletedPayments.length === 0 ? <div className="empty-card">No settled purchase payments yet.</div> : filteredCompletedPayments.map((payment) => {
             const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
+            const invoiceGroup = groupPurchaseOrders(snapshot.purchaseOrders).find((group) => group.id === payment.linkedOrderId);
             const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : "";
             const expanded = openPaymentId === payment.id;
             return <article className="list-card payment-update-card" key={payment.id}>
@@ -3021,7 +3334,11 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                 <div><span className="small-label">UTR</span><strong>{payment.utrNumber || "-"}</strong></div>
                 <div><span className="small-label">Supplier</span><strong>{order?.supplierName || "Supplier"}</strong></div>
                 <div className="wide-field"><span className="small-label">Note</span><strong>{payment.verificationNote || "No note"}</strong></div>
-                {proofUrl ? <div className="wide-field"><a className="primary-button" href={proofUrl} target="_blank" rel="noreferrer">Open payment proof</a></div> : null}
+                <div className="payment-card-actions wide-field">
+                  {proofUrl ? <a className="primary-button" href={proofUrl} target="_blank" rel="noreferrer">Open payment proof</a> : null}
+                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">WhatsApp Share</a> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
+                </div>
               </div> : null}
             </article>;
           })}
@@ -3386,6 +3703,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                   <div><span className="small-label">Status</span><strong>{salesFulfillmentStatus(group.lines)}</strong></div>
                   <div className="payment-card-actions wide-field top-gap">
                     {editState.editable ? <button className="primary-button" type="button" onClick={() => onUpdateSo(group.id)}>Update SO</button> : <span className="small-label">{editState.reason}</span>}
+                    <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+                    <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${group.id}`, salesInvoiceHtml(snapshot, group))}>Print to PDF</button>
                   </div>
                 </div> : null}
               </article>
@@ -3466,6 +3785,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                     verificationNote: `${roles.includes("Collection Agent") ? "Collected by collection agent" : "Collected by sales"} from ${group.shopName}`,
                     operationDate: draft.operationDate || undefined
                   })}>Collected</button>
+                  <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, { id: group.id, lines: group.lines })}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+                  <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${group.id}`, salesInvoiceHtml(snapshot, { id: group.id, lines: group.lines }))}>Print to PDF</button>
                 </div>
                 {collectedAmount > 0 && collectedAmount < group.pendingAmount ? <p className="message success wide-field">This will settle partially. Remaining amount stays pending.</p> : null}
               </div> : null}
@@ -3850,9 +4171,13 @@ function PurchaserPaymentsView({
                   <button className="primary-button" type="submit">Submit payment proof</button>
                   {uploadingId === group.id ? <span className="small-label">Uploading proof...</span> : null}
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                  <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+                  <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
                 </div>
               </form> : <div className="payment-card-actions top-gap">
                 {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
+                <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+                <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${group.id}`, purchaseInvoiceHtml(snapshot, group))}>Print to PDF</button>
               </div>}
             </article>;
           })}
@@ -3872,6 +4197,7 @@ function PurchaserPaymentsView({
             const draft = getDraft(payment);
             const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : draft.proofName ? `${API_BASE}/uploads/payment-proofs/${draft.proofName}` : "";
             const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
+            const invoiceGroup = groupPurchaseOrders(snapshot.purchaseOrders).find((group) => group.id === payment.linkedOrderId);
             const canUpdate = payment.verificationStatus !== "Verified" && payment.verificationStatus !== "Resolved";
             const displayStatus = payment.verificationStatus === "Verified" || payment.verificationStatus === "Resolved"
               ? { label: "Completed", className: "status-completed" }
@@ -3936,10 +4262,14 @@ function PurchaserPaymentsView({
                     {uploadingId === payment.id ? <span className="small-label">Uploading proof...</span> : null}
                     {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                     {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                    {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
+                    {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
                   </div>
                 </form> : <div className="payment-card-actions top-gap">
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                   {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${purchaseInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Purchase Bill ${invoiceGroup.id}`, purchaseInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
                 </div>}
               </article>
             );
@@ -4154,6 +4484,7 @@ function SalesPaymentsView({
             const draft = getDraft(payment);
             const proofUrl = draft.proofName ? `${API_BASE}/uploads/payment-proofs/${draft.proofName}` : "";
             const order = findSalesOrderByPublicId(snapshot.salesOrders, payment.linkedOrderId);
+            const invoiceGroup = groupSalesOrders(snapshot.salesOrders).find((group) => group.id === payment.linkedOrderId);
             const whatsappText = encodeURIComponent(`Aapoorti sales payment proof\nPayment: ${payment.id}\nOrder: ${payment.linkedOrderId}\nShop: ${order?.shopName || ""}\nAmount: ${draft.amount}\nProof: ${proofUrl || "Pending"}`);
             return <article className="list-card payment-update-card" key={payment.id}>
               <div className="payment-update-head">
@@ -4186,6 +4517,8 @@ function SalesPaymentsView({
                   <button className="primary-button" type="submit">Submit to accounts</button>
                   {proofUrl ? <a className="ghost-button" href={proofUrl} target="_blank" rel="noreferrer">Show proof</a> : null}
                   {proofUrl ? <a className="ghost-button" href={`https://wa.me/?text=${whatsappText}`} target="_blank" rel="noreferrer">Share via WhatsApp</a> : null}
+                  {invoiceGroup ? <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, invoiceGroup)}`} target="_blank" rel="noreferrer">Invoice Share</a> : null}
+                  {invoiceGroup ? <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`Sales Bill ${invoiceGroup.id}`, salesInvoiceHtml(snapshot, invoiceGroup))}>Print to PDF</button> : null}
                 </div>
               </form>
             </article>;
@@ -6542,6 +6875,9 @@ function DeliveryManagerHome({
 
 function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: AppSnapshot; currentUser: AppUser; simpleMode: boolean; onOpen: (view: ViewKey) => void }) {
   const roles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
+  if (roles.includes("Accounts") && !simpleMode) {
+    return <AccountsOverview snapshot={snapshot} onOpen={onOpen} />;
+  }
   const taskCards = homeTaskCards(snapshot, currentUser);
   const quickActions: Array<{ title: string; text: string; view: ViewKey }> = [];
   if (roles.includes("Admin")) {
@@ -6617,6 +6953,257 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
       <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
       <Panel title="Payment Verification" eyebrow="Accounts"><DataTable headers={["Payment","Side","Order","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.verificationStatus])} /></Panel>
       <Panel title="Stock Snapshot" eyebrow="Warehouse"><DataTable headers={["Warehouse","Product","Avail","Reserved","Blocked"]} rows={snapshot.stockSummary.map((s) => [s.warehouseName, s.productName, s.availableQuantity, s.reservedQuantity, s.blockedQuantity])} /></Panel>
+    </section>
+  );
+}
+
+function AccountsOverview({ snapshot, onOpen }: { snapshot: AppSnapshot; onOpen: (view: ViewKey) => void }) {
+  const purchaseGroups = groupPurchaseOrders(snapshot.purchaseOrders);
+  const salesGroups = groupSalesOrders(snapshot.salesOrders);
+  const pendingPayments = snapshot.payments
+    .filter((payment) => payment.verificationStatus !== "Verified" && payment.verificationStatus !== "Resolved")
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const flaggedPayments = snapshot.payments
+    .filter((payment) => payment.verificationStatus === "Disputed" || payment.verificationStatus === "Rejected")
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const verifiedPurchaseCashOut = snapshot.payments
+    .filter((payment) => payment.side === "Purchase" && (payment.verificationStatus === "Verified" || payment.verificationStatus === "Resolved"))
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const verifiedSalesCashIn = snapshot.payments
+    .filter((payment) => payment.side === "Sales" && (payment.verificationStatus === "Verified" || payment.verificationStatus === "Resolved"))
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const purchasePending = snapshot.ledgerEntries
+    .filter((entry) => entry.side === "Purchase")
+    .reduce((sum, entry) => sum + entry.pendingAmount, 0);
+  const salesPending = snapshot.ledgerEntries
+    .filter((entry) => entry.side === "Sales")
+    .reduce((sum, entry) => sum + entry.pendingAmount, 0);
+  const inventoryAvailable = snapshot.stockSummary.reduce((sum, item) => sum + item.availableQuantity, 0);
+  const inventoryBlocked = snapshot.stockSummary.reduce((sum, item) => sum + item.blockedQuantity, 0);
+  const inboundUnits = snapshot.receiptChecks.reduce((sum, item) => sum + item.receivedQuantity, 0);
+  const outboundUnits = snapshot.salesOrders
+    .filter((order) => order.status === "Out for Delivery" || order.status === "Delivered" || order.status === "Closed")
+    .reduce((sum, order) => sum + order.quantity, 0);
+  const openPurchaseCount = purchaseGroups.filter((group) => purchaseWorkflowStatus(snapshot, group.id).includes("Pending") || purchaseWorkflowStatus(snapshot, group.id).includes("Partial") || purchaseWorkflowStatus(snapshot, group.id).includes("Flagged") || purchaseWorkflowStatus(snapshot, group.id).includes("Disputed")).length;
+  const openSalesCollections = salesGroups.filter((group) => salesPaymentStatus(snapshot, group.id) !== "Completed").length;
+  const paymentAlerts = [
+    { label: "Pending proofs", count: pendingPayments.length, tone: "pending" },
+    { label: "Disputes", count: flaggedPayments.length, tone: flaggedPayments.length > 0 ? "danger" : "good" },
+    { label: "Supplier dues", count: snapshot.ledgerEntries.filter((entry) => entry.side === "Purchase" && entry.pendingAmount > 0).length, tone: "pending" },
+    { label: "Customer collections", count: snapshot.ledgerEntries.filter((entry) => entry.side === "Sales" && entry.pendingAmount > 0).length, tone: "good" }
+  ];
+  const liveQueue = [
+    ...purchaseGroups
+      .map((group) => {
+        const ledger = purchaseLedgerByOrder(snapshot, group.id);
+        const latest = latestPurchasePayment(snapshot, group.id);
+        return {
+          type: "Pay supplier",
+          party: group.lines[0]?.supplierName || "Supplier",
+          orderId: group.id,
+          amount: ledger?.pendingAmount || purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id),
+          status: purchasePaymentStatus(snapshot, group.id),
+          date: latest?.createdAt || group.lines[0]?.createdAt || "",
+          view: "Payments" as ViewKey
+        };
+      })
+      .filter((item) => item.amount > 0),
+    ...salesGroups
+      .map((group) => {
+        const ledger = snapshot.ledgerEntries.find((entry) => entry.side === "Sales" && entry.linkedOrderId === group.id);
+        const latest = latestSalesPayment(snapshot, group.id);
+        return {
+          type: "Collect customer",
+          party: group.lines[0]?.shopName || "Customer",
+          orderId: group.id,
+          amount: ledger?.pendingAmount || salesOrderPublicTotal(snapshot.salesOrders, group.id),
+          status: salesPaymentStatus(snapshot, group.id),
+          date: latest?.createdAt || group.lines[0]?.createdAt || "",
+          view: "SalesOrders" as ViewKey
+        };
+      })
+      .filter((item) => item.amount > 0)
+  ]
+    .sort((left, right) => right.amount - left.amount)
+    .slice(0, 6);
+  const topProducts = [...snapshot.stockSummary]
+    .sort((left, right) => (right.availableQuantity + right.blockedQuantity) - (left.availableQuantity + left.blockedQuantity))
+    .slice(0, 6);
+
+  return (
+    <section className="dashboard-grid accounts-home-grid">
+      <article className="panel accounts-hero-panel">
+        <div className="accounts-hero-copy">
+          <span className="eyebrow">Accounts Command</span>
+          <h2>Cash, stock, and payment visibility in one pass.</h2>
+          <p>Track supplier payouts, customer collections, stock movement, and payment exceptions before they spill into operations.</p>
+        </div>
+        <div className="accounts-hero-actions">
+          <button className="primary-button" type="button" onClick={() => onOpen("Payments")}>Open payment desk</button>
+          <button className="ghost-button" type="button" onClick={() => onOpen("Ledger")}>Open ledger</button>
+        </div>
+        <div className="accounts-notification-strip">
+          {paymentAlerts.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`accounts-alert-chip tone-${item.tone}`}
+              onClick={() => onOpen(item.label === "Customer collections" ? "SalesOrders" : "Payments")}
+            >
+              <span>{item.label}</span>
+              <strong>{item.count}</strong>
+            </button>
+          ))}
+        </div>
+      </article>
+
+      <article className="panel accounts-cashflow-panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Cashflow</span>
+            <h2>Money position</h2>
+          </div>
+        </div>
+        <div className="accounts-kpi-band">
+          <div className="accounts-kpi-card tone-good">
+            <span className="small-label">Sales cash in</span>
+            <strong>{formatCurrencyInr(verifiedSalesCashIn)}</strong>
+            <p>Verified receipts from customers.</p>
+          </div>
+          <div className="accounts-kpi-card tone-danger">
+            <span className="small-label">Purchase cash out</span>
+            <strong>{formatCurrencyInr(verifiedPurchaseCashOut)}</strong>
+            <p>Verified supplier payments.</p>
+          </div>
+          <div className="accounts-kpi-card tone-pending">
+            <span className="small-label">Receivables open</span>
+            <strong>{formatCurrencyInr(salesPending)}</strong>
+            <p>Customer money still pending.</p>
+          </div>
+          <div className="accounts-kpi-card tone-pending">
+            <span className="small-label">Payables open</span>
+            <strong>{formatCurrencyInr(purchasePending)}</strong>
+            <p>Supplier dues still pending.</p>
+          </div>
+        </div>
+        <div className="accounts-balance-bar">
+          <div>
+            <span className="small-label">Net realized cash</span>
+            <strong>{formatCurrencyInr(verifiedSalesCashIn - verifiedPurchaseCashOut)}</strong>
+          </div>
+          <div>
+            <span className="small-label">Net outstanding</span>
+            <strong>{formatCurrencyInr(salesPending - purchasePending)}</strong>
+          </div>
+        </div>
+      </article>
+
+      <article className="panel accounts-flow-panel">
+        <div className="section-head">
+          <div>
+            <span className="eyebrow">Product Flow</span>
+            <h2>Material movement</h2>
+          </div>
+        </div>
+        <div className="accounts-flow-grid">
+          <div className="accounts-flow-card">
+            <span className="small-label">Inbound units</span>
+            <strong>{formatShortNumber(inboundUnits)}</strong>
+            <p>Units received through GRC and warehouse checks.</p>
+          </div>
+          <div className="accounts-flow-card">
+            <span className="small-label">Outbound units</span>
+            <strong>{formatShortNumber(outboundUnits)}</strong>
+            <p>Units already handed to dispatch or delivered.</p>
+          </div>
+          <div className="accounts-flow-card">
+            <span className="small-label">Available stock</span>
+            <strong>{formatShortNumber(inventoryAvailable)}</strong>
+            <p>Ready inventory across active godowns.</p>
+          </div>
+          <div className="accounts-flow-card">
+            <span className="small-label">Blocked stock</span>
+            <strong>{formatShortNumber(inventoryBlocked)}</strong>
+            <p>Held back from sale or release.</p>
+          </div>
+        </div>
+      </article>
+
+      <Panel title="Priority Queue" eyebrow="Follow-up first">
+        <div className="accounts-priority-list">
+          {liveQueue.length === 0 ? <div className="empty-card">No pending accounting queue.</div> : liveQueue.map((item) => (
+            <button key={`${item.type}-${item.orderId}`} type="button" className="accounts-priority-card" onClick={() => onOpen(item.view)}>
+              <div className="accounts-priority-main">
+                <span className="small-label">{item.type}</span>
+                <strong>{item.party}</strong>
+                <p>{item.orderId}</p>
+              </div>
+              <div className="accounts-priority-meta">
+                <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+                <strong>{formatCurrencyInr(item.amount)}</strong>
+                <span>{formatShortDate(item.date)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="Payment Attention" eyebrow="Notifications">
+        <div className="accounts-payment-feed">
+          {pendingPayments.slice(0, 8).map((payment) => (
+            <div className="accounts-payment-card" key={payment.id}>
+              <div>
+                <span className="small-label">{payment.side}</span>
+                <strong>{payment.linkedOrderId}</strong>
+                <p>{payment.mode} • {payment.referenceNumber || "No reference"}</p>
+              </div>
+              <div className="accounts-payment-meta">
+                <span className={`status-pill ${statusPillClass(payment.verificationStatus)}`}>{payment.verificationStatus}</span>
+                <strong>{formatCurrencyInr(payment.amount)}</strong>
+                <span>{formatShortDate(payment.createdAt)}</span>
+              </div>
+            </div>
+          ))}
+          {pendingPayments.length === 0 ? <div className="empty-card">No pending payment notifications.</div> : null}
+        </div>
+      </Panel>
+
+      <Panel title="Heavy Stock Positions" eyebrow="Product exposure">
+        <div className="accounts-stock-list">
+          {topProducts.length === 0 ? <div className="empty-card">No stock loaded.</div> : topProducts.map((item) => (
+            <div className="accounts-stock-card" key={`${item.warehouseId}-${item.productSku}`}>
+              <div>
+                <span className="small-label">{item.warehouseName}</span>
+                <strong>{item.productName}</strong>
+                <p>{item.productSku}</p>
+              </div>
+              <div className="accounts-stock-meta">
+                <span>Avail {formatShortNumber(item.availableQuantity)}</span>
+                <span>Blocked {formatShortNumber(item.blockedQuantity)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <article className="panel accounts-bottom-band">
+        <div className="accounts-mini-stat">
+          <span className="small-label">Open purchase groups</span>
+          <strong>{openPurchaseCount}</strong>
+        </div>
+        <div className="accounts-mini-stat">
+          <span className="small-label">Open sales collections</span>
+          <strong>{openSalesCollections}</strong>
+        </div>
+        <div className="accounts-mini-stat">
+          <span className="small-label">Products live</span>
+          <strong>{snapshot.products.length}</strong>
+        </div>
+        <div className="accounts-mini-stat">
+          <span className="small-label">Suppliers live</span>
+          <strong>{snapshot.counterparties.filter((item) => item.type === "Supplier").length}</strong>
+        </div>
+      </article>
     </section>
   );
 }

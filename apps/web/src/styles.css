@@ -493,8 +493,11 @@ textarea {
 }
 
 .tab-button {
+  position: relative;
+  z-index: 1;
   background: rgba(255, 255, 255, 0.72);
   box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.08);
+  overflow: visible;
 }
 
 .button-badge-label {
@@ -527,7 +530,7 @@ textarea {
   line-height: 1;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.96), 0 10px 18px rgba(239, 68, 68, 0.26);
   flex-shrink: 0;
-  z-index: 2;
+  z-index: 30;
 }
 
 .summary-stat-value {
@@ -1908,6 +1911,242 @@ textarea {
   align-items: center;
 }
 
+.accounts-home-grid {
+  grid-template-columns: 1.25fr 1.25fr;
+  align-items: start;
+}
+
+.accounts-hero-panel {
+  display: grid;
+  gap: 1rem;
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.22), transparent 34%),
+    radial-gradient(circle at top right, rgba(251, 146, 60, 0.18), transparent 28%),
+    linear-gradient(145deg, rgba(10, 35, 46, 0.97), rgba(20, 92, 86, 0.92));
+  color: #ecfeff;
+  border: 0;
+  box-shadow: 0 24px 60px rgba(8, 47, 73, 0.28);
+}
+
+.accounts-hero-panel .eyebrow,
+.accounts-hero-panel p,
+.accounts-hero-panel .small-label {
+  color: rgba(236, 254, 255, 0.78);
+}
+
+.accounts-hero-copy h2 {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.45rem, 1.1rem + 1.2vw, 2.4rem);
+  line-height: 1.05;
+}
+
+.accounts-hero-copy p {
+  margin: 0.6rem 0 0;
+  max-width: 52ch;
+}
+
+.accounts-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.accounts-hero-actions .ghost-button {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #ecfeff;
+}
+
+.accounts-notification-strip,
+.accounts-kpi-band,
+.accounts-flow-grid,
+.accounts-bottom-band {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.accounts-notification-strip,
+.accounts-kpi-band,
+.accounts-flow-grid,
+.accounts-bottom-band {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.accounts-alert-chip,
+.accounts-priority-card {
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 18px;
+  text-align: left;
+}
+
+.accounts-alert-chip {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.95rem 1rem;
+  color: inherit;
+}
+
+.accounts-alert-chip strong {
+  font-size: 1.45rem;
+}
+
+.accounts-alert-chip.tone-pending {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.accounts-alert-chip.tone-danger {
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.accounts-alert-chip.tone-good {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.accounts-cashflow-panel,
+.accounts-flow-panel,
+.accounts-bottom-band {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.94)),
+    white;
+}
+
+.accounts-kpi-card,
+.accounts-flow-card,
+.accounts-mini-stat,
+.accounts-stock-card,
+.accounts-payment-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.accounts-kpi-card strong,
+.accounts-flow-card strong,
+.accounts-mini-stat strong {
+  font-size: clamp(1.25rem, 1.05rem + 0.8vw, 2rem);
+  line-height: 1.05;
+}
+
+.accounts-kpi-card p,
+.accounts-flow-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.accounts-kpi-card.tone-good {
+  background: linear-gradient(180deg, rgba(220, 252, 231, 0.9), rgba(255, 255, 255, 0.95));
+}
+
+.accounts-kpi-card.tone-danger {
+  background: linear-gradient(180deg, rgba(254, 226, 226, 0.9), rgba(255, 255, 255, 0.95));
+}
+
+.accounts-kpi-card.tone-pending {
+  background: linear-gradient(180deg, rgba(254, 249, 195, 0.88), rgba(255, 255, 255, 0.95));
+}
+
+.accounts-balance-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.accounts-balance-bar > div {
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.accounts-balance-bar strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.35rem;
+}
+
+.accounts-priority-list,
+.accounts-payment-feed,
+.accounts-stock-list {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: var(--space-3);
+}
+
+.accounts-priority-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+}
+
+.accounts-priority-main,
+.accounts-priority-meta,
+.accounts-payment-meta,
+.accounts-stock-meta {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.accounts-priority-main p,
+.accounts-payment-card p,
+.accounts-stock-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.accounts-priority-meta,
+.accounts-payment-meta {
+  justify-items: end;
+  align-content: center;
+}
+
+.accounts-priority-meta strong,
+.accounts-payment-meta strong {
+  font-size: 1.05rem;
+}
+
+.accounts-payment-card,
+.accounts-stock-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.accounts-stock-meta {
+  justify-items: end;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.accounts-mini-stat {
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .accounts-home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .accounts-balance-bar,
+  .accounts-priority-card,
+  .accounts-payment-card,
+  .accounts-stock-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .accounts-priority-meta,
+  .accounts-payment-meta,
+  .accounts-stock-meta {
+    justify-items: start;
+  }
+}
+
 .purchase-summary-scroll {
   max-height: 52vh;
   overflow-y: auto;
@@ -2071,12 +2310,14 @@ textarea {
     display: flex;
     gap: clamp(4px, 1.4vw, 8px);
     padding: clamp(6px, 1.8vw, 10px);
+    overflow: visible;
   }
 
   .summary-switch-bar {
     display: flex;
     gap: clamp(4px, 1.4vw, 8px);
     padding: clamp(6px, 1.8vw, 10px);
+    overflow: visible;
   }
 
   .purchase-module-tab-bar .tab-button {
@@ -2087,7 +2328,7 @@ textarea {
     border-radius: 16px;
     min-height: clamp(42px, 10vw, 54px);
     white-space: nowrap;
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   }
 
@@ -2099,7 +2340,7 @@ textarea {
     border-radius: 16px;
     min-height: clamp(42px, 10vw, 54px);
     white-space: nowrap;
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   }
 
@@ -2107,6 +2348,7 @@ textarea {
     display: flex;
     gap: clamp(4px, 1.4vw, 8px);
     padding: clamp(6px, 1.8vw, 10px);
+    overflow: visible;
   }
 
   .delivery-module-tab-bar .tab-button {
@@ -2117,7 +2359,7 @@ textarea {
     border-radius: 16px;
     min-height: clamp(42px, 10vw, 54px);
     white-space: nowrap;
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   }
 
