@@ -11,7 +11,9 @@ import type {
   NoteRecord,
   PaymentMode,
   PurchaseOrder,
+  PurchaseReturn,
   SalesOrder,
+  SalesReturn,
   SalesStatus,
   UserRole
 } from "@aapoorti-b2b/domain";
@@ -43,8 +45,10 @@ type ViewKey =
   | "Parties"
   | "Purchase"
   | "Purchases"
+  | "PurchaseReturns"
   | "Sales"
   | "SalesOrders"
+  | "SalesReturns"
   | "Payments"
   | "Receipts"
   | "Ledger"
@@ -59,9 +63,9 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
-  Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "Ledger", "Notes"],
+  Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
   Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger", "Stock", "Notes"],
-  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "Ledger", "Notes"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns", "Ledger", "Notes"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
@@ -73,9 +77,9 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
-  Purchaser: ["Overview", "Parties", "Purchase", "Purchases"],
+  Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
   Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger"],
-  Sales: ["Overview", "Parties", "Sales", "SalesOrders"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
@@ -91,8 +95,10 @@ const labels: Record<ViewKey, string> = {
   Parties: "Parties",
   Purchase: "Purchase",
   Purchases: "Purchases",
+  PurchaseReturns: "Purchase Return",
   Sales: "Sales",
   SalesOrders: "Sales",
+  SalesReturns: "Sales Return",
   Payments: "Payments",
   Receipts: "Receipts",
   Ledger: "Ledger",
@@ -103,6 +109,8 @@ const labels: Record<ViewKey, string> = {
   Settings: "Settings",
   Notes: "Notes"
 };
+
+const returnReasons: Array<PurchaseReturn["reason"]> = ["Rate Difference", "Damage", "Quality Issue", "Wrong Item", "Excess Quantity", "Other"];
 
 function displayLabel(view: ViewKey, user?: AppUser | null) {
   if (!user) return labels[view];
@@ -1289,6 +1297,16 @@ function App() {
             />
           </>) : null}
           {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} />) : null}
+          {activeView === "PurchaseReturns" ? <ReturnsWorkspace
+            side="Purchase"
+            snapshot={snapshot}
+            currentUser={currentUser}
+            parties={suppliers}
+            warehouses={warehousesView}
+            products={applyWarehouseScope ? snapshot.products.filter((product) => product.allowedWarehouseIds.some((id) => warehouseScope.has(id))) : snapshot.products}
+            onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
+            onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
+          /> : null}
           {activeView === "Sales" ? (isAdminUser ? <Panel title="Sales Orders" eyebrow="Admin view"><DataTable headers={["SO / Cart","Shop","Products","Taxable","GST","Total","Status"]} rows={groupSalesRows(snapshot.salesOrders)} /></Panel> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
@@ -1307,6 +1325,16 @@ function App() {
             rightPanel={null}
           />)) : null}
           {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} />) : null}
+          {activeView === "SalesReturns" ? <ReturnsWorkspace
+            side="Sales"
+            snapshot={snapshot}
+            currentUser={currentUser}
+            parties={shops}
+            warehouses={warehousesView}
+            products={applyWarehouseScope ? snapshot.products.filter((product) => product.allowedWarehouseIds.some((id) => warehouseScope.has(id))) : snapshot.products}
+            onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
+            onSubmit={(body) => post("/sales-returns", body, "Sales return saved.")}
+          /> : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>
@@ -2841,7 +2869,9 @@ function PurchaserPurchaseWorkspace({
     note: string;
     status: PurchaseOrder["status"];
     lines: Array<{
-      id: string;
+      id?: string;
+      productSku: string;
+      warehouseId?: string;
       quantityOrdered: number;
       rate: number;
       taxableAmount: number;
@@ -2899,27 +2929,15 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
   const groups = groupPurchaseOrders(orders.filter(isOpenPurchaseOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
-  const paymentPendingCount = groups.filter((group) => purchasePaymentStatus(snapshot, group.id) !== "Completed").length;
+  const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
   const completedPayments = snapshot.payments
     .filter((item) => item.side === "Purchase" && (item.verificationStatus === "Verified" || item.verificationStatus === "Resolved"))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-  const groupedByStatus = new Map<string, ReturnType<typeof groupPurchaseOrders>>();
-  for (const group of groups) {
-    const status = purchaseWorkflowStatus(snapshot, group.id);
-    groupedByStatus.set(status, [...(groupedByStatus.get(status) || []), group]);
-  }
-  const statusSections = Array.from(groupedByStatus.entries()).sort((left, right) => {
-    const leftPending = statusPillClass(left[0]) === "status-pending";
-    const rightPending = statusPillClass(right[0]) === "status-pending";
-    return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
-  });
-  const [openStatus, setOpenStatus] = useState("");
+  const [openGroupId, setOpenGroupId] = useState("");
   const [viewMode, setViewMode] = useState<"orders" | "payments">("orders");
   const [openPaymentId, setOpenPaymentId] = useState("");
   const [searchText, setSearchText] = useState("");
-  const filteredStatusSections = statusSections
-    .map(([status, statusGroups]) => [status, statusGroups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()))] as const)
-    .filter(([, statusGroups]) => statusGroups.length > 0);
+  const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCompletedPayments = completedPayments.filter((payment) => {
     const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
     return `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
@@ -2929,7 +2947,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
     <section className="collapse-stack">
       <div className="summary-switch-bar">
         <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
-        <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={completedPayments.length} /></button>
+        <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={paymentPendingCount} /></button>
       </div>
       <div className="form-grid">
         <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
@@ -2942,42 +2960,44 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
           <div><span className="small-label">Accounts follow-up</span><strong className="summary-stat-value"><span>Payment pending</span><PendingBadge count={paymentPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {filteredStatusSections.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : filteredStatusSections.map(([status, statusGroups]) => (
-        <CollapsiblePanel
-          key={status}
-          eyebrow="Purchases"
-          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.supplierName || "Supplier"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}><LabelWithBadge label="PO" count={statusGroups.length} /></span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => purchaseDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${purchasePaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
-          open={openStatus === status}
-          onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
-        >
-          <div className="stack-list">
-            {statusGroups.map((group) => {
-              const first = group.lines[0];
-              const editState = currentUser ? purchaseCartEditState(snapshot, group.id, currentUser) : { editable: false, reason: "Open PO to update." };
-              return (
-                <article className="list-card purchase-summary-card" key={group.id}>
+      {filteredGroups.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : <Panel title="Purchases" eyebrow="Your purchase orders">
+        <div className="stack-list purchase-summary-scroll">
+          {filteredGroups.map((group) => {
+            const first = group.lines[0];
+            const editState = currentUser ? purchaseCartEditState(snapshot, group.id, currentUser) : { editable: false, reason: "Open PO to update." };
+            const expanded = openGroupId === group.id;
+            return (
+              <article className="list-card purchase-summary-card" key={group.id}>
+                <button className="purchase-summary-toggle" type="button" onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
                   <div className="payment-update-head">
                     <div>
-                      <strong>{group.id}</strong>
-                      <p>{first?.supplierName || "Supplier"} / {group.lines.map((line) => line.productSku).join(", ")}</p>
+                      <strong>{first?.supplierName || "Supplier"}{group.lines.length > 1 ? ` +${group.lines.length - 1}` : ""}</strong>
+                      <p>{group.id}</p>
                     </div>
-                    <span className={`status-pill ${statusPillClass(purchaseWarehouseStatus(group.lines))}`}>{purchaseWarehouseStatus(group.lines)}</span>
+                    <span className="status-pill">{expanded ? "Close" : "Open"}</span>
                   </div>
-                  <div className="payment-meta-grid">
-                    <div><span className="small-label">Supplier</span><strong>{first?.supplierName || "Supplier"}</strong></div>
-                    <div><span className="small-label">Delivery</span><strong>{purchaseDeliveryStatus(snapshot, group.id)}</strong></div>
-                    <div><span className="small-label">Payment</span><strong>{purchasePaymentStatus(snapshot, group.id)}</strong></div>
-                    <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</strong></div>
+                  <div className="purchase-status-chips top-gap">
+                    <span className="status-pill status-pending"><LabelWithBadge label="PO" count={1} /></span>
+                    <span className="status-pill status-pending">{purchaseDeliveryStatus(snapshot, group.id)}</span>
+                    <span className={`status-pill ${statusPillClass(`Payment ${purchasePaymentStatus(snapshot, group.id)}`)}`}>{purchasePaymentStatus(snapshot, group.id)}</span>
                   </div>
-                  <div className="payment-card-actions top-gap">
+                </button>
+                {expanded ? <div className="payment-meta-grid top-gap">
+                  <div><span className="small-label">Supplier</span><strong>{first?.supplierName || "Supplier"}</strong></div>
+                  <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Delivery</span><strong>{purchaseDeliveryStatus(snapshot, group.id)}</strong></div>
+                  <div><span className="small-label">Payment</span><strong>{purchasePaymentStatus(snapshot, group.id)}</strong></div>
+                  <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</strong></div>
+                  <div><span className="small-label">Warehouse</span><strong>{purchaseWarehouseStatus(group.lines)}</strong></div>
+                  <div className="payment-card-actions wide-field top-gap">
                     {editState.editable && onUpdatePo ? <button className="primary-button" type="button" onClick={() => onUpdatePo(group.id)}>Update PO</button> : <span className="small-label">{editState.reason}</span>}
                   </div>
-                </article>
-              );
-            })}
-          </div>
-        </CollapsiblePanel>
-      ))}
+                </div> : null}
+              </article>
+            );
+          })}
+        </div>
+      </Panel>}
       </> : <Panel title="Settled Payments" eyebrow="Purchase proofs">
         <div className="stack-list payment-update-list">
           {filteredCompletedPayments.length === 0 ? <div className="empty-card">No settled purchase payments yet.</div> : filteredCompletedPayments.map((payment) => {
@@ -3027,7 +3047,9 @@ function PurchaseCartEditor({
     note: string;
     status: PurchaseOrder["status"];
     lines: Array<{
-      id: string;
+      id?: string;
+      productSku: string;
+      warehouseId?: string;
       quantityOrdered: number;
       rate: number;
       taxableAmount: number;
@@ -3055,8 +3077,10 @@ function PurchaseCartEditor({
     note: string;
     status: PurchaseOrder["status"];
     lines: Array<{
-      id: string;
+      clientKey: string;
+      id?: string;
       productSku: string;
+      warehouseId: string;
       quantityOrdered: string;
       rate: string;
       gstRate: GstRateInput;
@@ -3088,7 +3112,9 @@ function PurchaseCartEditor({
       status: first.status,
       lines: selectedGroup.lines.map((line) => ({
         id: line.id,
+        clientKey: line.id,
         productSku: line.productSku,
+        warehouseId: line.warehouseId,
         quantityOrdered: String(line.quantityOrdered),
         rate: String(line.rate),
         gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
@@ -3099,7 +3125,8 @@ function PurchaseCartEditor({
     });
   }, [selectedGroup?.id]);
 
-  function updateDraftLine(lineId: string, updates: Partial<{
+  function updateDraftLine(lineKey: string, updates: Partial<{
+    productSku: string;
     quantityOrdered: string;
     rate: string;
     gstRate: GstRateInput;
@@ -3110,14 +3137,18 @@ function PurchaseCartEditor({
       return {
         ...current,
         lines: current.lines.map((line) => {
-          if (line.id !== lineId) return line;
+          if (line.clientKey !== lineKey) return line;
+          const productSku = updates.productSku ?? line.productSku;
           const quantityOrdered = updates.quantityOrdered ?? line.quantityOrdered;
           const rate = updates.rate ?? line.rate;
-          const gstRate = updates.gstRate ?? line.gstRate;
-          const taxMode = gstRate === "NA" ? "NA" : (updates.taxMode ?? (line.taxMode === "NA" ? "Exclusive" : line.taxMode));
+          const product = snapshot.products.find((item) => item.sku === productSku);
+          const gstRate = updates.gstRate ?? line.gstRate ?? (product?.defaultGstRate === "NA" ? "NA" : String(product?.defaultGstRate || 0) as GstRateInput);
+          const fallbackTaxMode = product?.defaultTaxMode === "NA" ? "NA" : (product?.defaultTaxMode || "Exclusive");
+          const taxMode = gstRate === "NA" ? "NA" : (updates.taxMode ?? (line.taxMode === "NA" ? fallbackTaxMode : line.taxMode));
           const totals = calculateTaxPreview(String(Math.max(0, Number(quantityOrdered || 0)) * Math.max(0, Number(rate || 0))), gstRate, taxMode);
           return {
             ...line,
+            productSku,
             quantityOrdered,
             rate,
             gstRate,
@@ -3130,8 +3161,31 @@ function PurchaseCartEditor({
     });
   }
 
+  function addDraftLine() {
+    if (!selectedGroup) return;
+    const fallbackProduct = snapshot.products[0];
+    if (!fallbackProduct) return;
+    const gstRate = fallbackProduct.defaultGstRate === "NA" ? "NA" : String(fallbackProduct.defaultGstRate || 0) as GstRateInput;
+    const taxMode = fallbackProduct.defaultTaxMode === "NA" ? "NA" : fallbackProduct.defaultTaxMode;
+    const totals = calculateTaxPreview("0", gstRate, taxMode);
+    setDraft((current) => current ? {
+      ...current,
+      lines: [...current.lines, {
+        clientKey: `po-${Date.now()}-${Math.random()}`,
+        productSku: fallbackProduct.sku,
+        warehouseId: selectedGroup.lines[0]?.warehouseId || "",
+        quantityOrdered: "0",
+        rate: "0",
+        gstRate,
+        gstAmount: totals.gstAmount,
+        taxableAmount: totals.taxableAmount,
+        taxMode
+      }]
+    } : current);
+  }
+
   return (
-    <Panel title="Edit Purchase Cart" eyebrow="Purchaser until delivery assignment">
+    <Panel title="Update Purchase Order" eyebrow="Product amendment only">
       {editableGroups.length === 0 ? <div className="empty-card">No purchase carts available for edit.</div> : <>
         <form
           className="form-grid"
@@ -3146,6 +3200,8 @@ function PurchaseCartEditor({
               status: draft.status,
               lines: draft.lines.map((line) => ({
                 id: line.id,
+                productSku: line.productSku,
+                warehouseId: line.warehouseId,
                 quantityOrdered: Number(line.quantityOrdered || 0),
                 rate: Number(line.rate || 0),
                 taxableAmount: Number(line.taxableAmount || 0),
@@ -3169,80 +3225,36 @@ function PurchaseCartEditor({
               <span className="status-pill">{purchaseWorkflowStatus(snapshot, selectedGroup.id)}</span>
             </div>
             {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
-            <label>
-              Payment Method
-              <select value={draft?.paymentMode || ""} onChange={(e) => setDraft((current) => current ? { ...current, paymentMode: e.target.value as PaymentMode } : current)} disabled={!editState.editable}>
-                <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
-              </select>
-            </label>
-            {draft?.paymentMode === "Cash" ? <label>
-              Cash Timing
-              <select value={draft.cashTiming} onChange={(e) => setDraft((current) => current ? { ...current, cashTiming: e.target.value } : current)} disabled={!editState.editable}>
-                <option value="">Select</option><option>In Hand</option><option>At Delivery</option>
-              </select>
-            </label> : null}
-            <label>
-              Delivery Mode
-              <select value={draft?.deliveryMode || "Dealer Delivery"} onChange={(e) => setDraft((current) => current ? { ...current, deliveryMode: e.target.value as "Dealer Delivery" | "Self Collection" } : current)} disabled={!editState.editable}>
-                <option>Dealer Delivery</option><option>Self Collection</option>
-              </select>
-            </label>
-            <label>
-              Status
-              <input value={draft?.status || ""} readOnly />
-            </label>
-            <label className="wide-field">
-              Note
-              <input value={draft?.note || ""} onChange={(e) => setDraft((current) => current ? { ...current, note: e.target.value } : current)} disabled={!editState.editable} />
-            </label>
-            <div className="stack-list wide-field">
-              {draft?.lines.map((line) => {
-                const total = Number(line.taxableAmount || 0) + Number(line.gstAmount || 0);
+            <div className="payment-card-actions wide-field">
+              <button className="ghost-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
+            </div>
+            <div className="wide-field compact-order-editor">
+              <div className="compact-order-editor-head">
+                <span>Action</span>
+                <span>Product</span>
+                <span>Qty</span>
+                <span>Rate</span>
+              </div>
+              {draft?.lines.map((line, index) => {
                 return (
-                  <article className="list-card" key={line.id}>
-                    <div className="payment-update-head">
-                      <div>
-                        <strong>{line.productSku}</strong>
-                        <p>{line.id}</p>
-                      </div>
-                      <span className="status-pill">{total.toFixed(2)}</span>
+                  <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}>
+                    <div className="compact-order-editor-actions">
+                      <button className="ghost-button compact-icon-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button>
+                      <button className="ghost-button compact-icon-button" type="button" onClick={() => setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current)} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button>
                     </div>
-                    <div className="cart-edit-grid top-gap">
-                      <label>
-                        Qty
-                        <input type="number" step="any" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.id, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
-                      </label>
-                      <label>
-                        Rate
-                        <input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.id, { rate: e.target.value })} disabled={!editState.editable} />
-                      </label>
-                      <label>
-                        Bill Type
-                        <select value={line.gstRate === "NA" ? "NA" : "GST"} onChange={(e) => updateDraftLine(line.id, e.target.value === "NA" ? { gstRate: "NA", taxMode: "NA" } : { gstRate: line.gstRate === "NA" ? "0" : line.gstRate, taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode })} disabled={!editState.editable}>
-                          <option value="GST">GST Bill</option><option value="NA">Non GST Bill</option>
-                        </select>
-                      </label>
-                      <label>
-                        GST
-                        <select value={line.gstRate} onChange={(e) => updateDraftLine(line.id, { gstRate: e.target.value as GstRateInput })} disabled={!editState.editable}>
-                          <option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option>
-                        </select>
-                      </label>
-                      <label>
-                        Calculation
-                        <select value={line.taxMode} onChange={(e) => updateDraftLine(line.id, { taxMode: e.target.value as TaxModeInput })} disabled={!editState.editable || line.gstRate === "NA"}>
-                          <option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option>
-                        </select>
-                      </label>
-                      <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
-                      <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
+                    <div className="compact-order-editor-product">
+                      {!line.id ? <select value={line.productSku} onChange={(e) => updateDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>
+                        {snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}
+                      </select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}
                     </div>
-                  </article>
+                    <input type="number" step="any" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.clientKey, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
+                    <input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} />
+                  </div>
                 );
               })}
             </div>
             <div className="payment-card-actions wide-field">
-              <button className="primary-button" type="submit" disabled={!editState.editable}>Update purchase cart</button>
+              <button className="primary-button" type="submit" disabled={!editState.editable}>Update purchase order</button>
             </div>
           </> : null}
         </form>
@@ -3293,20 +3305,13 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
     const status = `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`;
     groupedByStatus.set(status, [...(groupedByStatus.get(status) || []), group]);
   }
-  const statusSections = Array.from(groupedByStatus.entries()).sort((left, right) => {
-    const leftPending = statusPillClass(left[0]) === "status-pending";
-    const rightPending = statusPillClass(right[0]) === "status-pending";
-    return Number(rightPending) - Number(leftPending) || left[0].localeCompare(right[0], "en-IN");
-  });
-  const [openStatus, setOpenStatus] = useState("");
+  const [openGroupId, setOpenGroupId] = useState("");
   const [viewMode, setViewMode] = useState<"orders" | "collections">("orders");
   const [searchText, setSearchText] = useState("");
   const [expandedCollectionOrder, setExpandedCollectionOrder] = useState("");
   const [showSettlementSummary, setShowSettlementSummary] = useState(false);
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; operationDate: string }>>({});
-  const filteredStatusSections = statusSections
-    .map(([status, statusGroups]) => [status, statusGroups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()))] as const)
-    .filter(([, statusGroups]) => statusGroups.length > 0);
+  const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
 
   function getCollectionDraft(orderId: string) {
@@ -3350,42 +3355,44 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
           <div><span className="small-label">Collection queue</span><strong><LabelWithBadge label="Collection pending" count={collectionPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {filteredStatusSections.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : filteredStatusSections.map(([status, statusGroups]) => (
-        <CollapsiblePanel
-          key={status}
-          eyebrow="Sales"
-          title={<span className="purchase-status-title"><span className="purchase-status-name">{Array.from(new Set(statusGroups.map((group) => group.lines[0]?.shopName || "Customer"))).slice(0, 2).join(", ")}{statusGroups.length > 2 ? ` +${statusGroups.length - 2}` : ""}</span><span className="purchase-status-chips"><span className={`status-pill ${statusPillClass(status)}`}><LabelWithBadge label="SO" count={statusGroups.length} /></span><span className="status-pill status-pending">{Array.from(new Set(statusGroups.map((group) => salesDeliveryStatus(snapshot, group.id)))).join(", ")}</span><span className={`status-pill ${statusPillClass(status)}`}>{Array.from(new Set(statusGroups.map((group) => `Payment ${salesPaymentStatus(snapshot, group.id)}`))).join(", ")}</span></span></span>}
-          open={openStatus === status}
-          onToggle={() => setOpenStatus((current) => current === status ? "" : status)}
-        >
-          <div className="stack-list">
-            {statusGroups.map((group) => {
-              const first = group.lines[0];
-              const editState = salesOrderEditState(snapshot, group.id, currentUser);
-              return (
-                <article className="list-card purchase-summary-card" key={group.id}>
+      {filteredGroups.length === 0 ? <Panel title="Sales" eyebrow="Your sales orders"><div className="empty-card">No sales orders yet.</div></Panel> : <Panel title="Sales" eyebrow="Your sales orders">
+        <div className="stack-list purchase-summary-scroll">
+          {filteredGroups.map((group) => {
+            const first = group.lines[0];
+            const editState = salesOrderEditState(snapshot, group.id, currentUser);
+            const expanded = openGroupId === group.id;
+            return (
+              <article className="list-card purchase-summary-card" key={group.id}>
+                <button className="purchase-summary-toggle" type="button" onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
                   <div className="payment-update-head">
                     <div>
-                      <strong>{group.id}</strong>
-                      <p>{first?.shopName || "Customer"} / {group.lines.map((line) => line.productSku).join(", ")}</p>
+                      <strong>{first?.shopName || "Customer"}{group.lines.length > 1 ? ` +${group.lines.length - 1}` : ""}</strong>
+                      <p>{group.id}</p>
                     </div>
-                    <span className={`status-pill ${statusPillClass(salesFulfillmentStatus(group.lines))}`}>{salesFulfillmentStatus(group.lines)}</span>
+                    <span className="status-pill">{expanded ? "Close" : "Open"}</span>
                   </div>
-                  <div className="payment-meta-grid">
-                    <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
-                    <div><span className="small-label">Delivery</span><strong>{salesDeliveryStatus(snapshot, group.id)}</strong></div>
-                    <div><span className="small-label">Payment</span><strong>{salesPaymentStatus(snapshot, group.id)}</strong></div>
-                    <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0).toFixed(2)}</strong></div>
+                  <div className="purchase-status-chips top-gap">
+                    <span className="status-pill status-pending"><LabelWithBadge label="SO" count={1} /></span>
+                    <span className="status-pill status-pending">{salesDeliveryStatus(snapshot, group.id)}</span>
+                    <span className={`status-pill ${statusPillClass(`Payment ${salesPaymentStatus(snapshot, group.id)}`)}`}>{salesPaymentStatus(snapshot, group.id)}</span>
                   </div>
-                  <div className="payment-card-actions top-gap">
+                </button>
+                {expanded ? <div className="payment-meta-grid top-gap">
+                  <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
+                  <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Delivery</span><strong>{salesDeliveryStatus(snapshot, group.id)}</strong></div>
+                  <div><span className="small-label">Payment</span><strong>{salesPaymentStatus(snapshot, group.id)}</strong></div>
+                  <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0).toFixed(2)}</strong></div>
+                  <div><span className="small-label">Status</span><strong>{salesFulfillmentStatus(group.lines)}</strong></div>
+                  <div className="payment-card-actions wide-field top-gap">
                     {editState.editable ? <button className="primary-button" type="button" onClick={() => onUpdateSo(group.id)}>Update SO</button> : <span className="small-label">{editState.reason}</span>}
                   </div>
-                </article>
-              );
-            })}
-          </div>
-        </CollapsiblePanel>
-      ))}
+                </div> : null}
+              </article>
+            );
+          })}
+        </div>
+      </Panel>}
       </> : <Panel title="Collection Work" eyebrow="Pending customer payment">
         <div className="stack-list payment-update-list">
           <div className="payment-card-actions">
@@ -3475,7 +3482,25 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   currentUser: AppUser;
   initialOrderId: string;
   onNewOrder: () => void;
-  onUpdateSalesOrder: (id: string, body: { rate: number; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus }) => Promise<boolean | void>;
+  onUpdateSalesOrder: (id: string, body: {
+    paymentMode: PaymentMode;
+    cashTiming?: string;
+    deliveryMode: "Self Collection" | "Delivery";
+    note: string;
+    status: SalesStatus;
+    lines?: Array<{
+      id?: string;
+      productSku: string;
+      warehouseId?: string;
+      quantity: number;
+      rate: number;
+      taxableAmount: number;
+      gstRate: "NA" | 0 | 5 | 12 | 18 | 40;
+      gstAmount: number;
+      taxMode: "NA" | "Exclusive" | "Inclusive";
+    }>;
+    rate?: number;
+  }) => Promise<boolean | void>;
 }) {
   const editableGroups = groupSalesOrders(snapshot.salesOrders.filter((order) =>
     isOpenSalesOrder(order) && (
@@ -3487,7 +3512,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
-  const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ id: string; productSku: string; rate: string; quantity: string; totalAmount: number }> } | null>(null);
+  const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ clientKey: string; id?: string; productSku: string; warehouseId: string; rate: string; quantity: string; totalAmount: number; gstRate: GstRateInput; gstAmount: string; taxableAmount: string; taxMode: TaxModeInput }> } | null>(null);
 
   useEffect(() => {
     if (initialOrderId) setSelectedOrderId(initialOrderId);
@@ -3505,23 +3530,100 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
       deliveryMode: first.deliveryMode,
       note: first.note || "",
       status: first.status,
-      lines: selectedGroup.lines.map((line) => ({ id: line.id, productSku: line.productSku, rate: String(line.rate), quantity: String(line.quantity), totalAmount: line.totalAmount + line.deliveryCharge }))
+      lines: selectedGroup.lines.map((line) => ({
+        id: line.id,
+        clientKey: line.id,
+        productSku: line.productSku,
+        warehouseId: line.warehouseId,
+        rate: String(line.rate),
+        quantity: String(line.quantity),
+        totalAmount: line.totalAmount + line.deliveryCharge,
+        gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
+        gstAmount: String(line.gstAmount),
+        taxableAmount: String(line.taxableAmount),
+        taxMode: line.taxMode === "NA" ? "NA" : (line.taxMode || "Exclusive")
+      }))
     });
   }, [selectedGroup?.id]);
 
+  function updateSalesDraftLine(lineKey: string, updates: Partial<{ productSku: string; quantity: string; rate: string; gstRate: GstRateInput; taxMode: TaxModeInput }>) {
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        lines: current.lines.map((line) => {
+          if (line.clientKey !== lineKey) return line;
+          const productSku = updates.productSku ?? line.productSku;
+          const product = snapshot.products.find((item) => item.sku === productSku);
+          const quantity = updates.quantity ?? line.quantity;
+          const rate = updates.rate ?? line.rate;
+          const gstRate = updates.gstRate ?? line.gstRate ?? (product?.defaultGstRate === "NA" ? "NA" : String(product?.defaultGstRate || 0) as GstRateInput);
+          const fallbackTaxMode = product?.defaultTaxMode === "NA" ? "NA" : (product?.defaultTaxMode || "Exclusive");
+          const taxMode = gstRate === "NA" ? "NA" : (updates.taxMode ?? (line.taxMode === "NA" ? fallbackTaxMode : line.taxMode));
+          const totals = calculateTaxPreview(String(Math.max(0, Number(quantity || 0)) * Math.max(0, Number(rate || 0))), gstRate, taxMode);
+          return {
+            ...line,
+            productSku,
+            quantity,
+            rate,
+            gstRate,
+            taxMode,
+            taxableAmount: totals.taxableAmount,
+            gstAmount: totals.gstAmount,
+            totalAmount: Number(totals.taxableAmount || 0) + Number(totals.gstAmount || 0)
+          };
+        })
+      };
+    });
+  }
+
+  function addSalesDraftLine() {
+    if (!selectedGroup) return;
+    const fallbackProduct = snapshot.products[0];
+    if (!fallbackProduct) return;
+    const gstRate = fallbackProduct.defaultGstRate === "NA" ? "NA" : String(fallbackProduct.defaultGstRate || 0) as GstRateInput;
+    const taxMode = fallbackProduct.defaultTaxMode === "NA" ? "NA" : fallbackProduct.defaultTaxMode;
+    const totals = calculateTaxPreview("0", gstRate, taxMode);
+    setDraft((current) => current ? {
+      ...current,
+      lines: [...current.lines, {
+        clientKey: `so-${Date.now()}-${Math.random()}`,
+        productSku: fallbackProduct.sku,
+        warehouseId: selectedGroup.lines[0]?.warehouseId || "",
+        rate: "0",
+        quantity: "0",
+        totalAmount: 0,
+        gstRate,
+        gstAmount: totals.gstAmount,
+        taxableAmount: totals.taxableAmount,
+        taxMode
+      }]
+    } : current);
+  }
+
   return (
-    <Panel title="Edit Sales Order" eyebrow="Salesman until delivery assignment">
+    <Panel title="Update Sales Order" eyebrow="Product amendment only">
       {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
         event.preventDefault();
         if (!selectedGroup || !draft || !editState.editable) return;
-        await Promise.all(draft.lines.map((line) => onUpdateSalesOrder(line.id, {
-          rate: Number(line.rate || 0),
+        await onUpdateSalesOrder(selectedGroup.id, {
           paymentMode: draft.paymentMode,
           cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
           deliveryMode: draft.deliveryMode,
           note: draft.note,
-          status: draft.status
-        })));
+          status: draft.status,
+          lines: draft.lines.map((line) => ({
+            id: line.id,
+            productSku: line.productSku,
+            warehouseId: line.warehouseId,
+            quantity: Number(line.quantity || 0),
+            rate: Number(line.rate || 0),
+            taxableAmount: Number(line.taxableAmount || 0),
+            gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
+            gstAmount: Number(line.gstAmount || 0),
+            taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
+          }))
+        });
       }}>
         <label className="wide-field">Sales order<select value={selectedGroup?.id || ""} onChange={(e) => setSelectedOrderId(e.target.value)}>{editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.shopName || "Customer"}`}</option>)}</select></label>
         {selectedGroup ? <>
@@ -3531,12 +3633,18 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
             <span className="status-pill">{salesFulfillmentStatus(selectedGroup.lines)} / Payment {salesPaymentStatus(snapshot, selectedGroup.id)}</span>
           </div>
           {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
-          <label>Payment Method<select value={draft?.paymentMode || ""} onChange={(e) => setDraft((current) => current ? { ...current, paymentMode: e.target.value as PaymentMode } : current)} disabled={!editState.editable}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
-          {draft?.paymentMode === "Cash" ? <label>Cash Timing<select value={draft.cashTiming} onChange={(e) => setDraft((current) => current ? { ...current, cashTiming: e.target.value } : current)} disabled={!editState.editable}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
-          <label>Delivery Mode<select value={draft?.deliveryMode || "Delivery"} onChange={(e) => setDraft((current) => current ? { ...current, deliveryMode: e.target.value as "Self Collection" | "Delivery" } : current)} disabled={!editState.editable}><option>Self Collection</option><option>Delivery</option></select></label>
-          <label>Status<input value={draft?.status || ""} readOnly /></label>
-          <label className="wide-field">Note<input value={draft?.note || ""} onChange={(e) => setDraft((current) => current ? { ...current, note: e.target.value } : current)} disabled={!editState.editable} /></label>
-          <div className="stack-list wide-field">{draft?.lines.map((line) => <article className="list-card" key={line.id}><div className="payment-update-head"><div><strong>{line.productSku}</strong><p>{line.id} / Qty {line.quantity}</p></div><span className="status-pill">{Number(line.totalAmount || 0).toFixed(2)}</span></div><div className="cart-edit-grid top-gap"><label>Rate<input type="number" step="any" min="0" value={line.rate} onChange={(e) => setDraft((current) => current ? { ...current, lines: current.lines.map((item) => item.id === line.id ? { ...item, rate: e.target.value } : item) } : current)} disabled={!editState.editable} /></label></div></article>)}</div>
+          <div className="payment-card-actions wide-field">
+            <button className="ghost-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
+          </div>
+          <div className="wide-field compact-order-editor">{draft?.lines.length ? <>
+            <div className="compact-order-editor-head">
+              <span>Action</span>
+              <span>Product</span>
+              <span>Qty</span>
+              <span>Rate</span>
+            </div>
+            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current)} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}</select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
+          </> : <div className="empty-card">No sales order lines available.</div>}</div>
           <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={onNewOrder}>New SO</button></div>
         </> : null}
       </form>}
@@ -5523,11 +5631,6 @@ function WarehouseOperationsViewV2({
               setSubmittingInboundTag(false);
             }
           }}>
-            <label>Transport<select value={inboundTransportType} disabled={submittingInboundTag} onChange={(e) => setInboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
-            {inboundTransportType === "Internal" ? <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
-              <label>Vehicle number<input value={inboundExternalVehicleNumber} disabled={submittingInboundTag} onChange={(e) => setInboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
-              <label>Freight amount<input type="number" step="any" value={inboundExternalFreightAmount} disabled={submittingInboundTag} onChange={(e) => setInboundExternalFreightAmount(e.target.value)} /></label>
-            </>}
             <div className="wide-field stack-list warehouse-order-list">
               {inboundSuggestionGroups().map((bucket, index) => {
                 const mapUrl = mapsDirectionsUrl([...bucket.map((group) => supplierAddress(group)), warehouseById.get(bucket[0]?.lines[0]?.warehouseId || "")?.name || "Warehouse"]);
@@ -5548,6 +5651,13 @@ function WarehouseOperationsViewV2({
                 </div>
               </label>)}
             </div>
+            {selectedInboundGroups.length > 0 ? <div className="wide-field form-grid">
+              <label>Transport<select value={inboundTransportType} disabled={submittingInboundTag} onChange={(e) => setInboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
+              {inboundTransportType === "Internal" ? <label>In delivery team<select multiple value={inboundAssignedTo} disabled={submittingInboundTag} onChange={(e) => setInboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), inboundDeliveryUsers, defaultInboundDeliveryUsername))}>{inboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
+                <label>Vehicle number<input value={inboundExternalVehicleNumber} disabled={submittingInboundTag} onChange={(e) => setInboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
+                <label>Freight amount<input type="number" step="any" value={inboundExternalFreightAmount} disabled={submittingInboundTag} onChange={(e) => setInboundExternalFreightAmount(e.target.value)} /></label>
+              </>}
+            </div> : <p className="message success wide-field">Select pickup orders first, then choose internal or external transport.</p>}
             <div className="payment-card-actions wide-field">
               <span className="small-label">{selectedInboundGroups.length} self-collection pickup order(s) selected</span>
               <span className="small-label">{optimizeInboundGroups(sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => selectedInboundGroups.includes(group.id) && !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)))).reduce((sum, group) => sum + groupWeight(group, true), 0).toFixed(2)} kg selected</span>
@@ -5682,11 +5792,6 @@ function WarehouseOperationsViewV2({
                 setSubmittingOutboundTag(false);
               }
             }}>
-              <label>Transport<select value={outboundTransportType} disabled={submittingOutboundTag} onChange={(e) => setOutboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
-              {outboundTransportType === "Internal" ? <label>Out delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
-                <label>Vehicle number<input value={outboundExternalVehicleNumber} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
-                <label>Freight amount<input type="number" step="any" value={outboundExternalFreightAmount} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalFreightAmount(e.target.value)} /></label>
-              </>}
               <div className="wide-field stack-list warehouse-order-list">
                 {bundleReadyConsignments.length === 0 ? <div className="empty-card">{openDockets.length > 0 ? `${openDockets.length} docket(s) are ready, but not bundled yet. Open Bundle first, create a consignment, then come back to Tag.` : "No bundled consignments waiting for delivery tagging."}</div> : bundleReadyConsignments.map((consignment) => {
                   const groups = sortOrdersForOutboundTag(consignmentGroups(consignment).filter((group) => group.lines[0].deliveryMode === "Delivery"));
@@ -5705,6 +5810,13 @@ function WarehouseOperationsViewV2({
                   </label>;
                 })}
               </div>
+              {selectedOutboundGroups.length > 0 ? <div className="wide-field form-grid">
+                <label>Transport<select value={outboundTransportType} disabled={submittingOutboundTag} onChange={(e) => setOutboundTransportType(e.target.value as DeliveryTask["transportType"])}><option>Internal</option><option>External</option></select></label>
+                {outboundTransportType === "Internal" ? <label>Out delivery team<select multiple value={outboundAssignedTo} disabled={submittingOutboundTag} onChange={(e) => setOutboundAssignedTo(normalizeSelectedDeliveryUsers(selectedOptions(e), outboundDeliveryUsers, defaultOutboundDeliveryUsername))}>{outboundDeliveryUsers.map((user) => <option key={user.id} value={user.username}>{user.fullName || user.username}</option>)}</select></label> : <>
+                  <label>Vehicle number<input value={outboundExternalVehicleNumber} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalVehicleNumber(e.target.value)} placeholder="MP09-AB-1234" /></label>
+                  <label>Freight amount<input type="number" step="any" value={outboundExternalFreightAmount} disabled={submittingOutboundTag} onChange={(e) => setOutboundExternalFreightAmount(e.target.value)} /></label>
+                </>}
+              </div> : <p className="message success wide-field">Select bundled consignments first, then choose internal or external transport.</p>}
               <div className="payment-card-actions wide-field">
                 <span className="small-label">{selectedOutboundGroups.length} bundled consignment selected</span>
                 <span className="small-label">{bundleReadyConsignments.filter((item) => selectedOutboundGroups.includes(item.id)).reduce((sum, item) => sum + item.totalWeightKg, 0).toFixed(2)} kg selected</span>
@@ -6440,10 +6552,12 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
   }
   if (roles.includes("Purchaser")) {
     quickActions.push({ title: "New Purchase", text: "Select supplier and place order.", view: "Purchase" });
+    quickActions.push({ title: "Purchase Return", text: "Return items to supplier.", view: "PurchaseReturns" });
     quickActions.push({ title: "Create Parties", text: "Register a supplier first.", view: "Parties" });
   }
   if (roles.includes("Sales")) {
     quickActions.push({ title: "New Sale", text: "Select shop and book order.", view: "Sales" });
+    quickActions.push({ title: "Sales Return", text: "Receive items back from customer.", view: "SalesReturns" });
     quickActions.push({ title: "Create Parties", text: "Register a shop first.", view: "Parties" });
   }
   if (roles.includes("Warehouse Manager")) {
@@ -6524,6 +6638,164 @@ function BootLoader() {
         <div className="boot-loader-track"><span /></div>
       </section>
     </main>
+  );
+}
+
+function ReturnsWorkspace({
+  side,
+  snapshot,
+  currentUser,
+  parties,
+  warehouses,
+  products,
+  onUploadProof,
+  onSubmit
+}: {
+  side: "Purchase" | "Sales";
+  snapshot: AppSnapshot;
+  currentUser: AppUser;
+  parties: Counterparty[];
+  warehouses: AppSnapshot["warehouses"];
+  products: AppSnapshot["products"];
+  onUploadProof: (file: File) => Promise<unknown>;
+  onSubmit: (body: any) => Promise<boolean | void>;
+}) {
+  const [mode, setMode] = useState<"Adhoc" | "Planned">("Adhoc");
+  const [partyId, setPartyId] = useState("");
+  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || "");
+  const [linkedOrderId, setLinkedOrderId] = useState("");
+  const [note, setNote] = useState("");
+  const [uploadingKey, setUploadingKey] = useState("");
+  const [lines, setLines] = useState<Array<{ clientKey: string; linkedOrderLineId?: string; productSku: string; quantity: string; rate: string; reason: PurchaseReturn["reason"]; photoName: string }>>([]);
+  const purchaseOrderGroups = groupPurchaseOrders(snapshot.purchaseOrders.filter((order) => order.supplierId && (!partyId || order.supplierId === partyId)));
+  const salesOrderGroups = groupSalesOrders(snapshot.salesOrders.filter((order) => order.shopId && (!partyId || order.shopId === partyId)));
+  const orderGroups = side === "Purchase" ? purchaseOrderGroups : salesOrderGroups;
+  const selectedGroup = mode === "Adhoc"
+    ? side === "Purchase"
+      ? purchaseOrderGroups.find((group) => group.id === linkedOrderId) || null
+      : salesOrderGroups.find((group) => group.id === linkedOrderId) || null
+    : null;
+  const history = (side === "Purchase"
+    ? snapshot.purchaseReturns.filter((item) => item.createdBy === currentUser.fullName)
+    : snapshot.salesReturns.filter((item) => item.createdBy === currentUser.fullName)) as Array<PurchaseReturn | SalesReturn>;
+  const historyRows = history.map((item) => [
+    item.returnGroupId,
+    side === "Purchase" ? (item as PurchaseReturn).supplierName : (item as SalesReturn).shopName,
+    item.productSku,
+    item.quantity,
+    item.reason,
+    item.mode,
+    item.createdAt.slice(0, 10)
+  ]);
+  const historicalSkus = new Set(
+    (side === "Purchase"
+      ? snapshot.purchaseOrders.filter((order) => order.supplierId === partyId)
+      : snapshot.salesOrders.filter((order) => order.shopId === partyId)
+    ).map((order) => order.productSku)
+  );
+  const plannedProducts = products.filter((product) => historicalSkus.has(product.sku));
+
+  useEffect(() => {
+    if (mode !== "Adhoc" || !selectedGroup) return;
+    const first = selectedGroup.lines[0];
+    if (!first) return;
+    setPartyId(side === "Purchase" ? (first as PurchaseOrder).supplierId : (first as SalesOrder).shopId);
+    setWarehouseId(first.warehouseId);
+  }, [linkedOrderId, mode]);
+
+  function addPlannedLine() {
+    const product = plannedProducts[0];
+    if (!product) return;
+    setLines((current) => [...current, {
+      clientKey: `ret-${Date.now()}-${Math.random()}`,
+      productSku: product.sku,
+      quantity: "0",
+      rate: "0",
+      reason: "Rate Difference",
+      photoName: ""
+    }]);
+  }
+
+  function addAdhocLine(source: PurchaseOrder | SalesOrder) {
+    const lineId = source.id;
+    setLines((current) => current.some((item) => item.linkedOrderLineId === lineId) ? current : [...current, {
+      clientKey: `ret-${Date.now()}-${Math.random()}`,
+      linkedOrderLineId: lineId,
+      productSku: source.productSku,
+      quantity: side === "Purchase" ? String(Math.max((source as PurchaseOrder).quantityReceived || 0, 0)) : String((source as SalesOrder).quantity),
+      rate: String(source.rate),
+      reason: "Rate Difference",
+      photoName: ""
+    }]);
+  }
+
+  async function uploadLinePhoto(clientKey: string, file: File | null) {
+    if (!file) return;
+    setUploadingKey(clientKey);
+    const uploaded = await onUploadProof(file);
+    setUploadingKey("");
+    if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) {
+      setLines((current) => current.map((line) => line.clientKey === clientKey ? { ...line, photoName: String((uploaded as { fileName: string }).fileName) } : line));
+    }
+  }
+
+  return (
+    <TwoCol
+      left={<Panel title={`${side} Return`} eyebrow="Adhoc or planned">
+        <form className="form-grid" onSubmit={(e) => {
+          e.preventDefault();
+          void onSubmit({
+            mode,
+            linkedOrderId: mode === "Adhoc" ? linkedOrderId : undefined,
+            warehouseId,
+            note,
+            ...(side === "Purchase" ? { supplierId: partyId } : { shopId: partyId }),
+            lines: lines.map((line) => ({
+              linkedOrderLineId: line.linkedOrderLineId,
+              productSku: line.productSku,
+              quantity: Number(line.quantity || 0),
+              rate: Number(line.rate || 0),
+              reason: line.reason,
+              photoName: line.photoName || undefined
+            }))
+          }).then((ok) => {
+            if (ok) {
+              setLines([]);
+              setNote("");
+              setLinkedOrderId("");
+            }
+          });
+        }}>
+          <label>Mode<select value={mode} onChange={(e) => { setMode(e.target.value as "Adhoc" | "Planned"); setLinkedOrderId(""); setLines([]); }}><option>Adhoc</option><option>Planned</option></select></label>
+          <label>{side === "Purchase" ? "Supplier" : "Customer"}<select value={partyId} onChange={(e) => { setPartyId(e.target.value); setLinkedOrderId(""); setLines([]); }}>{renderOptions(parties)}</select></label>
+          <label>Warehouse<select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>{renderWarehouseOptions(warehouses)}</select></label>
+          {mode === "Adhoc" ? <label className="wide-field">{side === "Purchase" ? "PO" : "SO"}<select value={linkedOrderId} onChange={(e) => { setLinkedOrderId(e.target.value); setLines([]); }}><option value="">Select</option>{orderGroups.map((group) => <option key={group.id} value={group.id}>{group.id}</option>)}</select></label> : null}
+          <label className="wide-field">Note<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Return note" /></label>
+          {mode === "Planned" ? <div className="payment-card-actions wide-field"><button className="ghost-button" type="button" onClick={addPlannedLine} disabled={!partyId || plannedProducts.length === 0}>Add product</button></div> : null}
+          {mode === "Adhoc" && selectedGroup ? <div className="stack-list wide-field">
+            {selectedGroup.lines.map((line) => <article className="list-card" key={line.id}><div className="payment-update-head"><div><strong>{line.productSku}</strong><p>{side === "Purchase" ? (line as PurchaseOrder).supplierName : (line as SalesOrder).shopName}</p></div><button className="ghost-button" type="button" onClick={() => addAdhocLine(line)}>Select item</button></div></article>)}
+          </div> : null}
+          <div className="stack-list wide-field">
+            {lines.length === 0 ? <div className="empty-card">No return items selected.</div> : lines.map((line) => <article className="list-card" key={line.clientKey}>
+              <div className="cart-edit-grid">
+                <label>Product<select value={line.productSku} onChange={(e) => setLines((current) => current.map((item) => item.clientKey === line.clientKey ? { ...item, productSku: e.target.value } : item))} disabled={mode === "Adhoc"}>{renderProductOptions(mode === "Planned" ? plannedProducts : products.filter((product) => product.sku === line.productSku))}</select></label>
+                <label>Qty<input type="number" step="any" min="0" value={line.quantity} onChange={(e) => setLines((current) => current.map((item) => item.clientKey === line.clientKey ? { ...item, quantity: e.target.value } : item))} /></label>
+                <label>Rate<input type="number" step="any" min="0" value={line.rate} onChange={(e) => setLines((current) => current.map((item) => item.clientKey === line.clientKey ? { ...item, rate: e.target.value } : item))} /></label>
+                <label>Reason<select value={line.reason} onChange={(e) => setLines((current) => current.map((item) => item.clientKey === line.clientKey ? { ...item, reason: e.target.value as PurchaseReturn["reason"] } : item))}>{returnReasons.map((reason) => <option key={reason} value={reason}>{reason}</option>)}</select></label>
+                <label>Photo<input type="file" accept="image/*" onChange={(e) => void uploadLinePhoto(line.clientKey, e.target.files?.[0] || null)} /></label>
+                <button className="ghost-button" type="button" onClick={() => setLines((current) => current.filter((item) => item.clientKey !== line.clientKey))}>Remove</button>
+              </div>
+              {line.photoName ? <p className="small-label">Photo: {line.photoName}</p> : null}
+              {uploadingKey === line.clientKey ? <p className="small-label">Uploading photo...</p> : null}
+            </article>)}
+          </div>
+          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!partyId || !warehouseId || lines.length === 0}>{side} return submit</button></div>
+        </form>
+      </Panel>}
+      right={<Panel title={`${side} Return History`} eyebrow="Submitted by you">
+        <DataTable headers={["Return","Party","Product","Qty","Reason","Mode","Date"]} rows={historyRows} />
+      </Panel>}
+    />
   );
 }
 

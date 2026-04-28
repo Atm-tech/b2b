@@ -21,8 +21,11 @@ import type {
   ProductMaster,
   ProductSlab,
   PurchaseOrder,
+  PurchaseReturn,
   ReceiptCheck,
+  ReturnReason,
   SalesOrder,
+  SalesReturn,
   StockSummary,
   UserRole,
   Warehouse
@@ -124,6 +127,40 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS transport_type TEXT NOT NULL DEFAULT 'Internal';
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS vehicle_number TEXT;
     ALTER TABLE delivery_tasks ADD COLUMN IF NOT EXISTS freight_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS purchase_returns (
+      id TEXT PRIMARY KEY,
+      return_group_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      linked_order_id TEXT,
+      linked_order_line_id TEXT,
+      supplier_id TEXT NOT NULL,
+      warehouse_id TEXT NOT NULL,
+      product_sku TEXT NOT NULL,
+      quantity DOUBLE PRECISION NOT NULL,
+      rate DOUBLE PRECISION NOT NULL,
+      reason TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      photo_name TEXT,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS sales_returns (
+      id TEXT PRIMARY KEY,
+      return_group_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      linked_order_id TEXT,
+      linked_order_line_id TEXT,
+      shop_id TEXT NOT NULL,
+      warehouse_id TEXT NOT NULL,
+      product_sku TEXT NOT NULL,
+      quantity DOUBLE PRECISION NOT NULL,
+      rate DOUBLE PRECISION NOT NULL,
+      reason TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      photo_name TEXT,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
     UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
@@ -424,6 +461,64 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     deliveryCharge: numberValue(row.delivery_charge),
     note: stringValue(row.note),
     status: stringValue(row.status) as SalesOrder["status"],
+    createdAt: isoValue(row.created_at)
+  }));
+}
+
+async function mapPurchaseReturns(client?: DbClient): Promise<PurchaseReturn[]> {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT pr.*, c.name AS supplier_name
+     FROM purchase_returns pr
+     LEFT JOIN counterparties c ON c.id = pr.supplier_id
+     ORDER BY pr.created_at DESC`,
+    [],
+    client
+  );
+  return rows.rows.map((row) => ({
+    id: stringValue(row.id),
+    returnGroupId: stringValue(row.return_group_id),
+    mode: stringValue(row.mode) as PurchaseReturn["mode"],
+    linkedOrderId: row.linked_order_id ? stringValue(row.linked_order_id) : undefined,
+    linkedOrderLineId: row.linked_order_line_id ? stringValue(row.linked_order_line_id) : undefined,
+    supplierId: stringValue(row.supplier_id),
+    supplierName: stringValue(row.supplier_name),
+    warehouseId: stringValue(row.warehouse_id),
+    productSku: stringValue(row.product_sku),
+    quantity: numberValue(row.quantity),
+    rate: numberValue(row.rate),
+    reason: stringValue(row.reason) as ReturnReason,
+    note: stringValue(row.note),
+    photoName: row.photo_name ? stringValue(row.photo_name) : undefined,
+    createdBy: stringValue(row.created_by),
+    createdAt: isoValue(row.created_at)
+  }));
+}
+
+async function mapSalesReturns(client?: DbClient): Promise<SalesReturn[]> {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT sr.*, c.name AS shop_name
+     FROM sales_returns sr
+     LEFT JOIN counterparties c ON c.id = sr.shop_id
+     ORDER BY sr.created_at DESC`,
+    [],
+    client
+  );
+  return rows.rows.map((row) => ({
+    id: stringValue(row.id),
+    returnGroupId: stringValue(row.return_group_id),
+    mode: stringValue(row.mode) as SalesReturn["mode"],
+    linkedOrderId: row.linked_order_id ? stringValue(row.linked_order_id) : undefined,
+    linkedOrderLineId: row.linked_order_line_id ? stringValue(row.linked_order_line_id) : undefined,
+    shopId: stringValue(row.shop_id),
+    shopName: stringValue(row.shop_name),
+    warehouseId: stringValue(row.warehouse_id),
+    productSku: stringValue(row.product_sku),
+    quantity: numberValue(row.quantity),
+    rate: numberValue(row.rate),
+    reason: stringValue(row.reason) as ReturnReason,
+    note: stringValue(row.note),
+    photoName: row.photo_name ? stringValue(row.photo_name) : undefined,
+    createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)
   }));
 }
@@ -742,13 +837,15 @@ function buildMetrics(snapshot: Omit<AppSnapshot, "metrics">): AppSnapshot["metr
 
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
-  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
+  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
     mapUsers(),
     mapWarehouses(),
     mapProducts(),
     mapCounterparties(),
     mapPurchaseOrders(),
     mapSalesOrders(),
+    mapPurchaseReturns(),
+    mapSalesReturns(),
     mapPayments(),
     mapReceiptChecks(),
     mapInventoryLots(),
@@ -768,6 +865,8 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     counterparties,
     purchaseOrders,
     salesOrders,
+    purchaseReturns,
+    salesReturns,
     payments,
     receiptChecks,
     inventoryLots,
@@ -796,6 +895,8 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
       products: snapshotWithoutMetrics.products.filter((item) => item.allowedWarehouseIds.some((id) => scopedWarehouseIds.has(id))),
       purchaseOrders: snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       salesOrders: snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      purchaseReturns: snapshotWithoutMetrics.purchaseReturns.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      salesReturns: snapshotWithoutMetrics.salesReturns.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       payments: snapshotWithoutMetrics.payments.filter((item) => scopedPurchaseOrderIds.has(item.linkedOrderId) || scopedSalesOrderIds.has(item.linkedOrderId) || scopedCartIds.has(item.linkedOrderId)),
       receiptChecks: snapshotWithoutMetrics.receiptChecks.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       inventoryLots: snapshotWithoutMetrics.inventoryLots.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
@@ -1027,7 +1128,7 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
   const bankAccountNumber = payload.bankAccountNumber.trim();
   const ifscCode = payload.ifscCode.trim().toUpperCase();
   validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
-  await ensureCounterpartyUnique(payload.type, name, gstNumber, bankAccountNumber, ifscCode);
+  await ensureCounterpartyUnique(payload.type, name, gstNumber, bankAccountNumber);
   await query(
     `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, delivery_address, delivery_city, contact_person, latitude, longitude, location_label, created_by, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
@@ -1048,7 +1149,7 @@ function isNaValue(value: string) {
   return value.trim().toUpperCase() === "N/A";
 }
 
-async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, bankAccountNumber: string, ifscCode: string, excludeId?: string) {
+async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, bankAccountNumber: string, excludeId?: string) {
   const duplicateName = await one<{ id: string }>(
     `SELECT id FROM counterparties WHERE type = $1 AND LOWER(name) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
     [type, name, excludeId || null]
@@ -1067,13 +1168,6 @@ async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gs
       [type, bankAccountNumber, excludeId || null]
     );
     if (duplicateAccount) throw new Error(`${type} bank account number already exists. Only N/A can be reused.`);
-  }
-  if (!isNaValue(ifscCode)) {
-    const duplicateIfsc = await one<{ id: string }>(
-      `SELECT id FROM counterparties WHERE type = $1 AND LOWER(ifsc_code) = LOWER($2) AND ($3::text IS NULL OR id <> $3) LIMIT 1`,
-      [type, ifscCode, excludeId || null]
-    );
-    if (duplicateIfsc) throw new Error(`${type} IFSC code already exists. Only N/A can be reused.`);
   }
 }
 
@@ -1313,7 +1407,6 @@ export async function createSalesOrder(payload: {
     if ((stock?.availableQuantity ?? 0) < payload.quantity) {
       throw new Error(`Requested quantity ${payload.quantity} exceeds available stock ${stock?.availableQuantity ?? 0} for ${payload.productSku} at ${payload.warehouseId}.`);
     }
-    await reserveInventory(payload.warehouseId, payload.productSku, payload.quantity, client);
     if (!payload.skipFinancials) {
       await recalculateLedger("Sales", id, client);
     }
@@ -1343,6 +1436,187 @@ export async function createSalesCart(payload: Omit<Parameters<typeof createSale
   await withTransaction(async (client) => {
     await insertAdvancePayment("Sales", cartId, payload.advancePayment, currentUser, createdAt, client);
     await recalculateLedger("Sales", cartId, client);
+  });
+  return getSnapshot();
+}
+
+export async function createPurchaseReturn(payload: {
+  mode: PurchaseReturn["mode"];
+  linkedOrderId?: string;
+  supplierId: string;
+  warehouseId: string;
+  note: string;
+  lines: Array<{
+    linkedOrderLineId?: string;
+    productSku: string;
+    quantity: number;
+    rate: number;
+    reason: ReturnReason;
+    photoName?: string;
+  }>;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (payload.lines.length === 0) throw new Error("Select at least one product for purchase return.");
+  const returnGroupId = makeId("PRTN");
+  await withTransaction(async (client) => {
+    for (const line of payload.lines) {
+      if (line.quantity <= 0) throw new Error("Return quantity must be greater than zero.");
+      if (line.rate < 0) throw new Error("Rate cannot be negative.");
+      let productSku = line.productSku.trim();
+      if (payload.mode === "Adhoc") {
+        const source = await one<Record<string, unknown>>(
+          `SELECT *
+           FROM purchase_orders
+           WHERE id = $1`,
+          [line.linkedOrderLineId || ""],
+          client
+        );
+        if (!source) throw new Error("Purchase order line not found for return.");
+        const sourceLinkedOrderId = stringValue(source.cart_id) || stringValue(source.id);
+        if (payload.linkedOrderId && sourceLinkedOrderId !== payload.linkedOrderId) {
+          throw new Error("Selected purchase return line does not belong to the chosen PO.");
+        }
+        if (stringValue(source.supplier_id) !== payload.supplierId) {
+          throw new Error("Purchase return supplier mismatch.");
+        }
+        productSku = stringValue(source.product_sku);
+        if (line.quantity > numberValue(source.quantity_received || source.quantity_ordered)) {
+          throw new Error(`Return quantity exceeds ordered/received quantity for ${productSku}.`);
+        }
+      } else {
+        const prior = await one<Record<string, unknown>>(
+          `SELECT id
+           FROM purchase_orders
+           WHERE supplier_id = $1 AND product_sku = $2
+           LIMIT 1`,
+          [payload.supplierId, productSku],
+          client
+        );
+        if (!prior) throw new Error(`No purchase history found for ${productSku} with this supplier.`);
+      }
+      await consumeInventory(payload.warehouseId, productSku, line.quantity, client);
+      await query(
+        `INSERT INTO purchase_returns (
+          id, return_group_id, mode, linked_order_id, linked_order_line_id, supplier_id, warehouse_id, product_sku, quantity, rate, reason, note, photo_name, created_by, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          makeId("PRL"),
+          returnGroupId,
+          payload.mode,
+          payload.linkedOrderId || null,
+          line.linkedOrderLineId || null,
+          payload.supplierId,
+          payload.warehouseId,
+          productSku,
+          line.quantity,
+          line.rate,
+          line.reason,
+          payload.note.trim(),
+          line.photoName?.trim() || null,
+          currentUser.fullName,
+          now()
+        ],
+        client
+      );
+    }
+  });
+  return getSnapshot();
+}
+
+export async function createSalesReturn(payload: {
+  mode: SalesReturn["mode"];
+  linkedOrderId?: string;
+  shopId: string;
+  warehouseId: string;
+  note: string;
+  lines: Array<{
+    linkedOrderLineId?: string;
+    productSku: string;
+    quantity: number;
+    rate: number;
+    reason: ReturnReason;
+    photoName?: string;
+  }>;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (payload.lines.length === 0) throw new Error("Select at least one product for sales return.");
+  const returnGroupId = makeId("SRTN");
+  await withTransaction(async (client) => {
+    for (const line of payload.lines) {
+      if (line.quantity <= 0) throw new Error("Return quantity must be greater than zero.");
+      if (line.rate < 0) throw new Error("Rate cannot be negative.");
+      let productSku = line.productSku.trim();
+      if (payload.mode === "Adhoc") {
+        const source = await one<Record<string, unknown>>(
+          `SELECT *
+           FROM sales_orders
+           WHERE id = $1`,
+          [line.linkedOrderLineId || ""],
+          client
+        );
+        if (!source) throw new Error("Sales order line not found for return.");
+        const sourceLinkedOrderId = stringValue(source.cart_id) || stringValue(source.id);
+        if (payload.linkedOrderId && sourceLinkedOrderId !== payload.linkedOrderId) {
+          throw new Error("Selected sales return line does not belong to the chosen SO.");
+        }
+        if (stringValue(source.shop_id) !== payload.shopId) {
+          throw new Error("Sales return customer mismatch.");
+        }
+        productSku = stringValue(source.product_sku);
+        if (line.quantity > numberValue(source.quantity)) {
+          throw new Error(`Return quantity exceeds sold quantity for ${productSku}.`);
+        }
+      } else {
+        const prior = await one<Record<string, unknown>>(
+          `SELECT id
+           FROM sales_orders
+           WHERE shop_id = $1 AND product_sku = $2
+           LIMIT 1`,
+          [payload.shopId, productSku],
+          client
+        );
+        if (!prior) throw new Error(`No sales history found for ${productSku} with this customer.`);
+      }
+      await query(
+        `INSERT INTO sales_returns (
+          id, return_group_id, mode, linked_order_id, linked_order_line_id, shop_id, warehouse_id, product_sku, quantity, rate, reason, note, photo_name, created_by, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          makeId("SRL"),
+          returnGroupId,
+          payload.mode,
+          payload.linkedOrderId || null,
+          line.linkedOrderLineId || null,
+          payload.shopId,
+          payload.warehouseId,
+          productSku,
+          line.quantity,
+          line.rate,
+          line.reason,
+          payload.note.trim(),
+          line.photoName?.trim() || null,
+          currentUser.fullName,
+          now()
+        ],
+        client
+      );
+      await query(
+        `INSERT INTO inventory_lots (
+          lot_id, source_order_id, source_type, warehouse_id, product_sku, quantity_available, quantity_reserved, quantity_blocked, status, created_at
+        ) VALUES ($1, $2, 'Sales Return', $3, $4, $5, 0, $6, $7, $8)`,
+        [
+          makeId("LOT"),
+          payload.linkedOrderId || returnGroupId,
+          payload.warehouseId,
+          productSku,
+          line.reason === "Damage" ? 0 : line.quantity,
+          line.reason === "Damage" ? line.quantity : 0,
+          line.reason === "Damage" ? "Blocked" : "Available",
+          now()
+        ],
+        client
+      );
+    }
   });
   return getSnapshot();
 }
@@ -1456,6 +1730,66 @@ async function reserveInventory(warehouseId: string, productSku: string, quantit
       client
     );
     remaining -= move;
+  }
+}
+
+async function consumeInventory(warehouseId: string, productSku: string, quantity: number, client: DbClient) {
+  if (quantity <= 0) return;
+  const lots = await query<Record<string, unknown>>(
+    `SELECT * FROM inventory_lots
+     WHERE warehouse_id = $1 AND product_sku = $2 AND quantity_available > 0
+     ORDER BY created_at ASC`,
+    [warehouseId, productSku],
+    client
+  );
+  let remaining = quantity;
+  for (const lot of lots.rows) {
+    if (remaining <= 0) break;
+    const available = numberValue(lot.quantity_available);
+    const move = Math.min(available, remaining);
+    await query(
+      `UPDATE inventory_lots
+       SET quantity_available = $1
+       WHERE lot_id = $2`,
+      [available - move, stringValue(lot.lot_id)],
+      client
+    );
+    remaining -= move;
+  }
+  if (remaining > 0) {
+    throw new Error(`Insufficient inventory for ${productSku} at ${warehouseId}.`);
+  }
+}
+
+async function releaseInventory(warehouseId: string, productSku: string, quantity: number, client: DbClient) {
+  if (quantity <= 0) return;
+  const lots = await query<Record<string, unknown>>(
+    `SELECT * FROM inventory_lots
+     WHERE warehouse_id = $1 AND product_sku = $2 AND quantity_reserved > 0
+     ORDER BY created_at DESC`,
+    [warehouseId, productSku],
+    client
+  );
+  let remaining = quantity;
+  for (const lot of lots.rows) {
+    if (remaining <= 0) break;
+    const reserved = numberValue(lot.quantity_reserved);
+    const move = Math.min(reserved, remaining);
+    const nextReserved = reserved - move;
+    const nextAvailable = numberValue(lot.quantity_available) + move;
+    await query(
+      `UPDATE inventory_lots
+       SET quantity_available = $1,
+           quantity_reserved = $2,
+           status = $3
+       WHERE lot_id = $4`,
+      [nextAvailable, nextReserved, nextReserved > 0 ? "Reserved" : "Available", stringValue(lot.lot_id)],
+      client
+    );
+    remaining -= move;
+  }
+  if (remaining > 0) {
+    throw new Error(`Unable to release reserved inventory for ${productSku} at ${warehouseId}.`);
   }
 }
 
@@ -1984,7 +2318,7 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   const bankAccountNumber = payload.bankAccountNumber.trim();
   const ifscCode = payload.ifscCode.trim().toUpperCase();
   validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
-  await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, bankAccountNumber, ifscCode, counterpartyId);
+  await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, bankAccountNumber, counterpartyId);
     await query(
       `UPDATE counterparties
        SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, delivery_address = $9, delivery_city = $10, contact_person = $11
@@ -2001,7 +2335,9 @@ export async function updatePurchaseOrder(orderId: string, payload: {
   note: string;
   status: PurchaseOrder["status"];
   lines: Array<{
-    id: string;
+    id?: string;
+    productSku: string;
+    warehouseId?: string;
     quantityOrdered: number;
     rate: number;
     taxableAmount?: number;
@@ -2015,15 +2351,30 @@ export async function updatePurchaseOrder(orderId: string, payload: {
   const lineMap = new Map(editable.lines.map((line) => [stringValue(line.id), line]));
   if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
   await withTransaction(async (client) => {
-    for (const line of payload.lines) {
-      const existing = lineMap.get(line.id);
-      if (!existing) throw new Error("Purchase cart line not found.");
-      if (line.quantityOrdered <= 0) throw new Error("Quantity must be greater than zero.");
-      if (line.rate <= 0) throw new Error("Rate must be greater than zero.");
+    const firstLine = editable.lines[0];
+    const supplierId = stringValue(firstLine.supplier_id);
+    const publicOrderId = editable.publicOrderId;
+    const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
+
+    for (const existing of editable.lines) {
+      const existingId = stringValue(existing.id);
+      if (incomingIds.has(existingId)) continue;
       if (numberValue(existing.quantity_received) > 0 && !currentUserHasRole(currentUser, "Admin")) {
         throw new Error("Purchase cart cannot be edited after receiving starts. Only admin can edit it now.");
       }
-      const product = await one<Record<string, unknown>>("SELECT default_weight_kg FROM products WHERE sku = $1", [stringValue(existing.product_sku)], client);
+      await query("DELETE FROM purchase_orders WHERE id = $1", [existingId], client);
+    }
+
+    for (const line of payload.lines) {
+      if (line.quantityOrdered <= 0) throw new Error("Quantity must be greater than zero.");
+      if (line.rate <= 0) throw new Error("Rate must be greater than zero.");
+      const existing = line.id ? lineMap.get(line.id) : undefined;
+      const productSku = existing ? stringValue(existing.product_sku) : line.productSku.trim();
+      if (!productSku) throw new Error("Product is required.");
+      if (existing && numberValue(existing.quantity_received) > 0 && !currentUserHasRole(currentUser, "Admin")) {
+        throw new Error("Purchase cart cannot be edited after receiving starts. Only admin can edit it now.");
+      }
+      const product = await one<Record<string, unknown>>("SELECT default_weight_kg FROM products WHERE sku = $1", [productSku], client);
       if (!product) throw new Error("Product not found.");
       const isNonGstBill = line.gstRate === "NA" || line.taxMode === "NA";
       const gstRate = isNonGstBill ? 0 : line.gstRate ?? 0;
@@ -2032,44 +2383,118 @@ export async function updatePurchaseOrder(orderId: string, payload: {
       const taxableAmount = line.taxableAmount ?? (line.quantityOrdered * line.rate);
       const totalAmount = taxableAmount + gstAmount;
       const expectedWeightKg = line.quantityOrdered * numberValue(product.default_weight_kg);
-      await query(
-        `UPDATE purchase_orders
-         SET quantity_ordered = $1,
-             rate = $2,
-             taxable_amount = $3,
-             gst_rate = $4,
-             gst_amount = $5,
-             tax_mode = $6,
-             total_amount = $7,
-             expected_weight_kg = $8,
-             payment_mode = $9,
-             cash_timing = $10,
-             delivery_mode = $11,
-             note = $12,
-             status = $13
-         WHERE id = $14`,
-        [
-          line.quantityOrdered,
-          line.rate,
-          taxableAmount,
-          gstRate,
-          gstAmount,
-          taxMode,
-          totalAmount,
-          expectedWeightKg,
-          payload.paymentMode,
-          payload.cashTiming || null,
-          payload.deliveryMode,
-          payload.note.trim(),
-          payload.status,
-          line.id
-        ],
-        client
-      );
+      if (existing) {
+        await query(
+          `UPDATE purchase_orders
+           SET quantity_ordered = $1,
+               rate = $2,
+               taxable_amount = $3,
+               gst_rate = $4,
+               gst_amount = $5,
+               tax_mode = $6,
+               total_amount = $7,
+               expected_weight_kg = $8,
+               payment_mode = $9,
+               cash_timing = $10,
+               delivery_mode = $11,
+               note = $12,
+               status = $13
+           WHERE id = $14`,
+          [
+            line.quantityOrdered,
+            line.rate,
+            taxableAmount,
+            gstRate,
+            gstAmount,
+            taxMode,
+            totalAmount,
+            expectedWeightKg,
+            payload.paymentMode,
+            payload.cashTiming || null,
+            payload.deliveryMode,
+            payload.note.trim(),
+            payload.status,
+            stringValue(existing.id)
+          ],
+          client
+        );
+      } else {
+        const newId = makeId("POL");
+        await query(
+          `INSERT INTO purchase_orders (
+            id, cart_id, supplier_id, product_sku, purchaser_id, warehouse_id, quantity_ordered, quantity_received, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount,
+            expected_weight_kg, delivery_mode, payment_mode, cash_timing, note, status, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+          [
+            newId,
+            publicOrderId,
+            supplierId,
+            productSku,
+            currentUser.id,
+            line.warehouseId?.trim() || stringValue(firstLine.warehouse_id),
+            line.quantityOrdered,
+            line.rate,
+            taxableAmount,
+            gstRate,
+            gstAmount,
+            taxMode,
+            totalAmount,
+            expectedWeightKg,
+            payload.deliveryMode,
+            payload.paymentMode,
+            payload.cashTiming || null,
+            payload.note.trim(),
+            payload.status,
+            new Date().toISOString()
+          ],
+          client
+        );
+      }
     }
-    await recalculateLedger("Purchase", editable.publicOrderId, client);
+    await recalculateLedger("Purchase", publicOrderId, client);
   });
   return getSnapshot();
+}
+
+async function assertSalesOrderEditable(orderId: string, currentUser: CurrentUser, client?: DbClient) {
+  const linesResult = await query<Record<string, unknown>>(
+    `SELECT *
+     FROM sales_orders
+     WHERE cart_id = $1 OR id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [orderId],
+    client
+  );
+  if (linesResult.rows.length === 0) throw new Error("Sales order not found.");
+  const publicOrderId = stringValue(linesResult.rows[0].cart_id) || stringValue(linesResult.rows[0].id);
+  const isAdmin = currentUserHasRole(currentUser, "Admin");
+  if (!isAdmin) {
+    const ownsOrder = linesResult.rows.some((row) => currentUser.id === numberValue(row.salesman_id));
+    if (!ownsOrder) {
+      throw new Error("Only the salesman or admin can edit this sales order.");
+    }
+    if (linesResult.rows.some((row) => {
+      const status = stringValue(row.status);
+      return status === "Delivered" || status === "Closed";
+    })) {
+      throw new Error("Sales order is closed. Only admin can edit it now.");
+    }
+  }
+  const salesTasks = await query<Record<string, unknown>>(
+    `SELECT id
+     FROM delivery_tasks
+     WHERE side = 'Sales'
+       AND (linked_order_id = $1 OR linked_order_ids_json::text LIKE $2)`,
+    [publicOrderId, `%${publicOrderId}%`],
+    client
+  );
+  if (!isAdmin && salesTasks.rows.length > 0) {
+    throw new Error("Delivery is assigned. Only admin can edit this sales order now.");
+  }
+  return {
+    publicOrderId,
+    lines: linesResult.rows
+  };
 }
 
 export async function updateSalesOrder(orderId: string, payload: {
@@ -2089,22 +2514,181 @@ export async function updateSalesOrder(orderId: string, payload: {
   const quantity = numberValue(order.quantity);
   const totalAmount = quantity * payload.rate;
   const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
-  await query(
-    `UPDATE sales_orders
-     SET rate = $1, total_amount = $2, payment_mode = $3, cash_timing = $4, delivery_mode = $5, delivery_charge = $6, note = $7, status = $8
-     WHERE id = $9`,
-    [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId]
-  );
-  if (payload.containerWeightKg !== undefined || payload.weighingProofName) {
+  await withTransaction(async (client) => {
+    const currentStatus = stringValue(order.status) as SalesOrder["status"];
+    const shouldPostOutboundInventory =
+      payload.deliveryMode !== "Delivery" &&
+      payload.status === "Delivered" &&
+      currentStatus !== "Delivered" &&
+      currentStatus !== "Closed";
+    if (shouldPostOutboundInventory) {
+      await consumeInventory(stringValue(order.warehouse_id), stringValue(order.product_sku), quantity, client);
+    }
     await query(
-      `UPDATE delivery_dockets
-       SET container_weight_kg = COALESCE($1, container_weight_kg),
-           weighing_proof_name = COALESCE($2, weighing_proof_name)
-       WHERE sales_order_id = $3`,
-      [payload.containerWeightKg ?? null, payload.weighingProofName?.trim() || null, orderId]
+      `UPDATE sales_orders
+       SET rate = $1, total_amount = $2, payment_mode = $3, cash_timing = $4, delivery_mode = $5, delivery_charge = $6, note = $7, status = $8
+       WHERE id = $9`,
+      [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId],
+      client
     );
-  }
-  await recalculateLedger("Sales", stringValue(order.cart_id) || orderId);
+    if (payload.containerWeightKg !== undefined || payload.weighingProofName) {
+      await query(
+        `UPDATE delivery_dockets
+         SET container_weight_kg = COALESCE($1, container_weight_kg),
+             weighing_proof_name = COALESCE($2, weighing_proof_name)
+         WHERE sales_order_id = $3`,
+        [payload.containerWeightKg ?? null, payload.weighingProofName?.trim() || null, orderId],
+        client
+      );
+    }
+    await recalculateLedger("Sales", stringValue(order.cart_id) || orderId, client);
+  });
+  return getSnapshot();
+}
+
+export async function updateSalesOrderGroup(orderId: string, payload: {
+  paymentMode: PaymentMode;
+  cashTiming?: SalesOrder["cashTiming"];
+  deliveryMode: SalesOrder["deliveryMode"];
+  note: string;
+  status: SalesOrder["status"];
+  lines: Array<{
+    id?: string;
+    productSku: string;
+    warehouseId?: string;
+    quantity: number;
+    rate: number;
+    taxableAmount?: number;
+    gstRate?: SalesOrder["gstRate"];
+    gstAmount?: number;
+    taxMode?: SalesOrder["taxMode"];
+  }>;
+}, currentUser: CurrentUser) {
+  await ready;
+  const editable = await assertSalesOrderEditable(orderId, currentUser);
+  if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
+  const lineMap = new Map(editable.lines.map((line) => [stringValue(line.id), line]));
+  const firstLine = editable.lines[0];
+  const settings = await mapSettings();
+
+  await withTransaction(async (client) => {
+    const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
+    const nextQtyByKey = new Map<string, number>();
+    const addQty = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) || 0) + value);
+    const inventoryKey = (warehouseId: string, productSku: string) => `${warehouseId}::${productSku}`;
+
+    for (const line of payload.lines) {
+      if (line.quantity <= 0) throw new Error("Quantity must be greater than zero.");
+      if (line.rate <= 0) throw new Error("Rate must be greater than zero.");
+      const existing = line.id ? lineMap.get(line.id) : undefined;
+      const warehouseId = (existing ? stringValue(existing.warehouse_id) : line.warehouseId?.trim()) || stringValue(firstLine.warehouse_id);
+      const productSku = (existing ? stringValue(existing.product_sku) : line.productSku.trim());
+      if (!productSku) throw new Error("Product is required.");
+      addQty(nextQtyByKey, inventoryKey(warehouseId, productSku), line.quantity);
+    }
+
+    for (const key of nextQtyByKey.keys()) {
+      const [warehouseId, productSku] = key.split("::");
+      const nextQty = nextQtyByKey.get(key) || 0;
+      const available = await one<Record<string, unknown>>(
+        `SELECT COALESCE(SUM(quantity_available), 0) AS qty
+         FROM inventory_lots
+         WHERE warehouse_id = $1 AND product_sku = $2`,
+        [warehouseId, productSku],
+        client
+      );
+      if (numberValue(available?.qty) < nextQty) {
+        throw new Error(`Requested quantity exceeds available stock for ${productSku} at ${warehouseId}.`);
+      }
+    }
+
+    for (const existing of editable.lines) {
+      const existingId = stringValue(existing.id);
+      if (incomingIds.has(existingId)) continue;
+      await query("DELETE FROM sales_orders WHERE id = $1", [existingId], client);
+    }
+
+    for (const line of payload.lines) {
+      const existing = line.id ? lineMap.get(line.id) : undefined;
+      const warehouseId = (existing ? stringValue(existing.warehouse_id) : line.warehouseId?.trim()) || stringValue(firstLine.warehouse_id);
+      const productSku = existing ? stringValue(existing.product_sku) : line.productSku.trim();
+      const isNonGstBill = line.gstRate === "NA" || line.taxMode === "NA";
+      const gstRate = isNonGstBill ? 0 : line.gstRate ?? 0;
+      const gstAmount = isNonGstBill ? 0 : line.gstAmount ?? 0;
+      const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
+      const taxableAmount = line.taxableAmount ?? (line.quantity * line.rate);
+      const totalAmount = taxableAmount + gstAmount;
+      const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
+
+      if (existing) {
+        await query(
+          `UPDATE sales_orders
+           SET quantity = $1,
+               rate = $2,
+               taxable_amount = $3,
+               gst_rate = $4,
+               gst_amount = $5,
+               tax_mode = $6,
+               total_amount = $7,
+               payment_mode = $8,
+               cash_timing = $9,
+               delivery_mode = $10,
+               delivery_charge = $11,
+               note = $12,
+               status = $13
+           WHERE id = $14`,
+          [
+            line.quantity,
+            line.rate,
+            taxableAmount,
+            gstRate,
+            gstAmount,
+            taxMode,
+            totalAmount,
+            payload.paymentMode,
+            payload.cashTiming || null,
+            payload.deliveryMode,
+            deliveryCharge,
+            payload.note.trim(),
+            payload.status,
+            stringValue(existing.id)
+          ],
+          client
+        );
+      } else {
+        await query(
+          `INSERT INTO sales_orders (
+            id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+            delivery_mode, delivery_charge, note, status, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+          [
+            makeId("SO"),
+            editable.publicOrderId,
+            stringValue(firstLine.shop_id),
+            productSku,
+            currentUser.id,
+            warehouseId,
+            line.quantity,
+            line.rate,
+            taxableAmount,
+            gstRate,
+            gstAmount,
+            taxMode,
+            totalAmount,
+            payload.paymentMode,
+            payload.cashTiming || null,
+            payload.deliveryMode,
+            deliveryCharge,
+            payload.note.trim(),
+            payload.status,
+            new Date().toISOString()
+          ],
+          client
+        );
+      }
+    }
+    await recalculateLedger("Sales", editable.publicOrderId, client);
+  });
   return getSnapshot();
 }
 
@@ -2254,13 +2838,27 @@ export async function updateDeliveryTask(taskId: string, payload: {
     }
     if (side === "Sales") {
       const affectedSalesOrders = await query<Record<string, unknown>>(
-        `SELECT id
+        `SELECT id, warehouse_id, product_sku, quantity, status, delivery_mode
          FROM sales_orders
          WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
         [linkedOrderIds],
         client
       );
       const affectedSalesOrderIds = affectedSalesOrders.rows.map((row) => stringValue(row.id)).filter(Boolean);
+      const shouldPostOutboundInventory = payload.status === "Handed Over" || payload.status === "Delivered";
+      if (shouldPostOutboundInventory) {
+        for (const order of affectedSalesOrders.rows) {
+          const currentStatus = stringValue(order.status) as SalesOrder["status"];
+          if (currentStatus === "Out for Delivery" || currentStatus === "Delivered" || currentStatus === "Closed") continue;
+          if (stringValue(order.delivery_mode) !== "Delivery") continue;
+          await consumeInventory(
+            stringValue(order.warehouse_id),
+            stringValue(order.product_sku),
+            numberValue(order.quantity),
+            client
+          );
+        }
+      }
       const affectedConsignments = affectedSalesOrderIds.length > 0
         ? await query<Record<string, unknown>>(
           `SELECT DISTINCT consignment_id

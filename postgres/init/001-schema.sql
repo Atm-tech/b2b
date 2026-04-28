@@ -123,6 +123,42 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS purchase_returns (
+  id TEXT PRIMARY KEY,
+  return_group_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  linked_order_id TEXT,
+  linked_order_line_id TEXT,
+  supplier_id TEXT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  reason TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  photo_name TEXT,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sales_returns (
+  id TEXT PRIMARY KEY,
+  return_group_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  linked_order_id TEXT,
+  linked_order_line_id TEXT,
+  shop_id TEXT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  reason TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  photo_name TEXT,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
   side TEXT NOT NULL,

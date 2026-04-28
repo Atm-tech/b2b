@@ -20,8 +20,10 @@ import {
   createPurchaseCart,
   createPurchaseOrder,
   createReceiptCheck,
+  createPurchaseReturn,
   createSalesCart,
   createSalesOrder,
+  createSalesReturn,
   createUser,
   createWarehouse,
   databasePath,
@@ -36,6 +38,7 @@ import {
   updatePurchaseOrder,
   updateReceiptCheck,
   updateSalesOrder,
+  updateSalesOrderGroup,
   updateSettings,
   verifyPayment
 } from "./db.js";
@@ -49,6 +52,7 @@ const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");
 const receiptDir = path.join(uploadsDir, "receipt-proofs");
+const returnDir = path.join(uploadsDir, "return-proofs");
 const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "2mb";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -59,11 +63,12 @@ mkdirSync(csvDir, { recursive: true });
 mkdirSync(paymentDir, { recursive: true });
 mkdirSync(deliveryDir, { recursive: true });
 mkdirSync(receiptDir, { recursive: true });
+mkdirSync(returnDir, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, file, cb) => {
-      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : file.fieldname === "receiptProof" ? receiptDir : paymentDir);
+      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : file.fieldname === "receiptProof" ? receiptDir : file.fieldname === "returnProof" ? returnDir : paymentDir);
     },
     filename: (_req, file, cb) => {
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -379,7 +384,9 @@ app.patch("/purchase-orders/:id", async (req, res) => wrap(res, async () => {
     const rawGstRate = optionalString(line?.gstRate);
     const parsedGstRate: "NA" | 0 | 5 | 12 | 18 | 40 | undefined = rawGstRate?.toUpperCase() === "NA" ? "NA" : parseOptionalGstRate(line?.gstRate);
     return {
-    id: requiredString(line?.id, "Cart line"),
+    id: optionalString(line?.id),
+    productSku: requiredString(line?.productSku, "Product"),
+    warehouseId: optionalString(line?.warehouseId),
     quantityOrdered: requiredNumber(line?.quantityOrdered ?? line?.quantity, "Quantity"),
     rate: requiredNumber(line?.rate, "Rate"),
     taxableAmount: optionalNumber(line?.taxableAmount),
@@ -458,6 +465,37 @@ app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
 
 app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
   const currentUser = await getCurrentUser(req);
+  if (Array.isArray(req.body?.lines)) {
+    const lines = requiredArray(req.body?.lines, "Cart lines").map((line) => {
+      const rawGstRate = optionalString(line?.gstRate);
+      const parsedGstRate: "NA" | 0 | 5 | 12 | 18 | 40 | undefined = rawGstRate?.toUpperCase() === "NA" ? "NA" : parseOptionalGstRate(line?.gstRate);
+      return {
+        id: optionalString(line?.id),
+        productSku: requiredString(line?.productSku, "Product"),
+        warehouseId: optionalString(line?.warehouseId),
+        quantity: requiredNumber(line?.quantity, "Quantity"),
+        rate: requiredNumber(line?.rate, "Rate"),
+        taxableAmount: optionalNumber(line?.taxableAmount),
+        gstRate: parsedGstRate,
+        gstAmount: optionalNumber(line?.gstAmount),
+        taxMode: optionalString(line?.taxMode) as "NA" | "Exclusive" | "Inclusive" | undefined
+      };
+    });
+    const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
+    const status = requiredString(req.body?.status, "Status") as any;
+    const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts");
+    if (!canEditSalesOrders && !currentUser.roles.includes("Admin")) {
+      throw new Error("You are not allowed to perform this action.");
+    }
+    return updateSalesOrderGroup(req.params.id, {
+      paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
+      cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
+      deliveryMode,
+      note: optionalString(req.body?.note) || "",
+      status,
+      lines
+    }, currentUser);
+  }
   const status = requiredString(req.body?.status, "Status") as any;
   const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
   const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts");
@@ -564,6 +602,18 @@ app.post("/receipt-checks/upload-proof", upload.single("receiptProof"), async (r
   };
 }));
 
+app.post("/returns/upload-proof", upload.single("returnProof"), async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Purchaser", "Sales"]);
+  if (!req.file) {
+    throw new Error("Return proof file is required.");
+  }
+  return {
+    fileName: req.file.filename,
+    originalName: req.file.originalname,
+    fileUrl: `/uploads/return-proofs/${req.file.filename}`
+  };
+}));
+
 app.post("/payments/verify", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Accounts"]);
   return verifyPayment(
@@ -599,6 +649,46 @@ app.patch("/receipt-checks/:id", async (req, res) => wrap(res, async () => {
     note: optionalString(req.body?.note) || "",
     flagged: Boolean(req.body?.flagged)
   });
+}));
+
+app.post("/purchase-returns", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Purchaser"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    linkedOrderLineId: optionalString(line?.linkedOrderLineId),
+    productSku: requiredString(line?.productSku, "Product"),
+    quantity: requiredNumber(line?.quantity, "Quantity"),
+    rate: requiredNumber(line?.rate, "Rate"),
+    reason: requiredString(line?.reason, "Reason") as any,
+    photoName: optionalString(line?.photoName)
+  }));
+  return createPurchaseReturn({
+    mode: requiredString(req.body?.mode, "Mode") as "Adhoc" | "Planned",
+    linkedOrderId: optionalString(req.body?.linkedOrderId),
+    supplierId: requiredString(req.body?.supplierId, "Supplier"),
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    note: optionalString(req.body?.note) || "",
+    lines
+  }, currentUser);
+}));
+
+app.post("/sales-returns", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Sales"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    linkedOrderLineId: optionalString(line?.linkedOrderLineId),
+    productSku: requiredString(line?.productSku, "Product"),
+    quantity: requiredNumber(line?.quantity, "Quantity"),
+    rate: requiredNumber(line?.rate, "Rate"),
+    reason: requiredString(line?.reason, "Reason") as any,
+    photoName: optionalString(line?.photoName)
+  }));
+  return createSalesReturn({
+    mode: requiredString(req.body?.mode, "Mode") as "Adhoc" | "Planned",
+    linkedOrderId: optionalString(req.body?.linkedOrderId),
+    shopId: requiredString(req.body?.shopId, "Shop"),
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    note: optionalString(req.body?.note) || "",
+    lines
+  }, currentUser);
 }));
 
 app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {

@@ -530,6 +530,22 @@ textarea {
   z-index: 2;
 }
 
+.summary-stat-value {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  width: 100%;
+  position: relative;
+  padding-right: 2.4rem;
+}
+
+.summary-stat-value .pending-count-badge {
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+}
+
 .mobile-tab-bar {
   display: none;
 }
@@ -735,6 +751,19 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.purchase-summary-stats .payment-meta-grid {
+  align-items: stretch;
+}
+
+.purchase-summary-card .payment-update-head {
+  align-items: start;
+}
+
+.purchase-summary-card .payment-meta-grid,
+.purchase-summary-card .payment-card-actions {
+  justify-items: start;
 }
 
 .purchase-status-chips .status-pill {
@@ -1490,6 +1519,72 @@ textarea {
   background: #fff;
 }
 
+.compact-order-editor {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.compact-order-editor-head,
+.compact-order-editor-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1.6fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr);
+  gap: 0.9rem;
+  align-items: center;
+}
+
+.compact-order-editor-head {
+  padding: 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(17, 24, 39, 0.72);
+}
+
+.compact-order-editor-row {
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(31, 41, 55, 0.12);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.compact-order-editor-actions {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.compact-order-editor-product {
+  min-width: 0;
+}
+
+.compact-order-editor-product strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-order-editor-product select,
+.compact-order-editor-row input {
+  width: 100%;
+  min-height: 2.7rem;
+  padding: 0.68rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 41, 55, 0.12);
+  background: #fff;
+}
+
+.compact-icon-button {
+  min-width: 2.6rem;
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 .field-error input,
 .field-error select,
 .field-error .cart-qty-row input {
@@ -1784,6 +1879,12 @@ textarea {
   .warehouse-order-meta {
     justify-content: start;
   }
+
+  .compact-order-editor-head,
+  .compact-order-editor-row {
+    grid-template-columns: 92px minmax(0, 1fr) minmax(78px, 0.7fr) minmax(78px, 0.7fr);
+    gap: 0.65rem;
+  }
 }
 
 .payment-update-head,
@@ -1805,6 +1906,22 @@ textarea {
 .payment-card-actions {
   grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
   align-items: center;
+}
+
+.purchase-summary-scroll {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.purchase-summary-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
 }
 
 .status-pill {
@@ -2068,6 +2185,18 @@ textarea {
   .hero-compact h1,
   .section-head h2 {
     line-height: 1.15;
+  }
+
+  .compact-order-editor-head {
+    display: none;
+  }
+
+  .compact-order-editor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-order-editor-actions {
+    justify-content: flex-start;
   }
 
   .list-card,

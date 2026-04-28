@@ -243,10 +243,58 @@ export type ReceiptCheck = {
   createdAt: string;
 };
 
+export type ReturnReason =
+  | "Rate Difference"
+  | "Damage"
+  | "Quality Issue"
+  | "Wrong Item"
+  | "Excess Quantity"
+  | "Other";
+
+export type ReturnMode = "Adhoc" | "Planned";
+
+export type PurchaseReturn = {
+  id: string;
+  returnGroupId: string;
+  mode: ReturnMode;
+  linkedOrderId?: string;
+  linkedOrderLineId?: string;
+  supplierId: string;
+  supplierName: string;
+  warehouseId: string;
+  productSku: string;
+  quantity: number;
+  rate: number;
+  reason: ReturnReason;
+  note: string;
+  photoName?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export type SalesReturn = {
+  id: string;
+  returnGroupId: string;
+  mode: ReturnMode;
+  linkedOrderId?: string;
+  linkedOrderLineId?: string;
+  shopId: string;
+  shopName: string;
+  warehouseId: string;
+  productSku: string;
+  quantity: number;
+  rate: number;
+  reason: ReturnReason;
+  note: string;
+  photoName?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type InventoryLot = {
   lotId: string;
   sourceOrderId: string;
-  sourceType: "Purchase";
+  sourceType: "Purchase" | "Sales Return";
   warehouseId: string;
   productSku: string;
   quantityAvailable: number;
@@ -360,6 +408,8 @@ export type AppSnapshot = {
   counterparties: Counterparty[];
   purchaseOrders: PurchaseOrder[];
   salesOrders: SalesOrder[];
+  purchaseReturns: PurchaseReturn[];
+  salesReturns: SalesReturn[];
   payments: PaymentRecord[];
   receiptChecks: ReceiptCheck[];
   inventoryLots: InventoryLot[];
