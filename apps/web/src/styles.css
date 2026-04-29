@@ -100,7 +100,7 @@ th {
 .app-shell {
   max-width: 1720px;
   margin: 0 auto;
-  padding: clamp(0.9rem, 0.7rem + 1vw, 1.5rem) clamp(0.8rem, 0.55rem + 1vw, 1.15rem) clamp(2rem, 1.2rem + 2vw, 3rem);
+  padding: clamp(0.3rem, 0.25rem + 0.5vw, 0.8rem) clamp(0.8rem, 0.55rem + 1vw, 1.15rem) clamp(0.8rem, 0.7rem + 1vw, 1.3rem);
 }
 
 .login-card,
@@ -282,18 +282,23 @@ textarea {
 
 .app-topbar {
   position: sticky;
-  top: 12px;
-  z-index: 40;
+  top: 0;
+  z-index: 90;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
   padding: clamp(0.75rem, 0.6rem + 0.5vw, 1rem) clamp(0.9rem, 0.75rem + 0.7vw, 1.15rem);
-  border-radius: var(--radius-panel);
-  border: 1px solid rgba(31, 41, 55, 0.08);
-  background: rgba(255, 255, 255, 0.9);
+  border-radius: 0;
+  border: 1px solid rgba(157, 255, 240, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 30%),
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.24), rgba(45, 212, 191, 0) 34%),
+    linear-gradient(135deg, rgba(10, 76, 74, 0.98), rgba(18, 111, 106, 0.96) 52%, rgba(22, 137, 128, 0.94));
   backdrop-filter: blur(18px);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 18px 42px rgba(8, 47, 73, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 .app-topbar-copy {
@@ -303,12 +308,19 @@ textarea {
 
 .app-topbar-copy strong {
   font-size: var(--text-lg);
+  color: #ffffff;
 }
 
 .app-topbar-copy p {
   margin: 0;
-  color: var(--muted);
+  color: rgba(236, 254, 255, 0.76);
   font-size: var(--text-sm);
+}
+
+.app-topbar .small-label {
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(236, 254, 255, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .workspace-shell {
@@ -325,11 +337,11 @@ textarea {
 }
 
 .simple-shell {
-  padding-bottom: 110px;
+  padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
 }
 
 .app-shell {
-  padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
 }
 
 .simple-workspace {
@@ -679,8 +691,11 @@ textarea {
 }
 
 .purchase-module-tab-bar {
-  position: sticky;
-  bottom: 10px;
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 70;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
@@ -837,8 +852,11 @@ textarea {
 }
 
 .delivery-module-tab-bar {
-  position: sticky;
-  bottom: 10px;
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 70;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -2892,9 +2910,9 @@ textarea {
   }
 
   .app-topbar {
-    top: 8px;
+    top: 0;
     padding: 12px 14px;
-    border-radius: 20px;
+    border-radius: 0 0 20px 20px;
   }
 
   .form-shell,
