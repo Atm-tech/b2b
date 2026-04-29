@@ -1362,6 +1362,7 @@ async function assertPurchaseCartEditable(orderId: string, currentUser: CurrentU
 export async function createSalesOrder(payload: {
   cartId?: string;
   skipFinancials?: boolean;
+  applyDeliveryCharge?: boolean;
   shopId: string;
   productSku: string;
   warehouseId: string;
@@ -1396,7 +1397,7 @@ export async function createSalesOrder(payload: {
     const stock = buildStockSummary(await mapWarehouses(client), await mapProducts(client), await mapInventoryLots(client)).find(
       (item) => item.warehouseId === payload.warehouseId && item.productSku === payload.productSku
     );
-    const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
+    const deliveryCharge = payload.deliveryMode === "Delivery" && payload.applyDeliveryCharge !== false ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
   const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
@@ -1439,6 +1440,7 @@ export async function createSalesCart(payload: Omit<Parameters<typeof createSale
       ...payload,
       ...line,
       cartId,
+      applyDeliveryCharge: index === 0,
       note: line.note || payload.note,
       advancePayment: index === 0 ? payload.advancePayment : undefined,
       skipFinancials: true
@@ -2524,7 +2526,9 @@ export async function updateSalesOrder(orderId: string, payload: {
   const settings = await mapSettings();
   const quantity = numberValue(order.quantity);
   const totalAmount = quantity * payload.rate;
-  const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
+  const deliveryCharge = payload.deliveryMode === "Delivery"
+    ? ((order.cart_id ? numberValue(order.delivery_charge) : settings.deliveryCharge.amount))
+    : 0;
   await withTransaction(async (client) => {
     const currentStatus = stringValue(order.status) as SalesOrder["status"];
     const shouldPostOutboundInventory =
@@ -2619,7 +2623,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       await query("DELETE FROM sales_orders WHERE id = $1", [existingId], client);
     }
 
-    for (const line of payload.lines) {
+    for (const [index, line] of payload.lines.entries()) {
       const existing = line.id ? lineMap.get(line.id) : undefined;
       const warehouseId = (existing ? stringValue(existing.warehouse_id) : line.warehouseId?.trim()) || stringValue(firstLine.warehouse_id);
       const productSku = existing ? stringValue(existing.product_sku) : line.productSku.trim();
@@ -2629,7 +2633,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
       const taxableAmount = line.taxableAmount ?? (line.quantity * line.rate);
       const totalAmount = taxableAmount + gstAmount;
-      const deliveryCharge = payload.deliveryMode === "Delivery" ? settings.deliveryCharge.amount : 0;
+      const deliveryCharge = payload.deliveryMode === "Delivery" ? (index === 0 ? settings.deliveryCharge.amount : 0) : 0;
 
       if (existing) {
         await query(

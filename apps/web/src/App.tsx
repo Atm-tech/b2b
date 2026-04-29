@@ -802,10 +802,14 @@ function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines:
       rate: line.rate,
       taxableAmount: line.taxableAmount,
       gstAmount: line.gstAmount,
-      totalAmount: line.totalAmount + line.deliveryCharge
+      totalAmount: line.totalAmount
     })),
     totals: nonGst
-      ? [{ label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }]
+      ? [
+        { label: "Items", value: group.lines.reduce((sum, line) => sum + line.totalAmount, 0) },
+        { label: "Delivery", value: group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0) },
+        { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }
+      ]
       : [
         { label: "Taxable", value: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0) },
         { label: "GST", value: group.lines.reduce((sum, line) => sum + line.gstAmount, 0) },
@@ -962,7 +966,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantity}</td>
       <td>${formatMoney(line.rate)}</td>
-      <td>${formatMoney(line.totalAmount + line.deliveryCharge)}</td>
+      <td>${formatMoney(line.totalAmount)}</td>
     </tr>
   ` : `
     <tr>
@@ -972,7 +976,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${formatMoney(line.rate)}</td>
       <td>${formatMoney(line.taxableAmount)}</td>
       <td>${formatMoney(line.gstAmount)}</td>
-      <td>${formatMoney(line.totalAmount + line.deliveryCharge)}</td>
+      <td>${formatMoney(line.totalAmount)}</td>
     </tr>
   `).join("");
   if (nonGstBill) {
@@ -1006,6 +1010,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
             <tbody>${rows}</tbody>
           </table>
           <div class="invoice-kachcha-total">
+            <div><span>Items Total</span><strong>${formatMoney(taxable)}</strong></div>
+            <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
             <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
           </div>
           ${displayOrderNote(first?.note) ? `<div class="invoice-note">${escapeHtml(displayOrderNote(first?.note))}</div>` : ""}
@@ -1109,7 +1115,8 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Amount ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Amount ${formatMoney(line.totalAmount)}`),
+      `Delivery: ${formatMoney(delivery)}`,
       `Grand Total: ${formatMoney(total)}`
     ]
     : [
@@ -1119,7 +1126,7 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount + line.deliveryCharge)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount)}`),
       `Taxable Total: ${formatMoney(taxable)}`,
       `GST Total: ${formatMoney(gst)}`,
       `Delivery: ${formatMoney(delivery)}`,
@@ -4072,6 +4079,16 @@ function PurchaseCartEditor({
   }, [initialOrderId]);
 
   useEffect(() => {
+    if (editableGroups.length === 0) {
+      if (selectedOrderId) setSelectedOrderId("");
+      return;
+    }
+    if (!editableGroups.some((group) => group.id === selectedOrderId)) {
+      setSelectedOrderId(editableGroups[0].id);
+    }
+  }, [editableGroups, selectedOrderId]);
+
+  useEffect(() => {
     if (!selectedGroup) {
       setDraft(null);
       return;
@@ -4542,6 +4559,16 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   useEffect(() => {
     if (initialOrderId) setSelectedOrderId(initialOrderId);
   }, [initialOrderId]);
+
+  useEffect(() => {
+    if (editableGroups.length === 0) {
+      if (selectedOrderId) setSelectedOrderId("");
+      return;
+    }
+    if (!editableGroups.some((group) => group.id === selectedOrderId)) {
+      setSelectedOrderId(editableGroups[0].id);
+    }
+  }, [editableGroups, selectedOrderId]);
 
   useEffect(() => {
     if (!selectedGroup) {
