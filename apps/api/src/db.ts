@@ -759,6 +759,7 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
     if (!order) {
       const cart = await one<Record<string, unknown>>(
         `SELECT po.cart_id, MIN(po.created_at) AS created_at, MAX(c.name) AS supplier_name,
+                BOOL_AND(po.status = 'Cancelled') AS all_cancelled,
                 SUM(po.total_amount) AS total_amount,
                 SUM(CASE WHEN po.quantity_ordered > 0 THEN po.total_amount * (po.quantity_received / po.quantity_ordered) ELSE 0 END) AS received_value
          FROM purchase_orders po
@@ -769,12 +770,12 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
         client
       );
       if (!cart) return;
-      const goodsValue = numberValue(cart.total_amount);
+      const goodsValue = cart.all_cancelled === true || stringValue(cart.all_cancelled).toLowerCase() === "true" ? 0 : numberValue(cart.total_amount);
       await upsertLedger(side, linkedOrderId, stringValue(cart.supplier_name), goodsValue, paidAmount, client, isoValue(cart.created_at) || now());
       return;
     }
     const receivedRatio = numberValue(order.quantity_ordered) > 0 ? numberValue(order.quantity_received) / numberValue(order.quantity_ordered) : 0;
-    const goodsValue = numberValue(order.total_amount);
+    const goodsValue = stringValue(order.status) === "Cancelled" ? 0 : numberValue(order.total_amount);
     await upsertLedger(side, linkedOrderId, stringValue(order.supplier_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
     return;
   }
@@ -790,6 +791,7 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
   if (!order) {
     const cart = await one<Record<string, unknown>>(
       `SELECT so.cart_id, MIN(so.created_at) AS created_at, MAX(c.name) AS shop_name,
+              BOOL_AND(so.status = 'Cancelled') AS all_cancelled,
               SUM(so.total_amount + so.delivery_charge) AS goods_value
        FROM sales_orders so
        JOIN counterparties c ON c.id = so.shop_id
@@ -799,10 +801,10 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
       client
     );
     if (!cart) return;
-    await upsertLedger(side, linkedOrderId, stringValue(cart.shop_name), numberValue(cart.goods_value), paidAmount, client, isoValue(cart.created_at) || now());
+    await upsertLedger(side, linkedOrderId, stringValue(cart.shop_name), cart.all_cancelled === true || stringValue(cart.all_cancelled).toLowerCase() === "true" ? 0 : numberValue(cart.goods_value), paidAmount, client, isoValue(cart.created_at) || now());
     return;
   }
-  const goodsValue = numberValue(order.total_amount) + numberValue(order.delivery_charge);
+  const goodsValue = stringValue(order.status) === "Cancelled" ? 0 : (numberValue(order.total_amount) + numberValue(order.delivery_charge));
   await upsertLedger(side, linkedOrderId, stringValue(order.shop_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
 }
 
@@ -1324,6 +1326,12 @@ async function assertPurchaseCartEditable(orderId: string, currentUser: CurrentU
     const purchaserId = numberValue(linesResult.rows[0].purchaser_id);
     if (currentUser.id !== purchaserId) {
       throw new Error("Only the purchaser or admin can edit this purchase cart.");
+    }
+    if (linesResult.rows.some((row) => {
+      const status = stringValue(row.status);
+      return status === "Cancelled" || status === "Closed" || status === "Received";
+    })) {
+      throw new Error("Purchase order is closed. Only admin can edit it now.");
     }
   }
   const ledger = await one<Record<string, unknown>>(
@@ -2478,7 +2486,7 @@ async function assertSalesOrderEditable(orderId: string, currentUser: CurrentUse
     }
     if (linesResult.rows.some((row) => {
       const status = stringValue(row.status);
-      return status === "Delivered" || status === "Closed";
+      return status === "Delivered" || status === "Closed" || status === "Cancelled";
     })) {
       throw new Error("Sales order is closed. Only admin can edit it now.");
     }

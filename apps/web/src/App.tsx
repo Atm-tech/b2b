@@ -1154,11 +1154,11 @@ function groupOldestCreatedAt<T extends { createdAt: string }>(lines: T[]) {
 }
 
 function isOpenPurchaseOrder(order: PurchaseOrder) {
-  return order.status !== "Received" && order.status !== "Closed";
+  return order.status !== "Received" && order.status !== "Closed" && order.status !== "Cancelled";
 }
 
 function isOpenSalesOrder(order: SalesOrder) {
-  return order.status !== "Delivered" && order.status !== "Closed";
+  return order.status !== "Delivered" && order.status !== "Closed" && order.status !== "Cancelled";
 }
 
 function findPurchaseOrderByPublicId(orders: PurchaseOrder[], orderId: string) {
@@ -2531,7 +2531,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
   const partyDraftGstNa = partyDraft.gstNumber.trim().toUpperCase() === "N/A";
   const partyDraftBankNa = [partyDraft.bankName, partyDraft.bankAccountNumber, partyDraft.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
-  const divisions = Array.from(new Set(products.map((item) => item.division).filter(Boolean)));
+  const divisions = Array.from(new Set(products.map((item) => productCategoryLabel(item)).filter(Boolean)));
   const normalizedSearch = search.trim().toLowerCase();
   const showingCategoryLanding = activeDivision === "" && normalizedSearch === "";
   function productMatchScore(product: AppSnapshot["products"][number], query: string) {
@@ -2569,7 +2569,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     return 0;
   }
   const filteredProducts = products.filter((product) => {
-    const matchesDivision = activeDivision === "" || product.division === activeDivision;
+    const matchesDivision = activeDivision === "" || productCategoryLabel(product) === activeDivision;
     const matchesDepartment = activeDepartment === "" || product.department === activeDepartment;
     const matchesSection = activeSection === "" || product.section === activeSection;
     const matchesSearch = normalizedSearch === "" || productMatchScore(product, search) > 0;
@@ -2642,7 +2642,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
         setSuggestionOpen(true);
         const matchedProduct = products.find((product) => [product.name, product.brand, product.shortName, product.barcode].join(" ").toLowerCase().includes(transcript.toLowerCase()));
         if (matchedProduct) {
-          setActiveDivision(matchedProduct.division || "");
+          setActiveDivision(productCategoryLabel(matchedProduct));
           setActiveDepartment(matchedProduct.department || "");
           setActiveSection(matchedProduct.section || "");
         }
@@ -3243,7 +3243,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     {suggestionOpen && search.trim() ? <div className="search-suggestion-list">
                       {searchSuggestions.length > 0 ? searchSuggestions.map((product) => <button key={product.sku} type="button" className="search-suggestion-item" onMouseDown={() => applySearchSuggestion(product)}>
                         <strong>{product.name}</strong>
-                        <span>{product.division} / {product.section} / {product.brand || product.sku}</span>
+                        <span>{productCategoryLabel(product)} / {product.section || "General"} / {product.brand || product.sku}</span>
                       </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved product found</strong><span>Create product first from Products.</span></div>}
                     </div> : null}
                   </div>
@@ -3269,7 +3269,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               </div>
               <div className="category-grid">
                 {divisions.map((division) => {
-                  const divisionProducts = products.filter((item) => item.division === division);
+                  const divisionProducts = products.filter((item) => productCategoryLabel(item) === division);
                   const sample = divisionProducts[0];
                   const initials = division
                     .split(" ")
@@ -4158,6 +4158,29 @@ function PurchaseCartEditor({
     } : current);
   }
 
+  async function cancelPurchaseGroup() {
+    if (!selectedGroup || !draft || !editState.editable) return;
+    if (!window.confirm(`Cancel purchase order ${selectedGroup.id}?`)) return;
+    await onUpdateCart(selectedGroup.id, {
+      paymentMode: draft.paymentMode,
+      cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
+      deliveryMode: draft.deliveryMode,
+      note: draft.note?.trim() ? `${draft.note.trim()} | Cancelled from update PO.` : "Cancelled from update PO.",
+      status: "Cancelled",
+      lines: draft.lines.map((line) => ({
+        id: line.id,
+        productSku: line.productSku,
+        warehouseId: line.warehouseId,
+        quantityOrdered: Number(line.quantityOrdered || 0),
+        rate: Number(line.rate || 0),
+        taxableAmount: Number(line.taxableAmount || 0),
+        gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
+        gstAmount: Number(line.gstAmount || 0),
+        taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
+      }))
+    });
+  }
+
   return (
     <Panel title="Update Purchase Order" eyebrow="Product amendment only">
       {editableGroups.length === 0 ? <div className="empty-card">No purchase carts available for edit.</div> : <>
@@ -4201,6 +4224,7 @@ function PurchaseCartEditor({
             {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
             <div className="payment-card-actions wide-field">
               <button className="ghost-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
+              <button className="ghost-button" type="button" onClick={() => void cancelPurchaseGroup()} disabled={!editState.editable}>Cancel PO</button>
             </div>
             <div className="wide-field compact-order-editor">
               <div className="compact-order-editor-head">
@@ -4602,6 +4626,29 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
     } : current);
   }
 
+  async function cancelSalesGroup() {
+    if (!selectedGroup || !draft || !editState.editable) return;
+    if (!window.confirm(`Cancel sales order ${selectedGroup.id}?`)) return;
+    await onUpdateSalesOrder(selectedGroup.id, {
+      paymentMode: draft.paymentMode,
+      cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
+      deliveryMode: draft.deliveryMode,
+      note: draft.note?.trim() ? `${draft.note.trim()} | Cancelled from update SO.` : "Cancelled from update SO.",
+      status: "Cancelled",
+      lines: draft.lines.map((line) => ({
+        id: line.id,
+        productSku: line.productSku,
+        warehouseId: line.warehouseId,
+        quantity: Number(line.quantity || 0),
+        rate: Number(line.rate || 0),
+        taxableAmount: Number(line.taxableAmount || 0),
+        gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
+        gstAmount: Number(line.gstAmount || 0),
+        taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
+      }))
+    });
+  }
+
   return (
     <Panel title="Update Sales Order" eyebrow="Product amendment only">
       {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
@@ -4636,6 +4683,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
           {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
           <div className="payment-card-actions wide-field">
             <button className="ghost-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
+            <button className="ghost-button" type="button" onClick={() => void cancelSalesGroup()} disabled={!editState.editable}>Cancel SO</button>
           </div>
           <div className="wide-field compact-order-editor">{draft?.lines.length ? <>
             <div className="compact-order-editor-head">
@@ -8716,6 +8764,10 @@ function renderWarehouseOptions(items: AppSnapshot["warehouses"]) { return [<opt
 function renderProductOptions(items: AppSnapshot["products"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.sku} value={item.sku}>{`${item.sku} - ${item.name} (${item.division} > ${item.department} > ${item.section})`}</option>)]; }
 function uniqueProductFieldOptions(items: AppSnapshot["products"], field: "division" | "department" | "section" | "category") { return Array.from(new Set(items.map((item) => item[field].trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right)); }
 function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
+
+function productCategoryLabel(product: AppSnapshot["products"][number]) {
+  return product.division?.trim() || product.department?.trim() || product.section?.trim() || "All Products";
+}
 
 export default App;
 

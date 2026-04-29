@@ -118,7 +118,8 @@ export type PurchaseStatus =
   | "In Transit"
   | "Partially Received"
   | "Received"
-  | "Closed";
+  | "Closed"
+  | "Cancelled";
 
 export type PurchaseOrder = {
   id: string;
@@ -146,7 +147,7 @@ export type PurchaseOrder = {
   createdAt: string;
 };
 
-export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Pending Pickup" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed";
+export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Pending Pickup" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed" | "Cancelled";
 
 export type SalesOrder = {
   id: string;
