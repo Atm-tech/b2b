@@ -644,7 +644,9 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text("AAPOORTI B2B", margin + 4, cursorY + 6);
+  if (!config.nonGst) {
+    doc.text("AAPOORTI B2B", margin + 4, cursorY + 6);
+  }
   doc.setFontSize(18);
   doc.text(config.nonGst ? "Estimate" : config.documentTitle, margin + 4, cursorY + 16);
   doc.setFont("helvetica", "normal");
@@ -873,7 +875,6 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
         <section class="invoice-kachcha-card">
           <div class="invoice-kachcha-head">
             <div>
-              <div class="invoice-brand">AAPOORTI B2B</div>
               <h1 class="invoice-kachcha-title">Purchase Estimate</h1>
               <div class="invoice-subhead">${escapeHtml(group.id)}</div>
             </div>
@@ -985,7 +986,6 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
         <section class="invoice-kachcha-card">
           <div class="invoice-kachcha-head">
             <div>
-              <div class="invoice-brand">AAPOORTI B2B</div>
               <h1 class="invoice-kachcha-title">Sales Estimate</h1>
               <div class="invoice-subhead">${escapeHtml(group.id)}</div>
             </div>
