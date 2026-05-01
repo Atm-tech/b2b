@@ -1992,6 +1992,89 @@ function outboundOpsExportRows(
   return [...taskRows, ...directRows];
 }
 
+function purchasePaymentExportHeaders() {
+  return ["Date", "PO Number", "Supplier", "Amount", "Mode", "Status", "Reference", "UTR", "Note"];
+}
+
+function purchasePaymentExportRows(snapshot: AppSnapshot, payments: PaymentRecord[]) {
+  return payments.map((payment) => {
+    const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
+    return [
+      indiaDateKey(payment.createdAt),
+      payment.linkedOrderId,
+      order?.supplierName || "Supplier",
+      payment.amount,
+      payment.mode,
+      payment.verificationStatus,
+      payment.referenceNumber || "",
+      payment.utrNumber || "",
+      payment.verificationNote || ""
+    ];
+  });
+}
+
+function salesCollectionExportHeaders() {
+  return ["Date", "SO Number", "Customer", "Products", "Total", "Paid", "Pending", "Payment Mode", "Cash Timing", "Delivery Mode", "Delivery Status", "Payment Status", "Collection Agent"];
+}
+
+function salesCollectionExportRows(snapshot: AppSnapshot, groups: Array<{ id: string; lines: SalesOrder[]; shopName: string; pendingAmount: number; paidAmount: number; totalAmount: number; paymentMode: PaymentMode; cashTiming: string; deliveryMode: string; }>) {
+  return groups.map((group) => [
+    indiaDateKey(new Date(groupNewestCreatedAt(group.lines))),
+    group.id,
+    group.shopName,
+    group.lines.map((line) => line.productSku).join(" | "),
+    group.totalAmount,
+    group.paidAmount,
+    group.pendingAmount,
+    group.paymentMode,
+    group.cashTiming || "",
+    group.deliveryMode,
+    salesDeliveryStatus(snapshot, group.id),
+    salesPaymentStatus(snapshot, group.id),
+    collectionAssignment(snapshot, group.id) || ""
+  ]);
+}
+
+function consignmentExportHeaders() {
+  return ["Date", "Consignment ID", "Warehouse", "Assigned To", "Dockets", "Total Weight", "Status", "Stops / Orders"];
+}
+
+function consignmentExportRows(snapshot: AppSnapshot, consignments: DeliveryConsignment[]) {
+  return consignments.map((consignment) => {
+    const dockets = consignment.docketIds.map((id) => snapshot.deliveryDockets.find((item) => item.id === id)).filter(Boolean) as DeliveryDocket[];
+    const orderIds = dockets.map((docket) => docket.salesOrderId).join(" | ");
+    return [
+      indiaDateKey(consignment.createdAt),
+      consignment.id,
+      snapshot.warehouses.find((item) => item.id === consignment.warehouseId)?.name || consignment.warehouseId,
+      consignment.assignedTo || "",
+      consignment.docketIds.length,
+      consignment.totalWeightKg,
+      consignment.status,
+      orderIds
+    ];
+  });
+}
+
+function docketExportHeaders() {
+  return ["Date", "Docket ID", "SO Number", "Customer", "Product", "Qty", "Weight", "Warehouse", "Status", "Consignment"];
+}
+
+function docketExportRows(snapshot: AppSnapshot, dockets: DeliveryDocket[]) {
+  return dockets.map((docket) => [
+    indiaDateKey(docket.createdAt),
+    docket.id,
+    docket.salesOrderId,
+    docket.shopName,
+    docket.productSku,
+    docket.quantity,
+    docket.weightKg,
+    snapshot.warehouses.find((item) => item.id === docket.warehouseId)?.name || docket.warehouseId,
+    docket.status,
+    docket.consignmentId || ""
+  ]);
+}
+
 function downloadReportCsv(filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string) {
   const token = dateRangeFileToken(fromDate, toDate);
   downloadCsvFile(`${filePrefix}-${token}.csv`, headers, rows);
@@ -4669,11 +4752,14 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
   const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
-  const exportRows = purchaseOrderExportRows(snapshot, filteredGroups);
   const filteredCompletedPayments = completedPayments.filter((payment) => {
     const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
     return dateKeyInRange(indiaDateKey(payment.createdAt), activeRange.fromDate, activeRange.toDate) && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
   });
+  const purchaseExportHeaders = viewMode === "orders" ? purchaseOrderExportHeaders() : purchasePaymentExportHeaders();
+  const purchaseExportRowsData = viewMode === "orders" ? purchaseOrderExportRows(snapshot, filteredGroups) : purchasePaymentExportRows(snapshot, filteredCompletedPayments);
+  const purchaseExportTitle = viewMode === "orders" ? "Purchase Orders Report" : "Purchase Payments Report";
+  const purchaseExportPrefix = viewMode === "orders" ? "purchase-orders" : "purchase-payments";
 
   useEffect(() => {
     if (allGroups.length === 0) return;
@@ -4723,8 +4809,8 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
       </div>
       <div className="payment-card-actions">
-        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("purchase-orders", purchaseOrderExportHeaders(), exportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
-        <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Purchase Orders Report", "purchase-orders", purchaseOrderExportHeaders(), exportRows, activeRange.fromDate, activeRange.toDate, [`Orders: ${filteredGroups.length}`])}>Download PDF</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv(purchaseExportPrefix, purchaseExportHeaders, purchaseExportRowsData, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportPdf(purchaseExportTitle, purchaseExportPrefix, purchaseExportHeaders, purchaseExportRowsData, activeRange.fromDate, activeRange.toDate, [viewMode === "orders" ? `Orders: ${filteredGroups.length}` : `Payments: ${filteredCompletedPayments.length}`])}>Download PDF</button>
       </div>
       {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card purchase-summary-stats">
@@ -5179,8 +5265,12 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   const collectionAgents = snapshot.users.filter((user) => user.active && user.roles.includes("Collection Agent"));
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
-  const salesExportGroups = (viewMode === "orders" ? filteredGroups : filteredCollectionGroups.map((group) => ({ id: group.id, lines: group.lines })));
-  const salesExportRows = salesOrderExportRows(snapshot, salesExportGroups);
+  const salesExportHeaders = viewMode === "orders" ? salesOrderExportHeaders() : salesCollectionExportHeaders();
+  const salesExportRows = viewMode === "orders"
+    ? salesOrderExportRows(snapshot, filteredGroups)
+    : salesCollectionExportRows(snapshot, filteredCollectionGroups);
+  const salesExportTitle = viewMode === "orders" ? "Sales Orders Report" : "Sales Collection Queue Report";
+  const salesExportPrefix = viewMode === "orders" ? "sales-orders" : "sales-collections";
 
   useEffect(() => {
     if (allGroups.length === 0) return;
@@ -5262,8 +5352,8 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
       </div>
       <div className="payment-card-actions">
-        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("sales-orders", salesOrderExportHeaders(), salesExportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
-        <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Sales Orders Report", "sales-orders", salesOrderExportHeaders(), salesExportRows, activeRange.fromDate, activeRange.toDate, [`Orders: ${salesExportGroups.length}`, `Mode: ${viewMode}`])}>Download PDF</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv(salesExportPrefix, salesExportHeaders, salesExportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportPdf(salesExportTitle, salesExportPrefix, salesExportHeaders, salesExportRows, activeRange.fromDate, activeRange.toDate, [viewMode === "orders" ? `Orders: ${filteredGroups.length}` : `Collections: ${filteredCollectionGroups.length}`])}>Download PDF</button>
       </div>
       {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card">
@@ -7003,10 +7093,54 @@ function WarehouseOperationsViewV2({
   const outboundBundlePendingCount = openDockets.length + bundleReadyConsignments.length;
   const outboundPlannedPendingCount = plannedOutboundDockets.length;
   const outboundTotalPendingCount = outboundCheckPendingCount + outboundTagPendingCount + outboundBundlePendingCount + outboundPlannedPendingCount;
+  const outboundExportHeaders = outboundStep === "tag"
+    ? consignmentExportHeaders()
+    : outboundStep === "bundle"
+      ? docketExportHeaders()
+      : outboundOpsExportHeaders();
+  const outboundExportRowsData = outboundStep === "tag"
+    ? consignmentExportRows(snapshot, bundleReadyConsignments)
+    : outboundStep === "bundle"
+      ? docketExportRows(snapshot, openDockets)
+      : outboundStep === "planned"
+        ? outboundOpsExportRows(snapshot, [], plannedOutboundDockets.map((item) => ({ task: item.task })))
+        : outboundOpsExportRows(snapshot, directOutboundGroups, activeOutboundDockets.map((item) => ({ task: item.task })));
+  const outboundExportTitle = outboundStep === "tag"
+    ? "Outbound Tag Queue Report"
+    : outboundStep === "bundle"
+      ? "Outbound Bundle Queue Report"
+      : outboundStep === "planned"
+        ? "Planned Outbound Tasks Report"
+        : "Warehouse Pending Dispatch Report";
+  const outboundExportPrefix = outboundStep === "tag"
+    ? "outbound-tag"
+    : outboundStep === "bundle"
+      ? "outbound-bundle"
+      : outboundStep === "planned"
+        ? "outbound-planned"
+        : "warehouse-outbound";
 
   function inboundTaskForGroup(groupId: string) {
     return snapshot.deliveryTasks.find((task) => task.side === "Purchase" && task.linkedOrderIds.includes(groupId));
   }
+
+  const inboundPickupGroups = sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group)));
+  const inboundExportHeaders = inboundStep === "pickup" ? purchaseOrderExportHeaders() : inboundOpsExportHeaders();
+  const inboundExportRowsData = inboundStep === "pickup"
+    ? purchaseOrderExportRows(snapshot, inboundPickupGroups)
+    : inboundStep === "planned"
+      ? inboundOpsExportRows(snapshot, [], plannedInboundDockets)
+      : inboundOpsExportRows(snapshot, [...directReceiveGroups, ...receivedGroups], [...receivingInboundDockets, ...completedInboundDockets]);
+  const inboundExportTitle = inboundStep === "pickup"
+    ? "Inbound Pickup Queue Report"
+    : inboundStep === "planned"
+      ? "Planned Inbound Tasks Report"
+      : "Warehouse Inbound Receive Report";
+  const inboundExportPrefix = inboundStep === "pickup"
+    ? "inbound-pickup"
+    : inboundStep === "planned"
+      ? "inbound-planned"
+      : "warehouse-inbound";
 
   const inboundDateControls = <>
     <div className="date-filter-strip">
@@ -7021,8 +7155,8 @@ function WarehouseOperationsViewV2({
       </div>
     </article>
     <div className="payment-card-actions">
-      <button className="ghost-button" type="button" onClick={() => downloadReportCsv("warehouse-inbound", inboundOpsExportHeaders(), inboundOpsExportRows(snapshot, [...directReceiveGroups, ...receivedGroups], [...receivingInboundDockets, ...completedInboundDockets, ...plannedInboundDockets]), activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
-      <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Warehouse Inbound Report", "warehouse-inbound", inboundOpsExportHeaders(), inboundOpsExportRows(snapshot, [...directReceiveGroups, ...receivedGroups], [...receivingInboundDockets, ...completedInboundDockets, ...plannedInboundDockets]), activeInboundRange.fromDate, activeInboundRange.toDate, [`Direct groups: ${directReceiveGroups.length + receivedGroups.length}`, `Tasks: ${receivingInboundDockets.length + completedInboundDockets.length + plannedInboundDockets.length}`])}>Download PDF</button>
+      <button className="ghost-button" type="button" onClick={() => downloadReportCsv(inboundExportPrefix, inboundExportHeaders, inboundExportRowsData, activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
+      <button className="ghost-button" type="button" onClick={() => downloadReportPdf(inboundExportTitle, inboundExportPrefix, inboundExportHeaders, inboundExportRowsData, activeInboundRange.fromDate, activeInboundRange.toDate, [inboundStep === "pickup" ? `Pickup groups: ${inboundPickupGroups.length}` : inboundStep === "planned" ? `Planned tasks: ${plannedInboundDockets.length}` : `Receive groups: ${directReceiveGroups.length + receivedGroups.length}`, `Step: ${inboundStep}`])}>Download PDF</button>
     </div>
   </>;
 
@@ -7847,8 +7981,8 @@ function WarehouseOperationsViewV2({
           </div>
         </article>
         <div className="payment-card-actions">
-          <button className="ghost-button" type="button" onClick={() => downloadReportCsv("warehouse-outbound", outboundOpsExportHeaders(), outboundOpsExportRows(snapshot, directOutboundGroups, [...activeOutboundDockets, ...plannedOutboundDockets].map((item) => ({ task: item.task }))), activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
-          <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Warehouse Outbound Report", "warehouse-outbound", outboundOpsExportHeaders(), outboundOpsExportRows(snapshot, directOutboundGroups, [...activeOutboundDockets, ...plannedOutboundDockets].map((item) => ({ task: item.task }))), activeInboundRange.fromDate, activeInboundRange.toDate, [`Direct groups: ${directOutboundGroups.length}`, `Tasks: ${activeOutboundDockets.length + plannedOutboundDockets.length}`])}>Download PDF</button>
+          <button className="ghost-button" type="button" onClick={() => downloadReportCsv(outboundExportPrefix, outboundExportHeaders, outboundExportRowsData, activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
+          <button className="ghost-button" type="button" onClick={() => downloadReportPdf(outboundExportTitle, outboundExportPrefix, outboundExportHeaders, outboundExportRowsData, activeInboundRange.fromDate, activeInboundRange.toDate, [outboundStep === "tag" ? `Ready consignments: ${bundleReadyConsignments.length}` : outboundStep === "bundle" ? `Open dockets: ${openDockets.length}` : outboundStep === "planned" ? `Planned tasks: ${plannedOutboundDockets.length}` : `Pending dispatch groups: ${directOutboundGroups.length}`, `Step: ${outboundStep}`])}>Download PDF</button>
         </div>
         {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
           {openDockets.length > 0 ? <p className="message success top-gap">{canManageWarehouseChecks ? `${openDockets.length} outbound docket(s) are ready for delivery manager bundling.` : `${openDockets.length} warehouse docket(s) are ready. Bundle them into consignments before tagging delivery.`}</p> : null}
