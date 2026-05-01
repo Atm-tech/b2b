@@ -1166,6 +1166,12 @@ function indiaDateKey(value?: string | Date) {
   return date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
+function indiaYesterdayDateKey() {
+  const now = new Date();
+  now.setDate(now.getDate() - 1);
+  return indiaDateKey(now);
+}
+
 function dailySalesCollectorLabel(payment?: PaymentRecord, fallback = "Pending") {
   if (!payment) return fallback;
   const note = `${payment.verificationNote || ""} ${payment.createdBy || ""}`.toLowerCase();
@@ -4170,7 +4176,7 @@ function PurchaserPurchaseWorkspace({
   const persisted = readStoredJson(workspaceKey, { tab: initialUpdateOrderId ? "update" : "current" as "current" | "update" | "summary" });
   const [tab, setTab] = useState<"current" | "update" | "summary">(persisted.tab || (initialUpdateOrderId ? "update" : "current"));
   const myOrders = purchaseOrders
-    .filter((order) => (order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName) && isOpenPurchaseOrder(order))
+    .filter((order) => order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   const pendingPoCount = countGroupedOrders(myOrders);
   useEffect(() => {
@@ -4217,10 +4223,7 @@ function PurchaserPurchaseWorkspace({
 }
 
 function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
-  const groups = groupPurchaseOrders(orders.filter(isOpenPurchaseOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
-  const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
-  const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
-  const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
+  const allGroups = groupPurchaseOrders(orders).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
   const completedPayments = snapshot.payments
     .filter((item) => item.side === "Purchase" && (item.verificationStatus === "Verified" || item.verificationStatus === "Resolved"))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -4228,10 +4231,19 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
   const [viewMode, setViewMode] = useState<"orders" | "payments">("orders");
   const [openPaymentId, setOpenPaymentId] = useState("");
   const [searchText, setSearchText] = useState("");
+  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
+  const [selectedDate, setSelectedDate] = useState(indiaDateKey());
+  const [customDateOpen, setCustomDateOpen] = useState(false);
+  const [customDateDraft, setCustomDateDraft] = useState(indiaDateKey());
+  const activeDate = datePreset === "today" ? indiaDateKey() : datePreset === "yesterday" ? indiaYesterdayDateKey() : selectedDate;
+  const groups = allGroups.filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate);
+  const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
+  const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
+  const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCompletedPayments = completedPayments.filter((payment) => {
     const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
-    return `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
+    return indiaDateKey(payment.createdAt) === activeDate && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
   });
 
   return (
@@ -4240,6 +4252,17 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
         <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={paymentPendingCount} /></button>
       </div>
+      <div className="date-filter-strip">
+        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedDate(indiaDateKey()); }}>Today</button>
+        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedDate(indiaYesterdayDateKey()); }}>Yesterday</button>
+        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomDateDraft(activeDate); setCustomDateOpen(true); }}>Custom Date</button>
+      </div>
+      <article className="list-card date-range-card">
+        <div className="payment-meta-grid">
+          <div><span className="small-label">From</span><strong>{activeDate}</strong></div>
+          <div><span className="small-label">To</span><strong>{activeDate}</strong></div>
+        </div>
+      </article>
       <div className="form-grid">
         <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
       </div>
@@ -4325,6 +4348,25 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
           })}
         </div>
       </Panel>}
+      {customDateOpen ? <div className="cart-overlay" onClick={() => setCustomDateOpen(false)}>
+        <div className="cart-sheet date-picker-sheet" onClick={(e) => e.stopPropagation()}>
+          <div className="cart-head">
+            <div>
+              <h3>Select date</h3>
+              <p>Choose purchase day and click done.</p>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Close</button>
+          </div>
+          <label>
+            Date
+            <input type="date" value={customDateDraft} onChange={(e) => setCustomDateDraft(e.target.value)} />
+          </label>
+          <div className="payment-card-actions">
+            <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Cancel</button>
+            <button type="button" className="primary-button" onClick={() => { setSelectedDate(customDateDraft || indiaDateKey()); setDatePreset("custom"); setCustomDateOpen(false); }}>Done</button>
+          </div>
+        </div>
+      </div> : null}
     </section>
   );
 }
@@ -4596,7 +4638,13 @@ function PurchaseCartEditor({
 }
 
 function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; }) {
-  const groups = groupSalesOrders(orders.filter(isOpenSalesOrder)).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const allGroups = groupSalesOrders(orders).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
+  const [selectedDate, setSelectedDate] = useState(indiaDateKey());
+  const [customDateOpen, setCustomDateOpen] = useState(false);
+  const [customDateDraft, setCustomDateDraft] = useState(indiaDateKey());
+  const activeDate = datePreset === "today" ? indiaDateKey() : datePreset === "yesterday" ? indiaYesterdayDateKey() : selectedDate;
+  const groups = allGroups.filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate);
   const dispatchPendingCount = groups.filter((group) => {
     const status = salesFulfillmentStatus(group.lines);
     return status === "SO booked" || status === "SO docket ready" || status === "Customer pickup";
@@ -4631,7 +4679,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         deliveryMode: first?.deliveryMode || "Delivery"
       };
     })
-    .filter((group) => group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
+    .filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate && group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
   const unsettledCollections = snapshot.payments
     .filter((item) => item.side === "Sales" && item.createdBy === currentUser.fullName && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved" && item.verificationStatus !== "Rejected")
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -4689,6 +4737,17 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
         <button className={viewMode === "collections" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("collections")}><LabelWithBadge label="Collection" count={collectionGroups.length} /></button>
       </div>
+      <div className="date-filter-strip">
+        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedDate(indiaDateKey()); }}>Today</button>
+        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedDate(indiaYesterdayDateKey()); }}>Yesterday</button>
+        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomDateDraft(activeDate); setCustomDateOpen(true); }}>Custom Date</button>
+      </div>
+      <article className="list-card date-range-card">
+        <div className="payment-meta-grid">
+          <div><span className="small-label">From</span><strong>{activeDate}</strong></div>
+          <div><span className="small-label">To</span><strong>{activeDate}</strong></div>
+        </div>
+      </article>
       <div className="form-grid">
         <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
       </div>
@@ -4833,6 +4892,25 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
           })}
         </div>
       </Panel>}
+      {customDateOpen ? <div className="cart-overlay" onClick={() => setCustomDateOpen(false)}>
+        <div className="cart-sheet date-picker-sheet" onClick={(e) => e.stopPropagation()}>
+          <div className="cart-head">
+            <div>
+              <h3>Select date</h3>
+              <p>Choose sales day and click done.</p>
+            </div>
+            <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Close</button>
+          </div>
+          <label>
+            Date
+            <input type="date" value={customDateDraft} onChange={(e) => setCustomDateDraft(e.target.value)} />
+          </label>
+          <div className="payment-card-actions">
+            <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Cancel</button>
+            <button type="button" className="primary-button" onClick={() => { setSelectedDate(customDateDraft || indiaDateKey()); setDatePreset("custom"); setCustomDateOpen(false); }}>Done</button>
+          </div>
+        </div>
+      </div> : null}
     </section>
   );
 }

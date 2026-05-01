@@ -784,6 +784,58 @@ textarea {
   justify-items: start;
 }
 
+.date-filter-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.date-filter-pill {
+  min-height: 46px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.94);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.22);
+}
+
+.date-filter-pill.active {
+  background: linear-gradient(135deg, #4f9494, #3d7f7f);
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(61, 127, 127, 0.24), inset 0 0 0 1px rgba(35, 93, 93, 0.34);
+}
+
+.date-range-card {
+  padding-block: 0.95rem;
+}
+
+.date-range-card .payment-meta-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.date-range-card strong {
+  font-size: 1rem;
+}
+
+.date-picker-sheet {
+  width: min(100%, 440px);
+}
+
+.date-picker-sheet label {
+  display: grid;
+  gap: 0.45rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.date-picker-sheet input[type="date"] {
+  min-height: 52px;
+}
+
 .report-accordion-list {
   display: grid;
   gap: 0.9rem;
@@ -1318,6 +1370,8 @@ textarea {
   padding: var(--space-4);
   position: sticky;
   bottom: 14px;
+  width: min(100%, 75vw, 980px);
+  margin: 0 auto;
 }
 
 .floating-checkout-button {
@@ -1364,7 +1418,7 @@ textarea {
 .cart-sheet {
   position: relative;
   z-index: 111;
-  width: min(100%, 560px);
+  width: min(100%, 75vw, 980px);
   max-height: min(88vh, 860px);
   margin: 0 auto;
   display: grid;
@@ -1404,7 +1458,7 @@ textarea {
 }
 
 .rate-popup-sheet {
-  max-width: 420px;
+  max-width: min(75vw, 520px);
 }
 
 .rate-warning-box {
@@ -2853,6 +2907,20 @@ textarea {
     text-overflow: ellipsis;
   }
 
+  .date-filter-strip {
+    gap: clamp(6px, 1.8vw, 10px);
+  }
+
+  .date-filter-pill {
+    min-height: clamp(40px, 9vw, 48px);
+    font-size: clamp(0.7rem, 2.7vw, 0.88rem);
+    padding-inline: clamp(8px, 2vw, 14px);
+  }
+
+  .date-range-card .payment-meta-grid {
+    gap: clamp(8px, 2vw, 14px);
+  }
+
   .delivery-module-tab-bar {
     display: flex;
     gap: clamp(4px, 1.4vw, 8px);
@@ -2895,6 +2963,47 @@ textarea {
 
   .floating-checkout-button {
     bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    width: 100%;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1180px) {
+  .workspace-shell,
+  .simple-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .content-shell {
+    width: min(100%, 96vw);
+    margin: 0 auto;
+  }
+
+  .catalog-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+
+  .checkout-sheet,
+  .cart-sheet {
+    width: min(75vw, 980px);
+  }
+
+  .rate-popup-sheet {
+    width: min(75vw, 520px);
+  }
+
+  .payment-meta-grid,
+  .payment-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .module-stack,
+  .collapse-stack,
+  .stack-list {
     width: 100%;
   }
 }
