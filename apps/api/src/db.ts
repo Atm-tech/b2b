@@ -2419,6 +2419,7 @@ export async function createDeliveryConsignment(payload: {
       const routeStops: DeliveryTask["routeStops"] = linkedOrderIds.map((orderId) => {
         const item = grouped.get(orderId)!;
         const pendingAmount = pendingByOrderId.get(orderId) || 0;
+        const paymentRequired = pendingAmount > 0 && item.paymentMode === "Cash" && item.cashTiming === "At Delivery";
         return {
           orderId,
           supplierId: item.shopId,
@@ -2426,8 +2427,8 @@ export async function createDeliveryConsignment(payload: {
           productSummary: item.products.join(", "),
           warehouseId: item.warehouseId,
           warehouseName: item.warehouseId,
-          amountToPay: pendingAmount,
-          paymentRequired: pendingAmount > 0,
+          amountToPay: paymentRequired ? pendingAmount : 0,
+          paymentRequired,
           paymentMode: item.paymentMode,
           cashTiming: item.cashTiming,
           latitude: item.latitude,

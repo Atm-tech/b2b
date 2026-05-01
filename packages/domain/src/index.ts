@@ -84,7 +84,7 @@ export type Counterparty = {
 };
 
 export type PaymentMode = "Cash" | "Card" | "UPI" | "NEFT" | "RTGS" | "Cheque";
-export type CashTiming = "In Hand" | "At Delivery";
+export type CashTiming = "In Hand" | "At Delivery" | "Later";
 export type VerificationStatus = "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
 
 export type PaymentMethodSetting = {

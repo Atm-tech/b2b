@@ -9,7 +9,9 @@ import type {
   DeliveryConsignment,
   DeliveryDocket,
   DeliveryTask,
+  CashTiming,
   NoteRecord,
+  PaymentRecord,
   PaymentMode,
   PurchaseOrder,
   PurchaseReturn,
@@ -1159,6 +1161,212 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
   return encodeURIComponent(lines.join("\n"));
 }
 
+function indiaDateKey(value?: string | Date) {
+  const date = value ? new Date(value) : new Date();
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+function dailySalesCollectorLabel(payment?: PaymentRecord, fallback = "Pending") {
+  if (!payment) return fallback;
+  const note = `${payment.verificationNote || ""} ${payment.createdBy || ""}`.toLowerCase();
+  if (note.includes("delivery")) return "Delivery";
+  if (note.includes("collection agent")) return "Collection Agent";
+  if (note.includes("sales")) return "Sales Guy";
+  return payment.createdBy || fallback;
+}
+
+function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const margin = 12;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const contentWidth = pageWidth - margin * 2;
+  const todayKey = indiaDateKey();
+  const visibleGroups = groupSalesOrders(orders)
+    .filter((group) => {
+      const createdToday = Boolean(group.lines[0] && indiaDateKey(group.lines[0].createdAt) === todayKey);
+      const collectedToday = snapshot.payments.some((payment) => payment.side === "Sales" && payment.linkedOrderId === group.id && indiaDateKey(payment.createdAt) === todayKey);
+      return createdToday || collectedToday;
+    })
+    .map((group) => {
+      const first = group.lines[0];
+      const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
+      const payments = snapshot.payments
+        .filter((item) => item.side === "Sales" && item.linkedOrderId === group.id)
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+      const latestPayment = payments[0];
+      return {
+        id: group.id,
+        createdAt: first.createdAt,
+        party: first.shopName || "Customer",
+        salesman: first.salesmanName || "N/A",
+        orderMode: first.paymentMode || "N/A",
+        cashTiming: first.cashTiming || "",
+        total: ledger?.goodsValue ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
+        paid: ledger?.paidAmount ?? 0,
+        pending: ledger?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
+        paymentStatus: salesPaymentStatus(snapshot, group.id),
+        collector: latestPayment ? dailySalesCollectorLabel(latestPayment) : "Pending",
+        collectorMode: latestPayment?.mode || first.paymentMode || "N/A",
+        lines: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")
+      };
+    })
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const eligiblePayments = snapshot.payments.filter((payment) =>
+    payment.side === "Sales" &&
+    ["Submitted", "Verified", "Resolved"].includes(payment.verificationStatus) &&
+    visibleGroups.some((group) => group.id === payment.linkedOrderId)
+  );
+  const modeTotals = ["Cash", "UPI", "NEFT", "Card", "Cheque"] as PaymentMode[];
+  const totalsByMode = modeTotals
+    .map((mode) => ({
+      mode,
+      value: eligiblePayments.filter((payment) => payment.mode === mode).reduce((sum, payment) => sum + payment.amount, 0)
+    }))
+    .filter((item) => item.value > 0);
+  const timingTotals = (["At Delivery", "In Hand", "Later"] as CashTiming[])
+    .map((timing) => ({
+      timing,
+      count: visibleGroups.filter((group) => group.orderMode === "Cash" && group.cashTiming === timing).length,
+      value: visibleGroups.filter((group) => group.orderMode === "Cash" && group.cashTiming === timing).reduce((sum, group) => sum + group.total, 0)
+    }))
+    .filter((item) => item.count > 0 || item.value > 0);
+  const totalBilled = visibleGroups.reduce((sum, item) => sum + item.total, 0);
+  const totalPaid = visibleGroups.reduce((sum, item) => sum + item.paid, 0);
+  const totalPending = visibleGroups.reduce((sum, item) => sum + item.pending, 0);
+  let y = 16;
+  const ensureSpace = (height: number) => {
+    if (y + height <= pageHeight - 12) return;
+    doc.addPage();
+    y = 14;
+  };
+  doc.setFillColor(15, 118, 110);
+  doc.roundedRect(margin, y, contentWidth, 24, 4, 4, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Daily Sales Report", margin + 4, y + 8);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Date: ${todayKey} | SO count: ${visibleGroups.length}`, margin + 4, y + 15);
+  doc.text("Per-SO sales, collections, pending, and mode-wise totals", margin + 4, y + 20);
+  y += 30;
+  const summaryCards = [
+    { label: "Total Sales", value: formatMoney(totalBilled) },
+    { label: "Collected", value: formatMoney(totalPaid) },
+    { label: "Pending", value: formatMoney(totalPending) }
+  ];
+  const cardWidth = (contentWidth - 8) / 3;
+  summaryCards.forEach((item, index) => {
+    const x = margin + index * (cardWidth + 4);
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(206, 215, 224);
+    doc.roundedRect(x, y, cardWidth, 18, 3, 3, "FD");
+    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(8);
+    doc.text(item.label.toUpperCase(), x + 3, y + 5);
+    doc.setTextColor(15, 23, 42);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text(item.value, x + 3, y + 13);
+  });
+  y += 24;
+  if (totalsByMode.length > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Collected By Mode", margin, y);
+    y += 6;
+    totalsByMode.forEach((item) => {
+      ensureSpace(7);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(item.mode, margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(formatMoney(item.value), pageWidth - margin, y, { align: "right" });
+      y += 6;
+    });
+    y += 3;
+  }
+  if (timingTotals.length > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Sales Timing", margin, y);
+    y += 6;
+    timingTotals.forEach((item) => {
+      ensureSpace(7);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(`${item.timing} (${item.count})`, margin, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(formatMoney(item.value), pageWidth - margin, y, { align: "right" });
+      y += 6;
+    });
+    y += 3;
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Sales Orders", margin, y);
+  y += 7;
+  for (const item of visibleGroups) {
+    ensureSpace(28);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y, contentWidth, 24, 3, 3, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`${item.id} | ${item.party}`, margin + 3, y + 6);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`${formatShortDate(item.createdAt)} | Salesman: ${item.salesman} | Collector: ${item.collector}`, margin + 3, y + 11);
+    doc.text(`Mode: ${item.collectorMode} | Order mode: ${item.orderMode}${item.cashTiming ? ` / ${item.cashTiming}` : ""} | Status: ${item.paymentStatus}`, margin + 3, y + 16);
+    const lineText = doc.splitTextToSize(`Items: ${item.lines}`, contentWidth - 8);
+    doc.text(lineText, margin + 3, y + 21);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Total ${formatMoney(item.total)} | Paid ${formatMoney(item.paid)} | Pending ${formatMoney(item.pending)}`, pageWidth - margin - 3, y + 6, { align: "right" });
+    y += 28;
+  }
+  return doc.output("blob");
+}
+
+function downloadDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
+  const blob = buildDailySalesReportPdf(snapshot, orders);
+  downloadBlobFile(safePdfFileName(`daily-sales-report-${indiaDateKey()}.pdf`), blob);
+}
+
+function scopedDailySalesOrders(snapshot: AppSnapshot, currentUser: AppUser) {
+  const roles = userRoleList(currentUser);
+  const salesGroups = groupSalesOrders(snapshot.salesOrders);
+  if (roles.includes("Collection Agent")) {
+    const visibleGroupIds = new Set(salesGroups.filter((group) => collectionVisibleToUser(snapshot, group, currentUser)).map((group) => group.id));
+    const collectedTodayIds = new Set(
+      snapshot.payments
+        .filter((payment) => payment.side === "Sales" && indiaDateKey(payment.createdAt) === indiaDateKey() && dailySalesCollectorLabel(payment) === "Collection Agent")
+        .map((payment) => payment.linkedOrderId)
+    );
+    return snapshot.salesOrders.filter((order) => visibleGroupIds.has(orderPublicId(order)) || collectedTodayIds.has(orderPublicId(order)));
+  }
+  if (roles.includes("Out Delivery") || roles.includes("Delivery")) {
+    const assignedOrderIds = new Set(
+      deliveryTasksForUser(snapshot, currentUser)
+        .filter((task) => task.side === "Sales")
+        .flatMap((task) => task.routeStops.map((stop) => stop.orderId))
+    );
+    return snapshot.salesOrders.filter((order) => assignedOrderIds.has(orderPublicId(order)));
+  }
+  if (roles.includes("Sales")) {
+    return snapshot.salesOrders.filter((order) => order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName);
+  }
+  return snapshot.salesOrders;
+}
+
+function downloadHomeDailySalesReportPdf(snapshot: AppSnapshot, currentUser: AppUser) {
+  downloadDailySalesReportPdf(snapshot, scopedDailySalesOrders(snapshot, currentUser));
+}
+
 function countGroupedOrders(orders: Array<{ id: string; cartId?: string }>) {
   return new Set(orders.map((order) => order.cartId || order.id)).size;
 }
@@ -1248,7 +1456,24 @@ function collectionAssignment(snapshot: AppSnapshot, orderId: string) {
   return latest.note.replace(/^Collection assignment:\s*/i, "").trim();
 }
 
+function groupSalesCashTiming(group: { lines: SalesOrder[] }) {
+  return group.lines[0]?.cashTiming || "";
+}
+
+function salesCollectionHandledByDelivery(group: { lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  return first?.deliveryMode === "Delivery" && first?.paymentMode === "Cash" && first?.cashTiming === "At Delivery";
+}
+
+function salesCollectionEligibleForAgent(group: { lines: SalesOrder[] }) {
+  const first = group.lines[0];
+  if (!first) return false;
+  if (first.paymentMode !== "Cash") return true;
+  return first.cashTiming === "Later";
+}
+
 function collectionVisibleToUser(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }, user: AppUser) {
+  if (!salesCollectionEligibleForAgent(group)) return false;
   const assignedCollector = collectionAssignment(snapshot, group.id);
   const userNames = [user.fullName, user.username].map((value) => value.trim().toLowerCase()).filter(Boolean);
   const ownsOrder = group.lines.some((line) => line.salesmanId === user.id || line.salesmanName === user.fullName);
@@ -2291,7 +2516,7 @@ function App() {
             ))}
           </section> : null}
 
-          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={setActiveView} /> : null}
+          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={setActiveView} onDownloadSalesDsr={() => downloadHomeDailySalesReportPdf(snapshot, currentUser)} /> : null}
           {activeView === "Users" ? <TwoCol left={<Panel title="Create User" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/users", { ...userForm, role: userForm.roles[0], roles: userForm.roles }, "User created.", () => setUserForm({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"], warehouseIds: [], password: "1234" })); }}><label>Username<input value={userForm.username} onChange={(e) => setUserForm((c) => ({ ...c, username: e.target.value }))} /></label><label>Name<input value={userForm.fullName} onChange={(e) => setUserForm((c) => ({ ...c, fullName: e.target.value }))} /></label><label>Mobile<input value={userForm.mobileNumber} onChange={(e) => setUserForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Roles<select multiple value={userForm.roles} onChange={(e) => setUserForm((c) => ({ ...c, roles: Array.from(e.target.selectedOptions).map((option) => option.value as UserRole) }))}>{userRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Warehouses<select multiple value={userForm.warehouseIds} onChange={(e) => setUserForm((c) => ({ ...c, warehouseIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label><label>Password<input value={userForm.password} onChange={(e) => setUserForm((c) => ({ ...c, password: e.target.value }))} /></label><button className="primary-button" type="submit">Create user</button></form></Panel>} right={<Panel title="Users" eyebrow="Directory"><DataTable headers={["Username","Name","Roles","Warehouses","Mobile"]} rows={snapshot.users.map((u) => [u.username, u.fullName, (u.roles && u.roles.length > 0 ? u.roles : [u.role]).join(", "), (u.warehouseIds || []).join(", ") || "All", u.mobileNumber])} /></Panel>} /> : null}
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
@@ -3680,6 +3905,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <option value="">Select</option>
                       <option>In Hand</option>
                       <option>At Delivery</option>
+                      {!isPurchase ? <option>Later</option> : null}
                     </select>
                   </label> : null}
                   <label className={cartErrors.deliveryMode ? "field-error" : ""}>
@@ -3779,6 +4005,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       <select value={advancePayment.cashTiming} onChange={(e) => setAdvancePayment((current) => ({ ...current, cashTiming: e.target.value }))}>
                         <option>In Hand</option>
                         <option>At Delivery</option>
+                        {!isPurchase ? <option>Later</option> : null}
                       </select>
                     </label> : null}
                     {advancePayment.mode && advancePayment.mode !== "Cash" ? <label>
@@ -4381,6 +4608,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
     return !task || isDeliveryTaskPending(task);
   }).length;
   const collectionPendingCount = groups.filter((group) => {
+    if (!salesCollectionEligibleForAgent(group)) return false;
     const ledger = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
     return (ledger?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id)) > 0;
   }).length;
@@ -4582,7 +4810,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                   <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
                 </select></label>
                 <label>Date<input type="date" value={draft.operationDate} onChange={(e) => setCollectionDraftValue(group.id, "operationDate", e.target.value)} /></label>
-                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option><option>Later</option></select></label> : null}
                 <div className="payment-card-actions wide-field">
                   <button className="ghost-button" type="button" onClick={() => setCollectionDraftValue(group.id, "amount", group.pendingAmount.toFixed(2))}>Set full</button>
                   <button className="primary-button" type="button" disabled={collectedAmount <= 0} onClick={() => void onCreatePayment({
@@ -4590,7 +4818,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                     linkedOrderId: group.id,
                     amount: collectedAmount,
                     mode: draft.mode,
-                    cashTiming: draft.mode === "Cash" ? draft.cashTiming as "In Hand" | "At Delivery" : undefined,
+                    cashTiming: draft.mode === "Cash" ? draft.cashTiming as CashTiming : undefined,
                     referenceNumber: draft.mode === "Cash" ? `COL-${group.id}` : "",
                     verificationStatus: "Submitted",
                     verificationNote: `${roles.includes("Collection Agent") ? "Collected by collection agent" : "Collected by sales"} from ${group.shopName}`,
@@ -5270,7 +5498,7 @@ function SalesPaymentsView({
                   linkedOrderId: group.id,
                   amount: Number(draft.amount || 0),
                   mode: draft.mode,
-                  cashTiming: draft.mode === "Cash" ? draft.cashTiming as "In Hand" | "At Delivery" : undefined,
+                  cashTiming: draft.mode === "Cash" ? draft.cashTiming as CashTiming : undefined,
                   referenceNumber: draft.referenceNumber,
                   voucherNumber: draft.voucherNumber || undefined,
                   utrNumber: draft.utrNumber || undefined,
@@ -5285,7 +5513,7 @@ function SalesPaymentsView({
                   <option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option>
                 </select></label>
                 <label>Date<input type="date" value={draft.operationDate} onChange={(e) => setCollectionDraftValue(group.id, "operationDate", e.target.value)} /></label>
-                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+                {draft.mode === "Cash" ? <label>Cash timing<select value={draft.cashTiming} onChange={(e) => setCollectionDraftValue(group.id, "cashTiming", e.target.value)}><option value="">Select</option><option>In Hand</option><option>At Delivery</option><option>Later</option></select></label> : null}
                 <label>Reference<input value={draft.referenceNumber} onChange={(e) => setCollectionDraftValue(group.id, "referenceNumber", e.target.value)} placeholder={draft.mode === "Cash" ? "Receipt / slip no." : "Reference no."} /></label>
                 <label>Voucher<input value={draft.voucherNumber} onChange={(e) => setCollectionDraftValue(group.id, "voucherNumber", e.target.value)} /></label>
                 <label>UTR<input value={draft.utrNumber} onChange={(e) => setCollectionDraftValue(group.id, "utrNumber", e.target.value)} placeholder="For bank receipt / transfer" /></label>
@@ -5571,7 +5799,7 @@ function AccountsPaymentsView({
             linkedOrderId: createForm.linkedOrderId,
             amount: Number(createForm.amount || 0),
             mode: createForm.mode,
-            cashTiming: createForm.mode === "Cash" ? createForm.cashTiming as "In Hand" | "At Delivery" : undefined,
+            cashTiming: createForm.mode === "Cash" ? createForm.cashTiming as CashTiming : undefined,
             referenceNumber: createForm.referenceNumber,
             voucherNumber: createForm.voucherNumber || undefined,
             utrNumber: createForm.utrNumber || undefined,
@@ -5593,7 +5821,7 @@ function AccountsPaymentsView({
           <label>Amount<input type="number" step="any" value={createForm.amount} onChange={(e) => setCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
           <label>Payment date<input type="date" value={createForm.operationDate} onChange={(e) => setCreateForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
           <label>Mode<select value={createForm.mode} onChange={(e) => setCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
-          {createForm.mode === "Cash" ? <label>Cash timing<select value={createForm.cashTiming} onChange={(e) => setCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+          {createForm.mode === "Cash" ? <label>Cash timing<select value={createForm.cashTiming} onChange={(e) => setCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option>{createForm.side === "Sales" ? <option>Later</option> : null}</select></label> : null}
           <label>Reference<input value={createForm.referenceNumber} onChange={(e) => setCreateForm((current) => ({ ...current, referenceNumber: e.target.value }))} /></label>
           <label>Voucher<input value={createForm.voucherNumber} onChange={(e) => setCreateForm((current) => ({ ...current, voucherNumber: e.target.value }))} /></label>
           <label>UTR<input value={createForm.utrNumber} onChange={(e) => setCreateForm((current) => ({ ...current, utrNumber: e.target.value }))} /></label>
@@ -5778,6 +6006,7 @@ function WarehouseOperationsView({
         <div className="stack-list payment-update-list">
           {outgoingOrders.length === 0 ? <div className="empty-card">No outgoing orders pending.</div> : outgoingOrders.map((order) => {
             const paymentPending = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === orderPublicId(order))?.pendingAmount ?? order.totalAmount;
+            const deliveryCollectsCash = order.paymentMode === "Cash" && order.cashTiming === "At Delivery";
             const hasVerifiedPayment = snapshot.payments.some((item) => item.side === "Sales" && item.linkedOrderId === orderPublicId(order) && item.verificationStatus === "Verified");
             const draft = outgoingDrafts[order.id] || { containerWeightKg: "0", weighingProofName: "", assignedTo: deliveryUsers[0]?.username || "delivery" };
             return <article className="list-card payment-update-card" key={order.id}>
@@ -5802,7 +6031,7 @@ function WarehouseOperationsView({
               </div>
               <div className="payment-card-actions">
                 <button className="ghost-button" type="button" onClick={() => void onUpdateSalesOrder(order.id, { rate: order.rate, paymentMode: order.paymentMode, cashTiming: order.cashTiming, deliveryMode: order.deliveryMode, note: order.note || "Packed by warehouse", status: "Ready for Dispatch", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })}>SO docket ready</button>
-                <button className="ghost-button" type="button" onClick={() => void onCreateDeliveryTask({ side: "Sales", linkedOrderId: orderPublicId(order), linkedOrderIds: [orderPublicId(order)], mode: order.deliveryMode, from: order.warehouseId, to: order.shopName, assignedTo: draft.assignedTo, paymentAction: paymentPending > 0 ? "Collect Payment" : "None", cashCollectionRequired: paymentPending > 0, status: "Planned" })}>Tag outbound delivery</button>
+                <button className="ghost-button" type="button" onClick={() => void onCreateDeliveryTask({ side: "Sales", linkedOrderId: orderPublicId(order), linkedOrderIds: [orderPublicId(order)], mode: order.deliveryMode, from: order.warehouseId, to: order.shopName, assignedTo: draft.assignedTo, paymentAction: deliveryCollectsCash && paymentPending > 0 ? "Collect Payment" : "None", cashCollectionRequired: deliveryCollectsCash && paymentPending > 0, status: "Planned" })}>Tag outbound delivery</button>
                 <button className="primary-button" type="button" onClick={() => void onUpdateSalesOrder(order.id, { rate: order.rate, paymentMode: order.paymentMode, cashTiming: order.cashTiming, deliveryMode: order.deliveryMode, note: `${order.note || ""} Handed over by warehouse.`.trim(), status: "Delivered", containerWeightKg: Number(draft.containerWeightKg || 0), weighingProofName: draft.weighingProofName || undefined })}>Finalize delivered</button>
               </div>
             </article>;
@@ -6944,6 +7173,7 @@ function WarehouseOperationsViewV2({
                   const first = group.lines[0];
                   const customer = customerById.get(first.shopId);
                   const pendingAmount = snapshot.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id)?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id);
+                  const deliveryCollectsCash = first.paymentMode === "Cash" && first.cashTiming === "At Delivery";
                   return {
                     orderId: group.id,
                     supplierId: first.shopId,
@@ -6951,8 +7181,8 @@ function WarehouseOperationsViewV2({
                     productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", "),
                     warehouseId: first.warehouseId,
                     warehouseName: warehouseById.get(first.warehouseId)?.name || first.warehouseId,
-                    amountToPay: pendingAmount,
-                    paymentRequired: pendingAmount > 0,
+                    amountToPay: deliveryCollectsCash && pendingAmount > 0 ? pendingAmount : 0,
+                    paymentRequired: deliveryCollectsCash && pendingAmount > 0,
                     paymentMode: first.paymentMode,
                     cashTiming: first.cashTiming,
                     latitude: customer?.latitude,
@@ -6977,7 +7207,7 @@ function WarehouseOperationsViewV2({
                   to: routeStops.map((stop) => stop.supplierName).join(", "),
                   assignedTo: outboundTransportType === "External" ? outboundExternalVehicleNumber : outboundAssignedTo.join(", "),
                   paymentAction: routeStops.some((stop) => stop.paymentRequired) ? "Collect Payment" : "None",
-                  cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash"),
+                  cashCollectionRequired: routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.cashTiming === "At Delivery"),
                   routeHint: routeStops.map((stop) => stop.locationLabel || stop.supplierName).join(" -> "),
                   routeStops,
                   status: "Planned"
@@ -7761,12 +7991,13 @@ function DeliveryManagerHome({
   );
 }
 
-function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: AppSnapshot; currentUser: AppUser; simpleMode: boolean; onOpen: (view: ViewKey) => void }) {
+function Overview({ snapshot, currentUser, simpleMode, onOpen, onDownloadSalesDsr }: { snapshot: AppSnapshot; currentUser: AppUser; simpleMode: boolean; onOpen: (view: ViewKey) => void; onDownloadSalesDsr: () => void }) {
   const roles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
   if (roles.includes("Accounts") && !simpleMode) {
     return <AccountsOverview snapshot={snapshot} onOpen={onOpen} />;
   }
   const taskCards = homeTaskCards(snapshot, currentUser);
+  const showDailySalesReport = roles.includes("Sales") || roles.includes("Collection Agent") || roles.includes("Out Delivery") || roles.includes("Delivery");
   const quickActions: Array<{ title: string; text: string; view: ViewKey }> = [];
   if (roles.includes("Admin")) {
     quickActions.push({ title: "Products", text: "Manage product master and pricing.", view: "Products" });
@@ -7819,6 +8050,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
                 <span>{action.text}</span>
               </button>
             ))}
+            {showDailySalesReport ? <button type="button" className="simple-action-card" onClick={onDownloadSalesDsr}>
+              <strong>Daily Sales PDF</strong>
+              <span>Download today&apos;s scoped DSR for your role.</span>
+            </button> : null}
           </div>
         </Panel>
         <Panel title="Today" eyebrow="Quick summary">
@@ -7836,6 +8071,7 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen }: { snapshot: App
         <div className="simple-summary payment-summary-grid">
           {taskCards.map((card) => <div className="list-card" key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
         </div>
+        {showDailySalesReport ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={onDownloadSalesDsr}>Daily Sales PDF</button></div> : null}
       </Panel>
       <Panel title="Purchase Orders" eyebrow="Inbound"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel>
       <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
@@ -8683,7 +8919,10 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
     });
   return (
     <Panel title="Sales Report" eyebrow="Oldest unsettled first">
-      <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button></div>
+      <div className="payment-card-actions">
+        <button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button>
+        {snapshot ? <button className="ghost-button" type="button" onClick={() => downloadDailySalesReportPdf(snapshot, orders)}>Daily PDF</button> : null}
+      </div>
       <div className="report-accordion-list">
         {groups.length === 0 ? <div className="empty-card">No sales orders yet.</div> : groups.map((item) => {
           const open = openId === item.id;
