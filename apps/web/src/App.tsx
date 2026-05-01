@@ -251,6 +251,89 @@ function downloadCsvFile(fileName: string, headers: string[], rows: Array<Array<
   window.URL.revokeObjectURL(url);
 }
 
+function safeDateToken(value: string) {
+  return value.replace(/[^\d-]/g, "") || indiaDateKey();
+}
+
+function dateRangeFileToken(fromDate: string, toDate: string) {
+  const normalized = normalizeDateRange(fromDate, toDate);
+  return normalized.fromDate === normalized.toDate
+    ? safeDateToken(normalized.fromDate)
+    : `${safeDateToken(normalized.fromDate)}-to-${safeDateToken(normalized.toDate)}`;
+}
+
+function gstBillTypeLabel(gstRate: GstRate) {
+  return gstRate === "NA" || Number(gstRate) === 0 ? "Non GST" : "GST";
+}
+
+function gstRateExportValue(gstRate: GstRate) {
+  return gstRate === "NA" ? 0 : Number(gstRate || 0);
+}
+
+function buildTablePdfBlob(title: string, subtitleLines: string[], headers: string[], rows: Array<Array<string | number>>) {
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  const contentWidth = pageWidth - margin * 2;
+  const colWidth = contentWidth / Math.max(headers.length, 1);
+  const lineHeight = 4;
+  let cursorY = 14;
+
+  const ensurePage = (nextHeight: number) => {
+    if (cursorY + nextHeight <= pageHeight - margin) return;
+    doc.addPage("a4", "landscape");
+    cursorY = 14;
+    drawHeaderRow();
+  };
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.setTextColor(15, 23, 42);
+  doc.text(title, margin, cursorY);
+  cursorY += 7;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  subtitleLines.forEach((line) => {
+    doc.text(line, margin, cursorY);
+    cursorY += 4;
+  });
+  cursorY += 2;
+
+  const drawHeaderRow = () => {
+    doc.setFillColor(232, 245, 245);
+    doc.rect(margin, cursorY, contentWidth, 8, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    headers.forEach((header, index) => {
+      const x = margin + index * colWidth + 1.5;
+      const text = doc.splitTextToSize(header, colWidth - 3).slice(0, 2);
+      doc.text(text, x, cursorY + 3.5);
+    });
+    cursorY += 8;
+  };
+
+  drawHeaderRow();
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  rows.forEach((row) => {
+    const cells = row.map((value) => doc.splitTextToSize(String(value ?? ""), colWidth - 3).slice(0, 3));
+    const rowHeight = Math.max(...cells.map((cell) => Math.max(cell.length, 1))) * lineHeight + 2;
+    ensurePage(rowHeight);
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(margin, cursorY, contentWidth, rowHeight);
+    cells.forEach((cell, index) => {
+      const x = margin + index * colWidth + 1.5;
+      doc.text(cell.length > 0 ? cell : [""], x, cursorY + 3.5);
+    });
+    cursorY += rowHeight;
+  });
+
+  return doc.output("blob");
+}
+
 function formatCurrencyInr(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -270,7 +353,33 @@ function formatShortDate(value?: string) {
   if (!value) return "Pending";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Pending";
-  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" });
+}
+
+function formatDateTimeIst(value?: string) {
+  if (!value) return "Pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Pending";
+  return date.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatDateIst(value?: string) {
+  if (!value) return "Pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Pending";
+  return date.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
 }
 
 function formatMoney(value: number) {
@@ -1172,6 +1281,21 @@ function indiaYesterdayDateKey() {
   return indiaDateKey(now);
 }
 
+function normalizeDateRange(fromDate: string, toDate: string) {
+  if (!fromDate && !toDate) {
+    const today = indiaDateKey();
+    return { fromDate: today, toDate: today };
+  }
+  if (!fromDate) return { fromDate: toDate, toDate };
+  if (!toDate) return { fromDate, toDate: fromDate };
+  return fromDate <= toDate ? { fromDate, toDate } : { fromDate: toDate, toDate: fromDate };
+}
+
+function dateKeyInRange(dateKey: string, fromDate: string, toDate: string) {
+  const normalized = normalizeDateRange(fromDate, toDate);
+  return dateKey >= normalized.fromDate && dateKey <= normalized.toDate;
+}
+
 function dailySalesCollectorLabel(payment?: PaymentRecord, fallback = "Pending") {
   if (!payment) return fallback;
   const note = `${payment.verificationNote || ""} ${payment.createdBy || ""}`.toLowerCase();
@@ -1398,6 +1522,10 @@ function groupOldestCreatedAt<T extends { createdAt: string }>(lines: T[]) {
   return Math.min(...lines.map((line) => new Date(line.createdAt).getTime()));
 }
 
+function groupNewestCreatedAt<T extends { createdAt: string }>(lines: T[]) {
+  return Math.max(...lines.map((line) => new Date(line.createdAt).getTime()));
+}
+
 function isOpenPurchaseOrder(order: PurchaseOrder) {
   return order.status !== "Received" && order.status !== "Closed" && order.status !== "Cancelled";
 }
@@ -1572,9 +1700,17 @@ function purchaseDeliveryTask(snapshot: AppSnapshot, orderId: string) {
   return snapshot.deliveryTasks.find((task) => task.side === "Purchase" && [task.linkedOrderId, ...task.linkedOrderIds].includes(orderId));
 }
 
+function purchaseNeedsInternalPickup(lines: PurchaseOrder[]) {
+  return lines.some((line) => line.deliveryMode === "Self Collection");
+}
+
 function purchaseDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
   const task = purchaseDeliveryTask(snapshot, orderId);
-  if (!task) return "Delivery not assigned";
+  if (!task) {
+    const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
+    if (lines.length === 0) return "Delivery not assigned";
+    return purchaseNeedsInternalPickup(lines) ? "Pickup not assigned" : "Vendor delivery";
+  }
   return `${deliveryTaskStatusLabel(task)}${task.assignedTo ? ` to ${task.assignedTo}` : ""}`;
 }
 
@@ -1584,6 +1720,287 @@ function statusPillClass(status: string) {
   if (normalized.includes("pending") || normalized.includes("partial") || normalized.includes("cash with delivery")) return "status-pending";
   if (normalized.includes("completed") || normalized.includes("received") || normalized.includes("delivered") || normalized.includes("verified") || normalized.includes("closed")) return "status-verified";
   return "status-pending";
+}
+
+function purchaseOrderExportHeaders() {
+  return ["Date", "PO Number", "Supplier", "Product", "Purchase Price", "Sale Price", "Qty Ordered", "Qty Received", "GST Bill", "GST %", "Taxable", "GST Amount", "Total", "Payment Mode", "Cash Timing", "Delivery Mode", "Delivery Status", "Warehouse Status", "Order Status", "Warehouse"];
+}
+
+function purchaseOrderExportRows(snapshot: AppSnapshot, groups: Array<{ id: string; lines: PurchaseOrder[] }>) {
+  return groups.flatMap((group) => group.lines.map((line) => [
+    indiaDateKey(line.createdAt),
+    group.id,
+    line.supplierName,
+    line.productSku,
+    line.rate,
+    "",
+    line.quantityOrdered,
+    line.quantityReceived,
+    gstBillTypeLabel(line.gstRate),
+    gstRateExportValue(line.gstRate),
+    line.taxableAmount,
+    line.gstAmount,
+    line.totalAmount,
+    line.paymentMode,
+    line.cashTiming || "",
+    line.deliveryMode,
+    purchaseDeliveryStatus(snapshot, group.id),
+    purchaseWarehouseStatus(group.lines),
+    line.status,
+    snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId
+  ]));
+}
+
+function salesOrderExportHeaders() {
+  return ["Date", "SO Number", "Customer", "Product", "Purchase Price", "Sale Price", "Qty", "GST Bill", "GST %", "Taxable", "GST Amount", "Delivery", "Total", "Payment Mode", "Cash Timing", "Delivery Mode", "Delivery Status", "Payment Status", "Order Status", "Warehouse"];
+}
+
+function salesOrderExportRows(snapshot: AppSnapshot, groups: Array<{ id: string; lines: SalesOrder[] }>) {
+  return groups.flatMap((group) => group.lines.map((line) => [
+    indiaDateKey(line.createdAt),
+    group.id,
+    line.shopName,
+    line.productSku,
+    "",
+    line.rate,
+    line.quantity,
+    gstBillTypeLabel(line.gstRate),
+    gstRateExportValue(line.gstRate),
+    line.taxableAmount,
+    line.gstAmount,
+    line.deliveryCharge,
+    line.totalAmount + line.deliveryCharge,
+    line.paymentMode,
+    line.cashTiming || "",
+    line.deliveryMode,
+    salesDeliveryStatus(snapshot, group.id),
+    salesPaymentStatus(snapshot, group.id),
+    line.status,
+    snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId
+  ]));
+}
+
+function deliveryTaskExportHeaders() {
+  return ["Created Date", "Task ID", "Side", "Task Status", "Assigned To", "Mode", "Transport", "Vehicle", "From", "To", "Order IDs", "Party", "Product Summary", "Warehouse", "Payment Action", "Cash Required", "Reached", "Checked", "Paid", "Picked"];
+}
+
+function deliveryTaskExportRows(tasks: DeliveryTask[]) {
+  return tasks.flatMap((task) => {
+    if (task.routeStops.length === 0) {
+      return [[
+        indiaDateKey(task.createdAt),
+        task.id,
+        task.side,
+        task.status,
+        task.assignedTo,
+        task.mode,
+        task.transportType,
+        task.vehicleNumber || "",
+        task.from,
+        task.to,
+        task.linkedOrderIds.join(" | "),
+        "",
+        "",
+        "",
+        task.paymentAction,
+        task.cashCollectionRequired ? "Yes" : "No",
+        "",
+        "",
+        "",
+        ""
+      ]];
+    }
+    return task.routeStops.map((stop) => [
+      indiaDateKey(task.createdAt),
+      task.id,
+      task.side,
+      task.status,
+      task.assignedTo,
+      task.mode,
+      task.transportType,
+      task.vehicleNumber || "",
+      task.from,
+      task.to,
+      stop.orderId || task.linkedOrderIds.join(" | "),
+      stop.supplierName || "",
+      stop.productSummary || "",
+      stop.warehouseName || stop.warehouseId || "",
+      task.paymentAction,
+      stop.paymentRequired ? "Yes" : "No",
+      stop.reached ? "Yes" : "No",
+      stop.checked ? "Yes" : "No",
+      stop.paid ? "Yes" : "No",
+      stop.picked ? "Yes" : "No"
+    ]);
+  });
+}
+
+function inboundOpsExportHeaders() {
+  return ["Date", "Flow", "Record Type", "Task ID", "PO Number", "Supplier", "Product", "Qty Ordered", "Qty Received", "Qty Pending", "Rate", "GST Bill", "GST %", "Taxable", "GST Amount", "Total", "Warehouse", "Mode", "Assigned To", "Task Status", "Warehouse Status", "Payment Status"];
+}
+
+function inboundOpsExportRows(
+  snapshot: AppSnapshot,
+  directGroups: Array<{ id: string; lines: PurchaseOrder[] }>,
+  taskItems: Array<{ task: DeliveryTask; groups: Array<{ id: string; lines: PurchaseOrder[] }> }>
+) {
+  const directRows = directGroups.flatMap((group) => group.lines.map((line) => [
+    indiaDateKey(new Date(groupNewestCreatedAt(group.lines))),
+    "Inbound",
+    "Direct Receive",
+    "",
+    group.id,
+    line.supplierName,
+    line.productSku,
+    line.quantityOrdered,
+    line.quantityReceived,
+    Math.max(line.quantityOrdered - line.quantityReceived, 0),
+    line.rate,
+    gstBillTypeLabel(line.gstRate),
+    gstRateExportValue(line.gstRate),
+    line.taxableAmount,
+    line.gstAmount,
+    line.totalAmount,
+    snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId,
+    line.deliveryMode,
+    "",
+    "Direct warehouse receive",
+    purchaseWarehouseStatus(group.lines),
+    purchasePaymentStatus(snapshot, group.id)
+  ]));
+  const taskRows = taskItems.flatMap((item) => item.groups.flatMap((group) => group.lines.map((line) => [
+    indiaDateKey(item.task.createdAt),
+    "Inbound",
+    "Task",
+    item.task.id,
+    group.id,
+    line.supplierName,
+    line.productSku,
+    line.quantityOrdered,
+    line.quantityReceived,
+    Math.max(line.quantityOrdered - line.quantityReceived, 0),
+    line.rate,
+    gstBillTypeLabel(line.gstRate),
+    gstRateExportValue(line.gstRate),
+    line.taxableAmount,
+    line.gstAmount,
+    line.totalAmount,
+    snapshot.warehouses.find((warehouse) => warehouse.id === line.warehouseId)?.name || line.warehouseId,
+    item.task.mode,
+    item.task.assignedTo,
+    item.task.status,
+    purchaseWarehouseStatus(group.lines),
+    purchasePaymentStatus(snapshot, group.id)
+  ])));
+  return [...taskRows, ...directRows];
+}
+
+function outboundOpsExportHeaders() {
+  return ["Date", "Flow", "Record Type", "Task ID", "SO Number", "Customer", "Product", "Qty", "Purchase Price", "Sale Price", "GST Bill", "GST %", "Taxable", "GST Amount", "Delivery Charge", "Total", "Warehouse", "Mode", "Assigned To", "Task Status", "Payment Action", "Cash Required", "Delivery Status", "Payment Status"];
+}
+
+function outboundOpsExportRows(
+  snapshot: AppSnapshot,
+  directGroups: Array<{ id: string; lines: SalesOrder[] }>,
+  taskItems: Array<{ task: DeliveryTask }>
+) {
+  const directRows = directGroups.flatMap((group) => group.lines.map((line) => [
+    indiaDateKey(new Date(groupNewestCreatedAt(group.lines))),
+    "Outbound",
+    "Direct Dispatch",
+    "",
+    group.id,
+    line.shopName,
+    line.productSku,
+    line.quantity,
+    "",
+    line.rate,
+    gstBillTypeLabel(line.gstRate),
+    gstRateExportValue(line.gstRate),
+    line.taxableAmount,
+    line.gstAmount,
+    line.deliveryCharge,
+    line.totalAmount + line.deliveryCharge,
+    snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId,
+    line.deliveryMode,
+    "",
+    "Warehouse check",
+    "",
+    "",
+    salesDeliveryStatus(snapshot, group.id),
+    salesPaymentStatus(snapshot, group.id)
+  ]));
+  const taskRows = taskItems.flatMap((item) => {
+    if (item.task.routeStops.length === 0) {
+      return [[
+        indiaDateKey(item.task.createdAt),
+        "Outbound",
+        "Task",
+        item.task.id,
+        item.task.linkedOrderIds.join(" | "),
+        item.task.to,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        item.task.from,
+        item.task.mode,
+        item.task.assignedTo,
+        item.task.status,
+        item.task.paymentAction,
+        item.task.cashCollectionRequired ? "Yes" : "No",
+        "",
+        ""
+      ]];
+    }
+    return item.task.routeStops.map((stop) => {
+      const orderLines = snapshot.salesOrders.filter((order) => orderPublicId(order) === stop.orderId);
+      const first = orderLines[0];
+      return [
+      indiaDateKey(item.task.createdAt),
+      "Outbound",
+      "Task Stop",
+      item.task.id,
+      stop.orderId,
+      stop.supplierName,
+      stop.productSummary || first?.productSku || "",
+      orderLines.reduce((sum, line) => sum + line.quantity, 0),
+      "",
+      first?.rate ?? "",
+      first ? gstBillTypeLabel(first.gstRate) : "",
+      first ? gstRateExportValue(first.gstRate) : "",
+      orderLines.reduce((sum, line) => sum + line.taxableAmount, 0),
+      orderLines.reduce((sum, line) => sum + line.gstAmount, 0),
+      orderLines.reduce((sum, line) => sum + line.deliveryCharge, 0),
+      orderLines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0),
+      stop.warehouseName || stop.warehouseId || "",
+      item.task.mode,
+      item.task.assignedTo,
+      item.task.status,
+      item.task.paymentAction,
+      stop.paymentRequired ? "Yes" : "No",
+      salesDeliveryStatus(snapshot, stop.orderId),
+      salesPaymentStatus(snapshot, stop.orderId)
+    ];
+    });
+  });
+  return [...taskRows, ...directRows];
+}
+
+function downloadReportCsv(filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string) {
+  const token = dateRangeFileToken(fromDate, toDate);
+  downloadCsvFile(`${filePrefix}-${token}.csv`, headers, rows);
+}
+
+function downloadReportPdf(title: string, filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string, extraSubtitle: string[] = []) {
+  const token = dateRangeFileToken(fromDate, toDate);
+  const pdf = buildTablePdfBlob(title, [`From: ${fromDate}`, `To: ${toDate}`, `Rows: ${rows.length}`, ...extraSubtitle], headers, rows);
+  downloadBlobFile(safePdfFileName(`${filePrefix}-${token}.pdf`), pdf);
 }
 
 function salesStatusLabel(status: SalesStatus) {
@@ -4223,7 +4640,12 @@ function PurchaserPurchaseWorkspace({
 }
 
 function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
-  const allGroups = groupPurchaseOrders(orders).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const allGroups = groupPurchaseOrders(orders).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
+  const todayDate = indiaDateKey();
+  const yesterdayDate = indiaYesterdayDateKey();
+  const latestAvailableDate = allGroups.length > 0 ? indiaDateKey(new Date(groupNewestCreatedAt(allGroups[0].lines))) : todayDate;
+  const hasTodayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === todayDate);
+  const hasYesterdayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === yesterdayDate);
   const completedPayments = snapshot.payments
     .filter((item) => item.side === "Purchase" && (item.verificationStatus === "Verified" || item.verificationStatus === "Resolved"))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -4232,19 +4654,53 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
   const [openPaymentId, setOpenPaymentId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
-  const [selectedDate, setSelectedDate] = useState(indiaDateKey());
+  const [selectedFromDate, setSelectedFromDate] = useState(indiaDateKey());
+  const [selectedToDate, setSelectedToDate] = useState(indiaDateKey());
   const [customDateOpen, setCustomDateOpen] = useState(false);
-  const [customDateDraft, setCustomDateDraft] = useState(indiaDateKey());
-  const activeDate = datePreset === "today" ? indiaDateKey() : datePreset === "yesterday" ? indiaYesterdayDateKey() : selectedDate;
-  const groups = allGroups.filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate);
-  const pickupPendingCount = groups.filter((group) => purchaseDeliveryStatus(snapshot, group.id) === "Delivery not assigned" && purchaseWarehouseStatus(group.lines) !== "Received").length;
+  const [customFromDraft, setCustomFromDraft] = useState(indiaDateKey());
+  const [customToDraft, setCustomToDraft] = useState(indiaDateKey());
+  const activeRange = datePreset === "today"
+    ? { fromDate: todayDate, toDate: todayDate }
+    : datePreset === "yesterday"
+      ? { fromDate: yesterdayDate, toDate: yesterdayDate }
+      : normalizeDateRange(selectedFromDate, selectedToDate);
+  const groups = allGroups.filter((group) => dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate));
+  const pickupPendingCount = groups.filter((group) => !purchaseDeliveryTask(snapshot, group.id) && purchaseNeedsInternalPickup(group.lines) && purchaseWarehouseStatus(group.lines) !== "Received").length;
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
   const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
+  const exportRows = purchaseOrderExportRows(snapshot, filteredGroups);
   const filteredCompletedPayments = completedPayments.filter((payment) => {
     const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
-    return indiaDateKey(payment.createdAt) === activeDate && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
+    return dateKeyInRange(indiaDateKey(payment.createdAt), activeRange.fromDate, activeRange.toDate) && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
   });
+
+  useEffect(() => {
+    if (allGroups.length === 0) return;
+    if (datePreset === "today" && !hasTodayOrders) {
+      if (hasYesterdayOrders) {
+        setDatePreset("yesterday");
+        setSelectedFromDate(yesterdayDate);
+        setSelectedToDate(yesterdayDate);
+      } else {
+        setDatePreset("custom");
+        setSelectedFromDate(latestAvailableDate);
+        setSelectedToDate(latestAvailableDate);
+      }
+      return;
+    }
+    if (datePreset === "yesterday" && !hasYesterdayOrders) {
+      if (hasTodayOrders) {
+        setDatePreset("today");
+        setSelectedFromDate(todayDate);
+        setSelectedToDate(todayDate);
+      } else {
+        setDatePreset("custom");
+        setSelectedFromDate(latestAvailableDate);
+        setSelectedToDate(latestAvailableDate);
+      }
+    }
+  }, [allGroups, datePreset, hasTodayOrders, hasYesterdayOrders, latestAvailableDate, todayDate, yesterdayDate]);
 
   return (
     <section className="collapse-stack">
@@ -4253,18 +4709,22 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={paymentPendingCount} /></button>
       </div>
       <div className="date-filter-strip">
-        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedDate(indiaDateKey()); }}>Today</button>
-        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedDate(indiaYesterdayDateKey()); }}>Yesterday</button>
-        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomDateDraft(activeDate); setCustomDateOpen(true); }}>Custom Date</button>
+        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
+        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
+        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomFromDraft(activeRange.fromDate); setCustomToDraft(activeRange.toDate); setCustomDateOpen(true); }}>Custom Date</button>
       </div>
       <article className="list-card date-range-card">
         <div className="payment-meta-grid">
-          <div><span className="small-label">From</span><strong>{activeDate}</strong></div>
-          <div><span className="small-label">To</span><strong>{activeDate}</strong></div>
+          <div><span className="small-label">From</span><strong>{activeRange.fromDate}</strong></div>
+          <div><span className="small-label">To</span><strong>{activeRange.toDate}</strong></div>
         </div>
       </article>
       <div className="form-grid">
         <label className="wide-field">Search PO / supplier<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="PO number or supplier name" /></label>
+      </div>
+      <div className="payment-card-actions">
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("purchase-orders", purchaseOrderExportHeaders(), exportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Purchase Orders Report", "purchase-orders", purchaseOrderExportHeaders(), exportRows, activeRange.fromDate, activeRange.toDate, [`Orders: ${filteredGroups.length}`])}>Download PDF</button>
       </div>
       {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card purchase-summary-stats">
@@ -4352,18 +4812,28 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
         <div className="cart-sheet date-picker-sheet" onClick={(e) => e.stopPropagation()}>
           <div className="cart-head">
             <div>
-              <h3>Select date</h3>
-              <p>Choose purchase day and click done.</p>
+              <h3>Select date range</h3>
+              <p>Choose purchase from and to dates, then click done.</p>
             </div>
             <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Close</button>
           </div>
           <label>
-            Date
-            <input type="date" value={customDateDraft} onChange={(e) => setCustomDateDraft(e.target.value)} />
+            From
+            <input type="date" value={customFromDraft} onChange={(e) => setCustomFromDraft(e.target.value)} />
+          </label>
+          <label>
+            To
+            <input type="date" value={customToDraft} onChange={(e) => setCustomToDraft(e.target.value)} />
           </label>
           <div className="payment-card-actions">
             <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Cancel</button>
-            <button type="button" className="primary-button" onClick={() => { setSelectedDate(customDateDraft || indiaDateKey()); setDatePreset("custom"); setCustomDateOpen(false); }}>Done</button>
+            <button type="button" className="primary-button" onClick={() => {
+              const normalized = normalizeDateRange(customFromDraft || todayDate, customToDraft || customFromDraft || todayDate);
+              setSelectedFromDate(normalized.fromDate);
+              setSelectedToDate(normalized.toDate);
+              setDatePreset("custom");
+              setCustomDateOpen(false);
+            }}>Done</button>
           </div>
         </div>
       </div> : null}
@@ -4638,13 +5108,24 @@ function PurchaseCartEditor({
 }
 
 function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; }) {
-  const allGroups = groupSalesOrders(orders).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  const allGroups = groupSalesOrders(orders).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
+  const todayDate = indiaDateKey();
+  const yesterdayDate = indiaYesterdayDateKey();
+  const latestAvailableDate = allGroups.length > 0 ? indiaDateKey(new Date(groupNewestCreatedAt(allGroups[0].lines))) : todayDate;
+  const hasTodayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === todayDate);
+  const hasYesterdayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === yesterdayDate);
   const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
-  const [selectedDate, setSelectedDate] = useState(indiaDateKey());
+  const [selectedFromDate, setSelectedFromDate] = useState(indiaDateKey());
+  const [selectedToDate, setSelectedToDate] = useState(indiaDateKey());
   const [customDateOpen, setCustomDateOpen] = useState(false);
-  const [customDateDraft, setCustomDateDraft] = useState(indiaDateKey());
-  const activeDate = datePreset === "today" ? indiaDateKey() : datePreset === "yesterday" ? indiaYesterdayDateKey() : selectedDate;
-  const groups = allGroups.filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate);
+  const [customFromDraft, setCustomFromDraft] = useState(indiaDateKey());
+  const [customToDraft, setCustomToDraft] = useState(indiaDateKey());
+  const activeRange = datePreset === "today"
+    ? { fromDate: todayDate, toDate: todayDate }
+    : datePreset === "yesterday"
+      ? { fromDate: yesterdayDate, toDate: yesterdayDate }
+      : normalizeDateRange(selectedFromDate, selectedToDate);
+  const groups = allGroups.filter((group) => dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate));
   const dispatchPendingCount = groups.filter((group) => {
     const status = salesFulfillmentStatus(group.lines);
     return status === "SO booked" || status === "SO docket ready" || status === "Customer pickup";
@@ -4679,7 +5160,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         deliveryMode: first?.deliveryMode || "Delivery"
       };
     })
-    .filter((group) => indiaDateKey(group.lines[0]?.createdAt) === activeDate && group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
+    .filter((group) => dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate) && group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser));
   const unsettledCollections = snapshot.payments
     .filter((item) => item.side === "Sales" && item.createdBy === currentUser.fullName && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved" && item.verificationStatus !== "Rejected")
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -4698,6 +5179,35 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   const collectionAgents = snapshot.users.filter((user) => user.active && user.roles.includes("Collection Agent"));
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
+  const salesExportGroups = (viewMode === "orders" ? filteredGroups : filteredCollectionGroups.map((group) => ({ id: group.id, lines: group.lines })));
+  const salesExportRows = salesOrderExportRows(snapshot, salesExportGroups);
+
+  useEffect(() => {
+    if (allGroups.length === 0) return;
+    if (datePreset === "today" && !hasTodayOrders) {
+      if (hasYesterdayOrders) {
+        setDatePreset("yesterday");
+        setSelectedFromDate(yesterdayDate);
+        setSelectedToDate(yesterdayDate);
+      } else {
+        setDatePreset("custom");
+        setSelectedFromDate(latestAvailableDate);
+        setSelectedToDate(latestAvailableDate);
+      }
+      return;
+    }
+    if (datePreset === "yesterday" && !hasYesterdayOrders) {
+      if (hasTodayOrders) {
+        setDatePreset("today");
+        setSelectedFromDate(todayDate);
+        setSelectedToDate(todayDate);
+      } else {
+        setDatePreset("custom");
+        setSelectedFromDate(latestAvailableDate);
+        setSelectedToDate(latestAvailableDate);
+      }
+    }
+  }, [allGroups, datePreset, hasTodayOrders, hasYesterdayOrders, latestAvailableDate, todayDate, yesterdayDate]);
 
   function getCollectionDraft(orderId: string) {
     const group = collectionGroups.find((item) => item.id === orderId);
@@ -4738,18 +5248,22 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         <button className={viewMode === "collections" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("collections")}><LabelWithBadge label="Collection" count={collectionGroups.length} /></button>
       </div>
       <div className="date-filter-strip">
-        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedDate(indiaDateKey()); }}>Today</button>
-        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedDate(indiaYesterdayDateKey()); }}>Yesterday</button>
-        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomDateDraft(activeDate); setCustomDateOpen(true); }}>Custom Date</button>
+        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
+        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
+        <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomFromDraft(activeRange.fromDate); setCustomToDraft(activeRange.toDate); setCustomDateOpen(true); }}>Custom Date</button>
       </div>
       <article className="list-card date-range-card">
         <div className="payment-meta-grid">
-          <div><span className="small-label">From</span><strong>{activeDate}</strong></div>
-          <div><span className="small-label">To</span><strong>{activeDate}</strong></div>
+          <div><span className="small-label">From</span><strong>{activeRange.fromDate}</strong></div>
+          <div><span className="small-label">To</span><strong>{activeRange.toDate}</strong></div>
         </div>
       </article>
       <div className="form-grid">
         <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
+      </div>
+      <div className="payment-card-actions">
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("sales-orders", salesOrderExportHeaders(), salesExportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Sales Orders Report", "sales-orders", salesOrderExportHeaders(), salesExportRows, activeRange.fromDate, activeRange.toDate, [`Orders: ${salesExportGroups.length}`, `Mode: ${viewMode}`])}>Download PDF</button>
       </div>
       {viewMode === "orders" ? <>
       {groups.length > 0 ? <article className="list-card">
@@ -4896,18 +5410,28 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
         <div className="cart-sheet date-picker-sheet" onClick={(e) => e.stopPropagation()}>
           <div className="cart-head">
             <div>
-              <h3>Select date</h3>
-              <p>Choose sales day and click done.</p>
+              <h3>Select date range</h3>
+              <p>Choose sales from and to dates, then click done.</p>
             </div>
             <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Close</button>
           </div>
           <label>
-            Date
-            <input type="date" value={customDateDraft} onChange={(e) => setCustomDateDraft(e.target.value)} />
+            From
+            <input type="date" value={customFromDraft} onChange={(e) => setCustomFromDraft(e.target.value)} />
+          </label>
+          <label>
+            To
+            <input type="date" value={customToDraft} onChange={(e) => setCustomToDraft(e.target.value)} />
           </label>
           <div className="payment-card-actions">
             <button type="button" className="ghost-button" onClick={() => setCustomDateOpen(false)}>Cancel</button>
-            <button type="button" className="primary-button" onClick={() => { setSelectedDate(customDateDraft || indiaDateKey()); setDatePreset("custom"); setCustomDateOpen(false); }}>Done</button>
+            <button type="button" className="primary-button" onClick={() => {
+              const normalized = normalizeDateRange(customFromDraft || todayDate, customToDraft || customFromDraft || todayDate);
+              setSelectedFromDate(normalized.fromDate);
+              setSelectedToDate(normalized.toDate);
+              setDatePreset("custom");
+              setCustomDateOpen(false);
+            }}>Done</button>
           </div>
         </div>
       </div> : null}
@@ -5371,7 +5895,7 @@ function PurchaserPaymentsView({
                 </div>
                 <div className="payment-meta-grid">
                   <div><span className="small-label">Amount</span><strong>{payment.amount}</strong></div>
-                  <div><span className="small-label">Created</span><strong>{new Date(payment.createdAt).toLocaleDateString("en-IN")}</strong></div>
+                  <div><span className="small-label">Created</span><strong>{formatDateIst(payment.createdAt)}</strong></div>
                   <div><span className="small-label">Reference</span><strong>{payment.referenceNumber || "Pending"}</strong></div>
                   <div><span className="small-label">Accounts note</span><strong>{payment.verificationNote || "No note"}</strong></div>
                 </div>
@@ -5932,7 +6456,7 @@ function AccountsPaymentsView({
                 <div><span className="small-label">Amount</span><strong>{payment.amount}</strong></div>
                 <div><span className="small-label">Mode</span><strong>{payment.mode}</strong></div>
                 <div><span className="small-label">Ref</span><strong>{payment.referenceNumber || "Required"}</strong></div>
-                <div><span className="small-label">Submitted</span><strong>{payment.submittedAt ? new Date(payment.submittedAt).toLocaleString("en-IN") : "Pending"}</strong></div>
+                <div><span className="small-label">Submitted</span><strong>{formatDateTimeIst(payment.submittedAt)}</strong></div>
                 {purchaseCashTask ? <div><span className="small-label">Cash task</span><strong>{purchaseCashTask.status} / {purchaseCashTask.assignedTo}</strong></div> : null}
                 {warehouseCashOnDelivery ? <div><span className="small-label">Cash path</span><strong>Cash on delivery at warehouse</strong></div> : null}
               </div>
@@ -6257,6 +6781,12 @@ function WarehouseOperationsViewV2({
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
   const [sendSummaryDrafts, setSendSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
   const [consignmentDraft, setConsignmentDraft] = useState(persisted.consignmentDraft || { docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] });
+  const [inboundDatePreset, setInboundDatePreset] = useState<"today" | "yesterday" | "custom">("today");
+  const [inboundFromDate, setInboundFromDate] = useState(indiaDateKey());
+  const [inboundToDate, setInboundToDate] = useState(indiaDateKey());
+  const [inboundDateOpen, setInboundDateOpen] = useState(false);
+  const [inboundCustomFromDraft, setInboundCustomFromDraft] = useState(indiaDateKey());
+  const [inboundCustomToDraft, setInboundCustomToDraft] = useState(indiaDateKey());
   const inboundDeliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
   const outboundDeliveryUsers = snapshot.users.filter(isOutboundDeliveryUser);
   const defaultInboundDeliveryUsername = inboundDeliveryUsers[0]?.username || "in";
@@ -6335,8 +6865,22 @@ function WarehouseOperationsViewV2({
   }, new Map<string, SalesOrder[]>()).entries()).map(([id, lines]) => ({ id, lines }));
 
   function groupDate(group: PurchaseGroup) {
-    return Math.min(...group.lines.map((line) => new Date(line.createdAt).getTime()));
+    return groupNewestCreatedAt(group.lines);
   }
+
+  const todayDate = indiaDateKey();
+  const yesterdayDate = indiaYesterdayDateKey();
+  const latestInboundDate = purchaseGroups.length > 0 ? indiaDateKey(new Date(Math.max(...purchaseGroups.map((group) => groupDate(group))))) : todayDate;
+  const hasTodayInbound = purchaseGroups.some((group) => indiaDateKey(new Date(groupDate(group))) === todayDate);
+  const hasYesterdayInbound = purchaseGroups.some((group) => indiaDateKey(new Date(groupDate(group))) === yesterdayDate);
+  const activeInboundRange = inboundDatePreset === "today"
+    ? { fromDate: todayDate, toDate: todayDate }
+    : inboundDatePreset === "yesterday"
+      ? { fromDate: yesterdayDate, toDate: yesterdayDate }
+      : normalizeDateRange(inboundFromDate, inboundToDate);
+  const inboundGroupMatchesDate = (group: PurchaseGroup) => dateKeyInRange(indiaDateKey(new Date(groupDate(group))), activeInboundRange.fromDate, activeInboundRange.toDate);
+  const inboundTaskMatchesDate = (groups: PurchaseGroup[]) => groups.some((group) => inboundGroupMatchesDate(group));
+  const salesGroupMatchesDate = (group: SalesGroup) => dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeInboundRange.fromDate, activeInboundRange.toDate);
 
   function groupTotal(group: PurchaseGroup) {
     return group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
@@ -6378,15 +6922,16 @@ function WarehouseOperationsViewV2({
   }
 
   const pendingReceiveGroups = purchaseGroups
-    .filter((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0))
+    .filter((group) => inboundGroupMatchesDate(group) && group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0))
     .sort((left, right) =>
       Number(paidBeforeReceiving(right)) - Number(paidBeforeReceiving(left))
       || Number(Boolean(inboundTaskForGroup(left.id))) - Number(Boolean(inboundTaskForGroup(right.id)))
-      || groupDate(left) - groupDate(right)
+      || groupDate(right) - groupDate(left)
     );
   const receivedGroups = purchaseGroups
     .filter((group) => group.lines.length > 0 && group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"))
-    .sort((left, right) => groupDate(left) - groupDate(right));
+    .filter((group) => inboundGroupMatchesDate(group))
+    .sort((left, right) => groupDate(right) - groupDate(left));
   const inboundTaskDockets = snapshot.deliveryTasks
     .filter((task) => task.side === "Purchase")
     .map((task) => ({
@@ -6395,13 +6940,13 @@ function WarehouseOperationsViewV2({
     }))
     .filter((item) => item.groups.length > 0);
   const plannedInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status === "Planned" && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
-    .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+    .filter((item) => item.task.status === "Planned" && inboundTaskMatchesDate(item.groups) && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
+    .sort((left, right) => new Date(right.task.createdAt).getTime() - new Date(left.task.createdAt).getTime());
   const completedInboundDockets = inboundTaskDockets
-    .filter((item) => item.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed")))
-    .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+    .filter((item) => inboundTaskMatchesDate(item.groups) && item.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed")))
+    .sort((left, right) => new Date(right.task.createdAt).getTime() - new Date(left.task.createdAt).getTime());
   const receivingInboundDockets = inboundTaskDockets
-    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered" && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
+    .filter((item) => inboundTaskMatchesDate(item.groups) && item.task.status !== "Planned" && item.task.status !== "Delivered" && item.groups.some((group) => group.lines.some((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) > 0)))
     .sort((left, right) => {
       const leftCompleted = left.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"));
       const rightCompleted = right.groups.every((group) => group.lines.every((line) => Math.max(line.quantityOrdered - line.quantityReceived, 0) <= 0 || line.status === "Closed"));
@@ -6409,20 +6954,20 @@ function WarehouseOperationsViewV2({
       const rightReceived = right.groups.some((group) => group.lines.some((line) => line.quantityReceived > 0));
       return Number(leftCompleted) - Number(rightCompleted)
         || Number(rightReceived) - Number(leftReceived)
-        || new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime();
+        || new Date(right.task.createdAt).getTime() - new Date(left.task.createdAt).getTime();
     });
   const directReceiveGroups = pendingReceiveGroups
-    .filter((group) => !groupNeedsPickupTask(group))
+    .filter((group) => !groupNeedsPickupTask(group) && inboundGroupMatchesDate(group))
     .sort((left, right) => {
       const leftReceived = left.lines.some((line) => line.quantityReceived > 0);
       const rightReceived = right.lines.some((line) => line.quantityReceived > 0);
-      return Number(rightReceived) - Number(leftReceived) || groupDate(left) - groupDate(right);
+      return Number(rightReceived) - Number(leftReceived) || groupDate(right) - groupDate(left);
     });
   const outgoingOrders = snapshot.salesOrders
     .filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery" || item.status === "Self Pickup")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   const outgoingGroups = salesGroups
-    .filter((group) => group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Pending Pickup" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
+    .filter((group) => salesGroupMatchesDate(group) && group.lines.some((line) => line.status === "Booked" || line.status === "Ready for Dispatch" || line.status === "Pending Pickup" || line.status === "Out for Delivery" || line.status === "Self Pickup"))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const dispatchQueueOrders = canManageWarehouseChecks ? outgoingOrders : outgoingOrders.filter((item) => item.deliveryMode === "Delivery");
   const dispatchQueueGroups = canManageWarehouseChecks ? outgoingGroups : outgoingGroups.filter((group) => group.lines[0].deliveryMode === "Delivery");
@@ -6433,12 +6978,16 @@ function WarehouseOperationsViewV2({
       consignment: consignmentById.get(task.consignmentId || "")
     }))
     .filter((item): item is { task: DeliveryTask; consignment: DeliveryConsignment } => Boolean(item.consignment));
+  const outboundTaskMatchesDate = (task: DeliveryTask) => task.routeStops.some((stop) => {
+    const createdAt = snapshot.salesOrders.find((order) => orderPublicId(order) === stop.orderId)?.createdAt;
+    return Boolean(createdAt) && dateKeyInRange(indiaDateKey(createdAt), activeInboundRange.fromDate, activeInboundRange.toDate);
+  });
   const activeOutboundDockets = outboundTaskDockets
-    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered")
-    .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+    .filter((item) => item.task.status !== "Planned" && item.task.status !== "Delivered" && outboundTaskMatchesDate(item.task))
+    .sort((left, right) => new Date(right.task.createdAt).getTime() - new Date(left.task.createdAt).getTime());
   const plannedOutboundDockets = outboundTaskDockets
-    .filter((item) => item.task.status === "Planned")
-    .sort((left, right) => new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime());
+    .filter((item) => item.task.status === "Planned" && outboundTaskMatchesDate(item.task))
+    .sort((left, right) => new Date(right.task.createdAt).getTime() - new Date(left.task.createdAt).getTime());
   const bundleReadyConsignments = snapshot.deliveryConsignments
     .filter((item) => item.status === "Ready")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
@@ -6458,6 +7007,51 @@ function WarehouseOperationsViewV2({
   function inboundTaskForGroup(groupId: string) {
     return snapshot.deliveryTasks.find((task) => task.side === "Purchase" && task.linkedOrderIds.includes(groupId));
   }
+
+  const inboundDateControls = <>
+    <div className="date-filter-strip">
+      <button className={inboundDatePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundDatePreset("today"); setInboundFromDate(todayDate); setInboundToDate(todayDate); }}>Today</button>
+      <button className={inboundDatePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundDatePreset("yesterday"); setInboundFromDate(yesterdayDate); setInboundToDate(yesterdayDate); }}>Yesterday</button>
+      <button className={inboundDatePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundCustomFromDraft(activeInboundRange.fromDate); setInboundCustomToDraft(activeInboundRange.toDate); setInboundDateOpen(true); }}>Custom Date</button>
+    </div>
+    <article className="list-card date-range-card">
+      <div className="payment-meta-grid">
+        <div><span className="small-label">From</span><strong>{activeInboundRange.fromDate}</strong></div>
+        <div><span className="small-label">To</span><strong>{activeInboundRange.toDate}</strong></div>
+      </div>
+    </article>
+    <div className="payment-card-actions">
+      <button className="ghost-button" type="button" onClick={() => downloadReportCsv("warehouse-inbound", inboundOpsExportHeaders(), inboundOpsExportRows(snapshot, [...directReceiveGroups, ...receivedGroups], [...receivingInboundDockets, ...completedInboundDockets, ...plannedInboundDockets]), activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
+      <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Warehouse Inbound Report", "warehouse-inbound", inboundOpsExportHeaders(), inboundOpsExportRows(snapshot, [...directReceiveGroups, ...receivedGroups], [...receivingInboundDockets, ...completedInboundDockets, ...plannedInboundDockets]), activeInboundRange.fromDate, activeInboundRange.toDate, [`Direct groups: ${directReceiveGroups.length + receivedGroups.length}`, `Tasks: ${receivingInboundDockets.length + completedInboundDockets.length + plannedInboundDockets.length}`])}>Download PDF</button>
+    </div>
+  </>;
+
+  useEffect(() => {
+    if (purchaseGroups.length === 0) return;
+    if (inboundDatePreset === "today" && !hasTodayInbound) {
+      if (hasYesterdayInbound) {
+        setInboundDatePreset("yesterday");
+        setInboundFromDate(yesterdayDate);
+        setInboundToDate(yesterdayDate);
+      } else {
+        setInboundDatePreset("custom");
+        setInboundFromDate(latestInboundDate);
+        setInboundToDate(latestInboundDate);
+      }
+      return;
+    }
+    if (inboundDatePreset === "yesterday" && !hasYesterdayInbound) {
+      if (hasTodayInbound) {
+        setInboundDatePreset("today");
+        setInboundFromDate(todayDate);
+        setInboundToDate(todayDate);
+      } else {
+        setInboundDatePreset("custom");
+        setInboundFromDate(latestInboundDate);
+        setInboundToDate(latestInboundDate);
+      }
+    }
+  }, [purchaseGroups, inboundDatePreset, hasTodayInbound, hasYesterdayInbound, latestInboundDate, todayDate, yesterdayDate]);
 
   function optimizeInboundGroups(groups: PurchaseGroup[]) {
     return nearestNeighborOrder(groups, (group) => supplierById.get(group.lines[0]?.supplierId || ""));
@@ -6681,7 +7275,7 @@ function WarehouseOperationsViewV2({
           <span>{group.lines.length} products</span>
           <span>{groupPendingQty(group)} pending</span>
           <span>{groupWeight(group, !received).toFixed(2)} kg</span>
-          <span>{new Date(first.createdAt).toLocaleString("en-IN")}</span>
+          <span>{formatDateTimeIst(first.createdAt)}</span>
         </div>
         <span className="status-pill status-pending">{received ? "Received" : needsPickupTask && inboundTask ? deliveryTaskStatusLabel(inboundTask) : first.status}</span>
       </button>
@@ -6744,7 +7338,7 @@ function WarehouseOperationsViewV2({
           <span>{totalPendingWeight.toFixed(2)} kg</span>
           <span>{task.transportType}</span>
           {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
-          <span>{new Date(task.createdAt).toLocaleString("en-IN")}</span>
+          <span>{formatDateTimeIst(task.createdAt)}</span>
         </div>
         <span className="status-pill status-pending">{docketStatus}</span>
       </button>
@@ -6846,7 +7440,7 @@ function WarehouseOperationsViewV2({
           <span>{group.lines.length} products</span>
           <span>{group.lines.reduce((sum, line) => sum + line.quantity, 0)} qty</span>
           <span>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</span>
-          <span>{new Date(first.createdAt).toLocaleString("en-IN")}</span>
+          <span>{formatDateTimeIst(first.createdAt)}</span>
         </div>
         <span className="status-pill status-pending">{group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status)}</span>
       </button>
@@ -6927,7 +7521,7 @@ function WarehouseOperationsViewV2({
           {consignment ? <span>{consignment.totalWeightKg.toFixed(2)} kg</span> : null}
           <span>{task.transportType}</span>
           {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
-          <span>{new Date(task.createdAt).toLocaleString("en-IN")}</span>
+          <span>{formatDateTimeIst(task.createdAt)}</span>
         </div>
         <span className="status-pill status-pending">{deliveryTaskStatusLabel(task)}</span>
       </button>
@@ -7075,7 +7669,7 @@ function WarehouseOperationsViewV2({
             <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "3. Planned" : canManageDeliveryTagging ? "2. Planned" : "2. Planned"} count={inboundPlannedPendingCount} /></button>
           </div>
         </Panel>
-        {canManageDeliveryTagging && inboundStep === "pickup" ? <Panel title="Tag In Delivery Team" eyebrow="Self collection only">
+        {canManageDeliveryTagging && inboundStep === "pickup" ? <>{inboundDateControls}<Panel title="Tag In Delivery Team" eyebrow="Self collection only">
           <form className="form-grid" onSubmit={async (event) => {
             event.preventDefault();
             if (submittingInboundTag) return;
@@ -7172,7 +7766,7 @@ function WarehouseOperationsViewV2({
           <div className="payment-card-actions top-gap">
             {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button> : <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned routes</button>}
           </div>
-        </Panel> : inboundStep === "receive" ? <>
+        </Panel></> : inboundStep === "receive" ? <>{inboundDateControls}
             <Panel title="Checks On In" eyebrow="Single dockets to receive">
               <div className="warehouse-order-list">
                 {receivingInboundDockets.length === 0 && directReceiveGroups.length === 0 ? <div className="empty-card">No incoming orders pending.</div> : <>
@@ -7193,7 +7787,7 @@ function WarehouseOperationsViewV2({
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button> : null}
               <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned dockets</button>
             </div>
-          </> : <Panel title="Planned Inbound Dockets" eyebrow="Awaiting delivery start">
+          </> : <>{inboundDateControls}<Panel title="Planned Inbound Dockets" eyebrow="Awaiting delivery start">
             <div className="warehouse-order-list">
               {plannedInboundDockets.length === 0 ? <div className="empty-card">No planned inbound dockets.</div> : plannedInboundDockets.map((item) => renderReceiveTaskDocket(item.task, false))}
             </div>
@@ -7201,7 +7795,36 @@ function WarehouseOperationsViewV2({
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button> : null}
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button> : null}
             </div>
-          </Panel>}
+          </Panel></>}
+        {inboundDateOpen ? <div className="cart-overlay" onClick={() => setInboundDateOpen(false)}>
+          <div className="cart-sheet date-picker-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="cart-head">
+              <div>
+                <h3>Select date range</h3>
+                <p>Choose inbound from and to dates, then click done.</p>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => setInboundDateOpen(false)}>Close</button>
+            </div>
+            <label>
+              From
+              <input type="date" value={inboundCustomFromDraft} onChange={(e) => setInboundCustomFromDraft(e.target.value)} />
+            </label>
+            <label>
+              To
+              <input type="date" value={inboundCustomToDraft} onChange={(e) => setInboundCustomToDraft(e.target.value)} />
+            </label>
+            <div className="payment-card-actions">
+              <button type="button" className="ghost-button" onClick={() => setInboundDateOpen(false)}>Cancel</button>
+              <button type="button" className="primary-button" onClick={() => {
+                const normalized = normalizeDateRange(inboundCustomFromDraft || todayDate, inboundCustomToDraft || inboundCustomFromDraft || todayDate);
+                setInboundFromDate(normalized.fromDate);
+                setInboundToDate(normalized.toDate);
+                setInboundDatePreset("custom");
+                setInboundDateOpen(false);
+              }}>Done</button>
+            </div>
+          </div>
+        </div> : null}
       </> : null}
       {(screen === "full" ? activeTab === "out" : screen === "out") ? <>
         <Panel title="Dispatches" eyebrow="Outgoing orders">
@@ -7212,6 +7835,21 @@ function WarehouseOperationsViewV2({
             <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "4. Planned" : "3. Planned") : "2. Planned"} count={outboundPlannedPendingCount} /></button>
           </div>
         </Panel>
+        <div className="date-filter-strip">
+          <button className={inboundDatePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundDatePreset("today"); setInboundFromDate(todayDate); setInboundToDate(todayDate); }}>Today</button>
+          <button className={inboundDatePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundDatePreset("yesterday"); setInboundFromDate(yesterdayDate); setInboundToDate(yesterdayDate); }}>Yesterday</button>
+          <button className={inboundDatePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setInboundCustomFromDraft(activeInboundRange.fromDate); setInboundCustomToDraft(activeInboundRange.toDate); setInboundDateOpen(true); }}>Custom Date</button>
+        </div>
+        <article className="list-card date-range-card">
+          <div className="payment-meta-grid">
+            <div><span className="small-label">From</span><strong>{activeInboundRange.fromDate}</strong></div>
+            <div><span className="small-label">To</span><strong>{activeInboundRange.toDate}</strong></div>
+          </div>
+        </article>
+        <div className="payment-card-actions">
+          <button className="ghost-button" type="button" onClick={() => downloadReportCsv("warehouse-outbound", outboundOpsExportHeaders(), outboundOpsExportRows(snapshot, directOutboundGroups, [...activeOutboundDockets, ...plannedOutboundDockets].map((item) => ({ task: item.task }))), activeInboundRange.fromDate, activeInboundRange.toDate)}>Download CSV</button>
+          <button className="ghost-button" type="button" onClick={() => downloadReportPdf("Warehouse Outbound Report", "warehouse-outbound", outboundOpsExportHeaders(), outboundOpsExportRows(snapshot, directOutboundGroups, [...activeOutboundDockets, ...plannedOutboundDockets].map((item) => ({ task: item.task }))), activeInboundRange.fromDate, activeInboundRange.toDate, [`Direct groups: ${directOutboundGroups.length}`, `Tasks: ${activeOutboundDockets.length + plannedOutboundDockets.length}`])}>Download PDF</button>
+        </div>
         {outboundStep === "check" ? <Panel title="Checks On Out" eyebrow="Outbound dockets">
           {openDockets.length > 0 ? <p className="message success top-gap">{canManageWarehouseChecks ? `${openDockets.length} outbound docket(s) are ready for delivery manager bundling.` : `${openDockets.length} warehouse docket(s) are ready. Bundle them into consignments before tagging delivery.`}</p> : null}
           {bundleReadyConsignments.length > 0 ? <p className="message success top-gap">{canManageDeliveryTagging ? `${bundleReadyConsignments.length} bundled consignment(s) are waiting. Continue in Tag to assign delivery.` : `${bundleReadyConsignments.length} bundled consignment(s) are waiting for delivery manager assignment.`}</p> : null}
@@ -7581,7 +8219,7 @@ function DeliveryJobsView({
         <div><span className="small-label">Stops</span><strong>{draft.routeStops.length}</strong></div>
         <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
         <div><span className="small-label">Route km</span><strong>{approxRouteKm ? approxRouteKm.toFixed(1) : "Pending"}</strong></div>
-        <div><span className="small-label">Last action</span><strong>{task.lastActionAt ? new Date(task.lastActionAt).toLocaleString("en-IN") : "Pending"}</strong></div>
+        <div><span className="small-label">Last action</span><strong>{formatDateTimeIst(task.lastActionAt)}</strong></div>
       </div>
       {task.side === "Sales" ? <div className="stack-list top-gap">
         {draft.routeStops.map((stop) => <article className="list-card" key={`${task.id}-${stop.orderId}-summary`}>
