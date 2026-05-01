@@ -7396,7 +7396,32 @@ function DeliveryJobsView({
             <label className="wide-field">Proof name<input value={nextStop.paymentProofName || ""} onChange={(e) => updateStopDraft(task.id, task, nextStop.orderId, { paymentProofName: e.target.value })} /></label>
           </div>
           <div className="payment-card-actions top-gap">
-            <button className="primary-button" type="button" disabled={!nextStop.paymentProofName} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { paid: true })}>Mark paid</button>
+            <button className="primary-button" type="button" disabled={!nextStop.paymentProofName} onClick={async () => {
+              const routeStops = draft.routeStops.map((stop) => stop.orderId === nextStop.orderId ? { ...stop, paid: true } : stop);
+              await onUpdateTask(task.id, {
+                linkedOrderIds: task.linkedOrderIds,
+                assignedTo: task.assignedTo,
+                routeStops,
+                pickupAt: task.pickupAt,
+                dropAt: task.dropAt,
+                routeHint: draft.routeHint,
+                paymentAction: task.paymentAction,
+                status: draft.status,
+                cashCollectionRequired: task.cashCollectionRequired,
+                cashHandoverMarked: routeStops.some((stop) => stop.paid),
+                weightProofName: draft.weightProofName || undefined,
+                cashProofName: draft.cashProofName || undefined,
+                lastActionAt: new Date().toISOString()
+              });
+              setDrafts((current) => ({
+                ...current,
+                [task.id]: {
+                  ...draft,
+                  routeStops,
+                  cashHandoverMarked: routeStops.some((stop) => stop.paid)
+                }
+              }));
+            }}>Mark paid</button>
           </div>
         </article> : null}
         {!allPicked && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
