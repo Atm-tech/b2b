@@ -6607,15 +6607,15 @@ function WarehouseOperationsViewV2({
         if (submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0) return;
         setSubmittingConsignment(true);
         try {
-          await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: effectiveWarehouseId, assignedTo: "", status: "Ready" });
+          await onCreateConsignment({ docketIds: consignmentDraft.docketIds, warehouseId: effectiveWarehouseId, assignedTo: defaultOutboundDeliveryUsername, status: "Ready" });
           setConsignmentDraft({ docketIds: [], warehouseId: "", assignedTo: [defaultOutboundDeliveryUsername] });
-          setOutboundStep("tag");
+          setOutboundStep("planned");
         } finally {
           setSubmittingConsignment(false);
         }
       }}>
         <div><span className="small-label">Warehouse</span><strong>{warehouseById.get(effectiveWarehouseId)?.name || "Select dockets from one warehouse"}</strong></div>
-        <div><span className="small-label">Assignment</span><strong>Tag delivery in the next section</strong></div>
+        <div><span className="small-label">Assignment</span><strong>{defaultOutboundDeliveryUsername} will get the assignment immediately</strong></div>
         <div className="payment-card-actions wide-field">
           <span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span>
           {hasMixedWarehouses ? <span className="small-label">Select dockets from only one warehouse.</span> : null}

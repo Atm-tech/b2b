@@ -15,6 +15,7 @@ import type {
   InventoryLot,
   LedgerEntry,
   NoteRecord,
+  CashTiming,
   PaymentMethodSetting,
   PaymentMode,
   PaymentRecord,
@@ -2288,6 +2289,126 @@ export async function createDeliveryConsignment(payload: {
       [id, docketIds],
       client
     );
+    if (assignedTo) {
+      const salesOrderIds = dockets.rows.map((row) => stringValue(row.sales_order_id)).filter(Boolean);
+      const salesOrders = salesOrderIds.length > 0
+        ? await query<Record<string, unknown>>(
+          `SELECT so.*, c.name AS shop_name, c.delivery_address, c.address, c.mobile_number, c.latitude, c.longitude, c.location_label
+           FROM sales_orders so
+           LEFT JOIN counterparties c ON c.id = so.shop_id
+           WHERE so.id = ANY($1::text[])
+           ORDER BY so.created_at ASC, so.id ASC`,
+          [salesOrderIds],
+          client
+        )
+        : { rows: [] as Record<string, unknown>[] };
+      const grouped = new Map<string, {
+        orderId: string;
+        shopId: string;
+        shopName: string;
+        warehouseId: string;
+        paymentMode?: PaymentMode;
+        cashTiming?: CashTiming;
+        locationLabel?: string;
+        latitude?: number;
+        longitude?: number;
+        products: string[];
+      }>();
+      for (const row of salesOrders.rows) {
+        const orderId = stringValue(row.cart_id) || stringValue(row.id);
+        const current = grouped.get(orderId) || {
+          orderId,
+          shopId: stringValue(row.shop_id),
+          shopName: stringValue(row.shop_name),
+          warehouseId: stringValue(row.warehouse_id),
+          paymentMode: stringValue(row.payment_mode) as PaymentMode,
+          cashTiming: row.cash_timing ? (stringValue(row.cash_timing) as CashTiming) : undefined,
+          locationLabel: stringValue(row.delivery_address) || stringValue(row.address) || stringValue(row.location_label) || stringValue(row.shop_name),
+          latitude: row.latitude === null || row.latitude === undefined ? undefined : numberValue(row.latitude),
+          longitude: row.longitude === null || row.longitude === undefined ? undefined : numberValue(row.longitude),
+          products: []
+        };
+        current.products.push(`${stringValue(row.product_sku)} x ${numberValue(row.quantity)}`);
+        grouped.set(orderId, current);
+      }
+      const linkedOrderIds = Array.from(grouped.keys());
+      const ledgers = linkedOrderIds.length > 0
+        ? await query<Record<string, unknown>>(
+          `SELECT linked_order_id, pending_amount
+           FROM ledger_entries
+           WHERE side = 'Sales' AND linked_order_id = ANY($1::text[])`,
+          [linkedOrderIds],
+          client
+        )
+        : { rows: [] as Record<string, unknown>[] };
+      const pendingByOrderId = new Map(ledgers.rows.map((row) => [stringValue(row.linked_order_id), numberValue(row.pending_amount)]));
+      const routeStops: DeliveryTask["routeStops"] = linkedOrderIds.map((orderId) => {
+        const item = grouped.get(orderId)!;
+        const pendingAmount = pendingByOrderId.get(orderId) || 0;
+        return {
+          orderId,
+          supplierId: item.shopId,
+          supplierName: item.shopName,
+          productSummary: item.products.join(", "),
+          warehouseId: item.warehouseId,
+          warehouseName: item.warehouseId,
+          amountToPay: pendingAmount,
+          paymentRequired: pendingAmount > 0,
+          paymentMode: item.paymentMode,
+          cashTiming: item.cashTiming,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          locationLabel: item.locationLabel,
+          reached: false,
+          checked: false,
+          paid: pendingAmount <= 0,
+          picked: false
+        };
+      });
+      await query(
+        `INSERT INTO delivery_tasks (
+          id, side, linked_order_id, linked_order_ids_json, consignment_id, mode, source_location, destination_location, assigned_to,
+          transport_type, vehicle_number, freight_amount, pickup_at, drop_at, route_hint, route_json, payment_action, cash_collection_required, cash_handover_marked,
+          weight_proof_name, cash_proof_name, last_action_at, status, created_at
+        ) VALUES ($1, 'Sales', $2, $3::jsonb, $4, 'Delivery', $5, $6, $7, 'Internal', NULL, 0, NULL, NULL, $8, $9::jsonb, $10, $11, false, NULL, NULL, NULL, 'Planned', $12)`,
+        [
+          makeId("DL"),
+          linkedOrderIds[0] || "",
+          JSON.stringify(linkedOrderIds),
+          id,
+          payload.warehouseId,
+          routeStops.map((stop) => stop.supplierName).join(", "),
+          assignedTo,
+          routeStops.map((stop) => stop.locationLabel || stop.supplierName).join(" -> "),
+          JSON.stringify(routeStops),
+          routeStops.some((stop) => stop.paymentRequired) ? "Collect Payment" : "None",
+          routeStops.some((stop) => stop.paymentRequired && stop.paymentMode === "Cash"),
+          createdAt
+        ],
+        client
+      );
+      await query(
+        `UPDATE delivery_consignments
+         SET assigned_to = $1, status = 'Pending Pickup'
+         WHERE id = $2`,
+        [assignedTo, id],
+        client
+      );
+      await query(
+        `UPDATE delivery_dockets
+         SET status = 'Pending Pickup'
+         WHERE id = ANY($1::text[])`,
+        [docketIds],
+        client
+      );
+      await query(
+        `UPDATE sales_orders
+         SET status = 'Pending Pickup'
+         WHERE id = ANY($1::text[]) OR cart_id = ANY($2::text[])`,
+        [salesOrderIds, linkedOrderIds],
+        client
+      );
+    }
   });
   return getSnapshot();
 }
