@@ -841,8 +841,82 @@ function buildMetrics(snapshot: Omit<AppSnapshot, "metrics">): AppSnapshot["metr
   };
 }
 
+async function reconcileRetrospectiveDeliveryCashCollections(client?: DbClient) {
+  const tasks = await query<Record<string, unknown>>(
+    `SELECT id, assigned_to, created_at, last_action_at, route_json
+     FROM delivery_tasks
+     WHERE side = 'Sales'`,
+    [],
+    client
+  );
+  for (const task of tasks.rows) {
+    const routeStops = Array.isArray(task.route_json) ? (task.route_json as DeliveryTask["routeStops"]) : [];
+    const completedCashStops = routeStops.filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0);
+    for (const stop of completedCashStops) {
+      const existingPayment = await one<Record<string, unknown>>(
+        `SELECT *
+         FROM payments
+         WHERE side = 'Sales' AND linked_order_id = $1 AND mode = 'Cash'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [stop.orderId],
+        client
+      );
+      const submittedAt = task.last_action_at ? isoValue(task.last_action_at) : isoValue(task.created_at);
+      const assignedTo = stringValue(task.assigned_to) || "Out Delivery";
+      if (existingPayment) {
+        const existingStatus = stringValue(existingPayment.verification_status) as PaymentRecord["verificationStatus"];
+        if (existingStatus !== "Verified" && existingStatus !== "Resolved") {
+          await query(
+            `UPDATE payments
+             SET amount = $1,
+                 reference_number = $2,
+                 proof_name = COALESCE($3, proof_name),
+                 verification_status = 'Submitted',
+                 verification_note = $4,
+                 created_by = COALESCE(NULLIF(created_by, ''), $5),
+                 submitted_at = COALESCE(submitted_at, $6)
+             WHERE id = $7`,
+            [
+              stop.amountToPay,
+              stop.paymentReference?.trim() || "",
+              stop.paymentProofName?.trim() || null,
+              `Cash collected by ${assignedTo} during delivery.`,
+              assignedTo,
+              submittedAt,
+              stringValue(existingPayment.id)
+            ],
+            client
+          );
+        }
+      } else {
+        await query(
+          `INSERT INTO payments (
+            id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+            proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
+          ) VALUES ($1, 'Sales', $2, $3, 'Cash', $4, $5, NULL, NULL, $6, 'Submitted', $7, $8, NULL, $9, $9)`,
+          [
+            makeId("PAY"),
+            stop.orderId,
+            stop.amountToPay,
+            stop.cashTiming || null,
+            stop.paymentReference?.trim() || "",
+            stop.paymentProofName?.trim() || null,
+            `Cash collected by ${assignedTo} during delivery.`,
+            assignedTo,
+            submittedAt
+          ],
+          client
+        );
+      }
+      await recalculateLedger("Sales", stop.orderId, client);
+    }
+  }
+}
+
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
+  await reconcileRetrospectiveDeliveryCashCollections();
   const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
     mapUsers(),
     mapWarehouses(),
