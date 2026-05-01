@@ -3047,40 +3047,102 @@ export async function updateDeliveryTask(taskId: string, payload: {
         [salesStatus, linkedOrderIds],
         client
       );
+      const completedCashStops = (payload.routeStops || [])
+        .filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0);
+      if (completedCashStops.length > 0) {
+        for (const stop of completedCashStops) {
+          const existingPayment = await one<Record<string, unknown>>(
+            `SELECT *
+             FROM payments
+             WHERE side = 'Sales' AND linked_order_id = $1 AND mode = 'Cash'
+               AND verification_status IN ('Pending', 'Submitted', 'Disputed', 'Rejected')
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [stop.orderId],
+            client
+          );
+          const submittedAt = payload.lastActionAt || now();
+          if (existingPayment) {
+            await query(
+              `UPDATE payments
+               SET amount = $1,
+                   reference_number = $2,
+                   proof_name = COALESCE($3, proof_name),
+                   verification_status = 'Submitted',
+                   verification_note = $4,
+                   created_by = $5,
+                   submitted_at = $6
+               WHERE id = $7`,
+              [
+                stop.amountToPay,
+                stop.paymentReference?.trim() || "",
+                stop.paymentProofName?.trim() || null,
+                `Cash collected by ${assignedTo} during delivery.`,
+                assignedTo,
+                submittedAt,
+                stringValue(existingPayment.id)
+              ],
+              client
+            );
+          } else {
+            await query(
+              `INSERT INTO payments (
+                id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+                proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
+              ) VALUES ($1, 'Sales', $2, $3, 'Cash', $4, $5, NULL, NULL, $6, 'Submitted', $7, $8, NULL, $9, $9)`,
+              [
+                makeId("PAY"),
+                stop.orderId,
+                stop.amountToPay,
+                stop.cashTiming || null,
+                stop.paymentReference?.trim() || "",
+                stop.paymentProofName?.trim() || null,
+                `Cash collected by ${assignedTo} during delivery.`,
+                assignedTo,
+                submittedAt
+              ],
+              client
+            );
+          }
+          await recalculateLedger("Sales", stop.orderId, client);
+        }
+      }
     }
     if (
       side === "Purchase" &&
       (payload.paymentAction || stringValue(task.payment_action) as DeliveryTask["paymentAction"]) === "Deliver Payment" &&
-      payload.status === "Delivered" &&
+      (payload.status === "Delivered" || payload.status === "Handed Over") &&
       payload.cashHandoverMarked &&
       payload.cashProofName
     ) {
-      const payment = await one<Record<string, unknown>>(
-        `SELECT * FROM payments
-         WHERE side = 'Purchase' AND linked_order_id = $1 AND mode = 'Cash'
-           AND verification_status IN ('Pending', 'Submitted', 'Disputed', 'Rejected')
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [linkedOrderId],
-        client
-      );
-      if (payment) {
-        await query(
-          `UPDATE payments
-           SET verification_status = 'Verified',
-               verification_note = $1,
-               proof_name = COALESCE($2, proof_name),
-               verified_by = $3
-           WHERE id = $4`,
-            [
-              `Cash delivered to supplier by ${assignedTo} and proof uploaded.`,
-              payload.cashProofName.trim(),
-              assignedTo,
-              stringValue(payment.id)
-            ],
+      for (const orderId of linkedOrderIds) {
+        const payment = await one<Record<string, unknown>>(
+          `SELECT * FROM payments
+           WHERE side = 'Purchase' AND linked_order_id = $1 AND mode = 'Cash'
+             AND verification_status IN ('Pending', 'Submitted', 'Disputed', 'Rejected')
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [orderId],
           client
         );
-        await recalculateLedger("Purchase", linkedOrderId, client);
+        if (payment) {
+          await query(
+            `UPDATE payments
+             SET verification_status = 'Verified',
+                 verification_note = $1,
+                 proof_name = COALESCE($2, proof_name),
+                 verified_by = $3
+             WHERE id = $4`,
+              [
+                `Cash delivered to supplier by ${assignedTo} and proof uploaded.`,
+                payload.cashProofName.trim(),
+                assignedTo,
+                stringValue(payment.id)
+              ],
+            client
+          );
+          await recalculateLedger("Purchase", orderId, client);
+        }
       }
     }
   });

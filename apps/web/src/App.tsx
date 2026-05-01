@@ -33,12 +33,32 @@ const SESSION_KEY = "aapoorti-b2b-user";
 const TOKEN_KEY = "aapoorti-b2b-token";
 const ACTIVE_VIEW_KEY = "aapoorti-b2b-active-view";
 const DELIVERY_MANAGER_WAREHOUSE_KEY = "aapoorti-b2b-dm-warehouse";
+const WORKSPACE_DRAFT_KEY = "aapoorti-b2b-workspace";
 const api = axios.create({
   baseURL: API_BASE
 });
 
 type GstRateInput = "NA" | "0" | "5" | "12" | "18" | "40";
 type TaxModeInput = "NA" | "Exclusive" | "Inclusive";
+
+function workspaceStorageKey(userId: number | string, scope: string) {
+  return `${WORKSPACE_DRAFT_KEY}:${userId}:${scope}`;
+}
+
+function readStoredJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
 
 type ViewKey =
   | "Overview"
@@ -882,6 +902,8 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           </div>
           <div class="invoice-kachcha-meta">
             <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
+            <div><span>Contact</span><strong>${escapeHtml(invoiceValue(supplier?.contactPerson))}</strong></div>
+            <div><span>Address</span><strong>${escapeHtml(invoiceValue(supplier?.deliveryAddress || supplier?.address))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
             <div><span>Bill Type</span><strong>Non GST</strong></div>
@@ -993,6 +1015,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           </div>
           <div class="invoice-kachcha-meta">
             <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
+            <div><span>Contact</span><strong>${escapeHtml(invoiceValue(customer?.contactPerson))}</strong></div>
+            <div><span>Address</span><strong>${escapeHtml(invoiceValue(customer?.deliveryAddress || customer?.address))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
             <div><span>Bill Type</span><strong>Non GST</strong></div>
@@ -1300,7 +1324,7 @@ function purchasePaymentStatus(snapshot: AppSnapshot, orderId: string) {
   const cashTask = purchaseCashDeliveryTask(snapshot, orderId);
   if (latest?.verificationStatus === "Disputed") return "Disputed";
   if (latest?.verificationStatus === "Rejected") return "Flagged";
-  if (cashTask && cashTask.status !== "Delivered") return "Cash With Delivery";
+  if (cashTask && cashTask.status !== "Delivered" && cashTask.status !== "Handed Over") return "Cash With Delivery";
   if (ledger && ledger.pendingAmount <= 0 && (latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved")) return "Completed";
   if ((ledger && ledger.paidAmount > 0) || latest?.verificationStatus === "Verified" || latest?.verificationStatus === "Resolved") return "Partial";
   if (latest?.verificationStatus === "Submitted" || latest?.verificationStatus === "Pending") return "Pending";
@@ -1748,12 +1772,19 @@ function App() {
     }
     try {
       const user = JSON.parse(stored) as AppUser;
+      const workspace = readStoredJson(workspaceStorageKey(user.id, "app"), {} as Record<string, unknown>);
       const visible = getVisibleViewsForMode(user, true);
-      const storedView = window.localStorage.getItem(ACTIVE_VIEW_KEY) as ViewKey | null;
+      const storedView = (workspace.activeView as ViewKey | undefined) || (window.localStorage.getItem(ACTIVE_VIEW_KEY) as ViewKey | null);
       const storedDeliveryManagerWarehouseId = window.localStorage.getItem(DELIVERY_MANAGER_WAREHOUSE_KEY) || "";
       setCurrentUser(user);
       setSessionToken(token);
-      setDeliveryManagerWarehouseId(storedDeliveryManagerWarehouseId);
+      if (workspace.simpleMode !== undefined) setSimpleMode(Boolean(workspace.simpleMode));
+      if (typeof workspace.deliveryManagerScreen === "string") setDeliveryManagerScreen(workspace.deliveryManagerScreen as "home" | "in" | "out");
+      setDeliveryManagerWarehouseId((workspace.deliveryManagerWarehouseId as string | undefined) || storedDeliveryManagerWarehouseId);
+      if (workspace.purchaseForm) setPurchaseForm(workspace.purchaseForm as typeof purchaseForm);
+      if (workspace.salesForm) setSalesForm(workspace.salesForm as typeof salesForm);
+      if (typeof workspace.purchaseUpdateOrderId === "string") setPurchaseUpdateOrderId(workspace.purchaseUpdateOrderId);
+      if (typeof workspace.salesUpdateOrderId === "string") setSalesUpdateOrderId(workspace.salesUpdateOrderId);
       setActiveView(storedView && visible.includes(storedView) ? storedView : visible[0] || "Overview");
       void refresh(user).finally(() => setBootstrapping(false));
     } catch {
@@ -1772,6 +1803,20 @@ function App() {
   useEffect(() => {
     if (currentUser) window.localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
   }, [activeView, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    writeStoredJson(workspaceStorageKey(currentUser.id, "app"), {
+      activeView,
+      simpleMode,
+      deliveryManagerScreen,
+      deliveryManagerWarehouseId,
+      purchaseForm,
+      salesForm,
+      purchaseUpdateOrderId,
+      salesUpdateOrderId
+    });
+  }, [currentUser, activeView, simpleMode, deliveryManagerScreen, deliveryManagerWarehouseId, purchaseForm, salesForm, purchaseUpdateOrderId, salesUpdateOrderId]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -2293,6 +2338,7 @@ function App() {
             purchaseOrders={purchaseOrdersView}
             orderForm={salesForm}
             setOrderForm={setSalesForm}
+            persistKey={workspaceStorageKey(currentUser.id, "sales-catalog")}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
@@ -2471,6 +2517,7 @@ type CatalogOrderViewProps = {
   mode: "purchase" | "sales";
   title: string;
   eyebrow: string;
+  persistKey?: string;
   products: AppSnapshot["products"];
   parties: Counterparty[];
   warehouses: AppSnapshot["warehouses"];
@@ -2502,22 +2549,39 @@ type CartLine = {
 };
 
 function CatalogOrderView(props: CatalogOrderViewProps) {
-  const { mode, title, eyebrow, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onUploadProof, onSubmit, rightPanel } = props;
-  const [search, setSearch] = useState("");
-  const [partySearch, setPartySearch] = useState("");
-  const [activeDivision, setActiveDivision] = useState("");
-  const [activeDepartment, setActiveDepartment] = useState("");
-  const [activeSection, setActiveSection] = useState("");
+  const { mode, title, eyebrow, persistKey, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onUploadProof, onSubmit, rightPanel } = props;
+  const persisted = persistKey ? readStoredJson(persistKey, {
+    search: "",
+    partySearch: "",
+    activeDivision: "",
+    activeDepartment: "",
+    activeSection: "",
+    flowStep: "catalog" as "landing" | "existing" | "new" | "catalog",
+    cartOpen: false,
+    cartStep: "cart" as "cart" | "payment" | "summary",
+    billTaxOverride: { enabled: false, gstRate: "0" as GstRateInput, taxMode: "Exclusive" as TaxModeInput },
+    cartErrors: {} as Record<string, boolean>,
+    cartLines: [] as CartLine[],
+    partyDraft: { name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" },
+    advancePayment: { enabled: false, amount: "", mode: "" as PaymentMode | "", cashTiming: "In Hand", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "" },
+    checkoutDate: "",
+    partyDraftErrors: { name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false }
+  }) : null;
+  const [search, setSearch] = useState(persisted?.search || "");
+  const [partySearch, setPartySearch] = useState(persisted?.partySearch || "");
+  const [activeDivision, setActiveDivision] = useState(persisted?.activeDivision || "");
+  const [activeDepartment, setActiveDepartment] = useState(persisted?.activeDepartment || "");
+  const [activeSection, setActiveSection] = useState(persisted?.activeSection || "");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [partySuggestionOpen, setPartySuggestionOpen] = useState(false);
-  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">("catalog");
-  const [cartOpen, setCartOpen] = useState(false);
-  const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">("cart");
+  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || "catalog");
+  const [cartOpen, setCartOpen] = useState(Boolean(persisted?.cartOpen));
+  const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">(persisted?.cartStep || "cart");
   const [cartToast, setCartToast] = useState("");
-  const [billTaxOverride, setBillTaxOverride] = useState<{ enabled: boolean; gstRate: GstRateInput; taxMode: TaxModeInput }>({ enabled: false, gstRate: "0", taxMode: "Exclusive" });
-  const [cartErrors, setCartErrors] = useState<Record<string, boolean>>({});
-  const [cartLines, setCartLines] = useState<CartLine[]>([]);
+  const [billTaxOverride, setBillTaxOverride] = useState<{ enabled: boolean; gstRate: GstRateInput; taxMode: TaxModeInput }>(persisted?.billTaxOverride || { enabled: false, gstRate: "0", taxMode: "Exclusive" });
+  const [cartErrors, setCartErrors] = useState<Record<string, boolean>>(persisted?.cartErrors || {});
+  const [cartLines, setCartLines] = useState<CartLine[]>(persisted?.cartLines || []);
   const [submittingCart, setSubmittingCart] = useState(false);
   const [ratePopup, setRatePopup] = useState<{
     product: AppSnapshot["products"][number];
@@ -2528,11 +2592,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     taxMode: TaxModeInput;
     confirmHighRate: boolean;
   } | null>(null);
-  const [partyDraft, setPartyDraft] = useState({ name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
-  const [advancePayment, setAdvancePayment] = useState({ enabled: false, amount: "", mode: "" as PaymentMode | "", cashTiming: "In Hand", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "" });
+  const [partyDraft, setPartyDraft] = useState(persisted?.partyDraft || { name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
+  const [advancePayment, setAdvancePayment] = useState(persisted?.advancePayment || { enabled: false, amount: "", mode: "" as PaymentMode | "", cashTiming: "In Hand", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "" });
   const [advanceUploading, setAdvanceUploading] = useState(false);
-  const [checkoutDate, setCheckoutDate] = useState("");
-  const [partyDraftErrors, setPartyDraftErrors] = useState({ name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
+  const [checkoutDate, setCheckoutDate] = useState(persisted?.checkoutDate || "");
+  const [partyDraftErrors, setPartyDraftErrors] = useState(persisted?.partyDraftErrors || { name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
   const isPurchase = mode === "purchase";
   const partyType = isPurchase ? "Supplier" : "Shop";
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
@@ -2541,6 +2605,26 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const divisions = Array.from(new Set(products.map((item) => productCategoryLabel(item)).filter(Boolean)));
   const normalizedSearch = search.trim().toLowerCase();
   const showingCategoryLanding = activeDivision === "" && normalizedSearch === "";
+  useEffect(() => {
+    if (!persistKey) return;
+    writeStoredJson(persistKey, {
+      search,
+      partySearch,
+      activeDivision,
+      activeDepartment,
+      activeSection,
+      flowStep,
+      cartOpen,
+      cartStep,
+      billTaxOverride,
+      cartErrors,
+      cartLines,
+      partyDraft,
+      advancePayment,
+      checkoutDate,
+      partyDraftErrors
+    });
+  }, [persistKey, search, partySearch, activeDivision, activeDepartment, activeSection, flowStep, cartOpen, cartStep, billTaxOverride, cartErrors, cartLines, partyDraft, advancePayment, checkoutDate, partyDraftErrors]);
   function productMatchScore(product: AppSnapshot["products"][number], query: string) {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return 0;
@@ -3855,7 +3939,9 @@ function PurchaserPurchaseWorkspace({
     }>;
   }) => Promise<boolean | void>;
 }) {
-  const [tab, setTab] = useState<"current" | "update" | "summary">(initialUpdateOrderId ? "update" : "current");
+  const workspaceKey = workspaceStorageKey(currentUser.id, "purchase-workspace");
+  const persisted = readStoredJson(workspaceKey, { tab: initialUpdateOrderId ? "update" : "current" as "current" | "update" | "summary" });
+  const [tab, setTab] = useState<"current" | "update" | "summary">(persisted.tab || (initialUpdateOrderId ? "update" : "current"));
   const myOrders = purchaseOrders
     .filter((order) => (order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName) && isOpenPurchaseOrder(order))
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
@@ -3863,6 +3949,9 @@ function PurchaserPurchaseWorkspace({
   useEffect(() => {
     if (initialUpdateOrderId) setTab("update");
   }, [initialUpdateOrderId]);
+  useEffect(() => {
+    writeStoredJson(workspaceKey, { tab });
+  }, [tab, workspaceKey]);
 
   return (
     <section className="module-stack">
@@ -3878,6 +3967,7 @@ function PurchaserPurchaseWorkspace({
         purchaseOrders={purchaseOrders}
         orderForm={orderForm}
         setOrderForm={setOrderForm}
+        persistKey={workspaceStorageKey(currentUser.id, "purchase-catalog")}
         onCreateParty={onCreateParty}
         onUploadProof={onUploadProof}
         onSubmit={onSubmit}
@@ -5809,7 +5899,14 @@ function WarehouseOperationsViewV2({
 }) {
   type PurchaseGroup = { id: string; lines: PurchaseOrder[] };
   type SalesGroup = { id: string; lines: SalesOrder[] };
-  const [activeTab, setActiveTab] = useState<"home" | "in" | "out">(screen === "in" ? "in" : screen === "out" ? "out" : "home");
+  const persistKey = workspaceStorageKey(currentUser.id, `warehouse-ops-${screen}`);
+  const persisted = readStoredJson(persistKey, {
+    activeTab: screen === "in" ? "in" : screen === "out" ? "out" : "home" as "home" | "in" | "out",
+    inboundStep: "pickup" as "pickup" | "receive" | "planned",
+    outboundStep: "check" as "check" | "tag" | "bundle" | "planned",
+    consignmentDraft: { docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] }
+  });
+  const [activeTab, setActiveTab] = useState<"home" | "in" | "out">(persisted.activeTab || (screen === "in" ? "in" : screen === "out" ? "out" : "home"));
   const [expandedReceive, setExpandedReceive] = useState<Record<string, boolean>>({});
   const [expandedReceiveVendor, setExpandedReceiveVendor] = useState<Record<string, boolean>>({});
   const [expandedReceiveDocketSummary, setExpandedReceiveDocketSummary] = useState<Record<string, boolean>>({});
@@ -5838,8 +5935,8 @@ function WarehouseOperationsViewV2({
   const [receiptsMode, setReceiptsMode] = useState<"receipt" | "tag">("receipt");
   const [receiptStage, setReceiptStage] = useState<"checks" | "planned">("checks");
   const [dispatchesMode, setDispatchesMode] = useState<"dispatch" | "tag">("dispatch");
-  const [inboundStep, setInboundStep] = useState<"pickup" | "receive" | "planned">("pickup");
-  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned">(
+  const [inboundStep, setInboundStep] = useState<"pickup" | "receive" | "planned">(persisted.inboundStep || "pickup");
+  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned">(persisted.outboundStep || (
     canManageDeliveryTagging && snapshot.deliveryDockets.some((item) => item.status === "Ready" && !item.consignmentId)
       ? "bundle"
       : canManageDeliveryTagging && snapshot.deliveryConsignments.some((item) => item.status === "Ready")
@@ -5847,12 +5944,12 @@ function WarehouseOperationsViewV2({
         : snapshot.deliveryTasks.some((task) => task.side === "Sales" && task.mode === "Delivery" && task.consignmentId && task.status === "Planned")
           ? "planned"
           : "check"
-  );
+  ));
   const [incomingDrafts, setIncomingDrafts] = useState<Record<string, { receivedQuantity: string; actualWeightKg: string; containerWeightKg: string; weighingProofName: string; cashProofName: string; note: string }>>({});
   const [outgoingDrafts, setOutgoingDrafts] = useState<Record<string, { containerWeightKg: string; weighingProofName: string; assignedTo: string }>>({});
   const [receiveSummaryDrafts, setReceiveSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
   const [sendSummaryDrafts, setSendSummaryDrafts] = useState<Record<string, { proofName: string }>>({});
-  const [consignmentDraft, setConsignmentDraft] = useState({ docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] });
+  const [consignmentDraft, setConsignmentDraft] = useState(persisted.consignmentDraft || { docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] });
   const inboundDeliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
   const outboundDeliveryUsers = snapshot.users.filter(isOutboundDeliveryUser);
   const defaultInboundDeliveryUsername = inboundDeliveryUsers[0]?.username || "in";
@@ -5873,11 +5970,19 @@ function WarehouseOperationsViewV2({
   const docketBySalesOrderId = new Map(snapshot.deliveryDockets.map((item) => [item.salesOrderId, item]));
   const consignmentById = new Map(snapshot.deliveryConsignments.map((item) => [item.id, item]));
 
-    useEffect(() => {
-      if (screen === "in") setActiveTab("in");
-      else if (screen === "out") setActiveTab("out");
-      else setActiveTab("home");
-    }, [screen]);
+  useEffect(() => {
+    if (screen === "in") setActiveTab("in");
+    else if (screen === "out") setActiveTab("out");
+    else setActiveTab("home");
+  }, [screen]);
+  useEffect(() => {
+    writeStoredJson(persistKey, {
+      activeTab,
+      inboundStep,
+      outboundStep,
+      consignmentDraft
+    });
+  }, [persistKey, activeTab, inboundStep, outboundStep, consignmentDraft]);
   useEffect(() => {
     if (!canManageDeliveryTagging && inboundStep === "pickup") setInboundStep("receive");
     if (!canManageWarehouseChecks && inboundStep === "receive") setInboundStep(canManageDeliveryTagging ? "pickup" : "planned");
