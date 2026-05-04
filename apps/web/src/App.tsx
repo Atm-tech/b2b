@@ -1,7 +1,7 @@
 import axios from "axios";
 import { jsPDF } from "jspdf";
 import QRCode from "qrcode";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type {
   AppSnapshot,
@@ -158,6 +158,11 @@ type OrderStatusSummary = {
   completed: boolean;
   totalAmount: number;
   note: string;
+};
+
+type OrderStatusAccess = {
+  authorized: boolean;
+  reason: string;
 };
 
 function orderQrShortLabel(target: OrderQrTarget) {
@@ -2433,6 +2438,74 @@ function buildOrderStatusSummary(snapshot: AppSnapshot, target: OrderQrTarget): 
   };
 }
 
+function orderStatusAccess(snapshot: AppSnapshot, user: AppUser, target: OrderQrTarget): OrderStatusAccess {
+  const roles = userRoleList(user);
+  const warehouseScope = userWarehouseScope(user);
+  const scopedByWarehouse = isWarehouseScoped(user);
+  const isAdminLike = roles.includes("Admin") || roles.includes("Accounts") || roles.includes("Data Analyst");
+
+  if (target.side === "Purchase") {
+    const group = groupPurchaseOrders(snapshot.purchaseOrders).find((item) => item.id === target.orderId);
+    if (!group) return { authorized: false, reason: "Unauthorized access. This PO is outside your visible scope." };
+    if (isAdminLike) return { authorized: true, reason: "" };
+    if (roles.includes("Purchaser")) {
+      const ownsOrder = group.lines.some((line) => line.purchaserId === user.id || line.purchaserName === user.fullName);
+      return ownsOrder
+        ? { authorized: true, reason: "" }
+        : { authorized: false, reason: "Unauthorized access. This PO is not assigned to you." };
+    }
+    if (roles.includes("Warehouse Manager") || roles.includes("Delivery Manager")) {
+      const inWarehouse = !scopedByWarehouse || group.lines.some((line) => warehouseScope.has(line.warehouseId));
+      return inWarehouse
+        ? { authorized: true, reason: "" }
+        : { authorized: false, reason: "Unauthorized access. This PO belongs to another warehouse." };
+    }
+    if (isDeliveryExecutive(user)) {
+      const assignedPurchaseOrders = new Set(
+        deliveryTasksForUser(snapshot, user)
+          .filter((task) => task.side === "Purchase")
+          .flatMap((task) => task.linkedOrderIds)
+      );
+      return assignedPurchaseOrders.has(target.orderId)
+        ? { authorized: true, reason: "" }
+        : { authorized: false, reason: "Unauthorized access. This PO is not assigned to your delivery queue." };
+    }
+    return { authorized: false, reason: "Unauthorized access. Your role cannot open purchase order status." };
+  }
+
+  const group = groupSalesOrders(snapshot.salesOrders).find((item) => item.id === target.orderId);
+  if (!group) return { authorized: false, reason: "Unauthorized access. This SO is outside your visible scope." };
+  if (isAdminLike) return { authorized: true, reason: "" };
+  if (roles.includes("Sales")) {
+    const ownsOrder = group.lines.some((line) => line.salesmanId === user.id || line.salesmanName === user.fullName);
+    return ownsOrder
+      ? { authorized: true, reason: "" }
+      : { authorized: false, reason: "Unauthorized access. This SO is not assigned to you." };
+  }
+  if (roles.includes("Collection Agent")) {
+    return collectionVisibleToUser(snapshot, group, user)
+      ? { authorized: true, reason: "" }
+      : { authorized: false, reason: "Unauthorized access. This SO is not assigned for your collection work." };
+  }
+  if (roles.includes("Warehouse Manager") || roles.includes("Delivery Manager")) {
+    const inWarehouse = !scopedByWarehouse || group.lines.some((line) => warehouseScope.has(line.warehouseId));
+    return inWarehouse
+      ? { authorized: true, reason: "" }
+      : { authorized: false, reason: "Unauthorized access. This SO belongs to another warehouse." };
+  }
+  if (isDeliveryExecutive(user)) {
+    const assignedSalesOrders = new Set(
+      deliveryTasksForUser(snapshot, user)
+        .filter((task) => task.side === "Sales")
+        .flatMap((task) => task.linkedOrderIds)
+    );
+    return assignedSalesOrders.has(target.orderId)
+      ? { authorized: true, reason: "" }
+      : { authorized: false, reason: "Unauthorized access. This SO is not assigned to your delivery queue." };
+  }
+  return { authorized: false, reason: "Unauthorized access. Your role cannot open sales order status." };
+}
+
 function buildOrderStatusPdf(summary: OrderStatusSummary) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const margin = 14;
@@ -2544,26 +2617,29 @@ function OrderQrCard({
 
 function OrderStatusOverlay({
   snapshot,
+  currentUser,
   target,
   onClose,
   onOpenAction
 }: {
   snapshot: AppSnapshot;
+  currentUser: AppUser;
   target: OrderQrTarget;
   onClose: () => void;
   onOpenAction: (target: OrderQrTarget) => void;
 }) {
+  const access = orderStatusAccess(snapshot, currentUser, target);
   const summary = buildOrderStatusSummary(snapshot, target);
   return <div className="cart-overlay" onClick={onClose}>
     <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
       <div className="cart-head">
         <div>
           <h3>{summary?.title || `${target.orderId} status`}</h3>
-          <p>{summary ? (summary.completed ? "Completed status page." : "Current pending action page.") : "Order is not visible in this login scope."}</p>
+          <p>{!access.authorized ? access.reason : summary ? (summary.completed ? "Completed status page." : "Current pending action page.") : "Order is not visible in this login scope."}</p>
         </div>
         <button type="button" className="ghost-button" onClick={onClose}>Close</button>
       </div>
-      {!summary ? <div className="empty-card">This order is not available in your current role or warehouse scope.</div> : <>
+      {!access.authorized ? <div className="empty-card">{access.reason}</div> : !summary ? <div className="empty-card">This order is not available in your current role or warehouse scope.</div> : <>
         <article className="list-card">
           <div className="payment-update-head">
             <div>
@@ -2603,7 +2679,24 @@ function QrScanOverlay({
 }) {
   const [manualValue, setManualValue] = useState("");
   const [error, setError] = useState("");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [scannerMode, setScannerMode] = useState<"camera" | "manual">("camera");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectingRef = useRef(false);
   const barcodeDetectorAvailable = typeof window !== "undefined" && "BarcodeDetector" in window;
+  const cameraAvailable = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraReady(false);
+    setCameraStarting(false);
+  }
 
   async function openFromValue(value: string) {
     const parsed = parseOrderQrValue(value);
@@ -2614,6 +2707,66 @@ function QrScanOverlay({
     setError("");
     onScan(parsed);
   }
+
+  useEffect(() => {
+    if (scannerMode !== "camera" || !barcodeDetectorAvailable || !cameraAvailable) return;
+    let active = true;
+    async function startCamera() {
+      setCameraStarting(true);
+      setError("");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false
+        });
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+        }
+        setCameraReady(true);
+      } catch {
+        setError("Camera access failed. Allow camera permission or use manual input below.");
+        setScannerMode("manual");
+      } finally {
+        if (active) setCameraStarting(false);
+      }
+    }
+    void startCamera();
+    return () => {
+      active = false;
+      stopCamera();
+    };
+  }, [scannerMode, barcodeDetectorAvailable, cameraAvailable]);
+
+  useEffect(() => {
+    if (scannerMode !== "camera" || !cameraReady || !barcodeDetectorAvailable || !videoRef.current) return;
+    const Detector = (window as Window & { BarcodeDetector?: new (options?: { formats?: string[] }) => { detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>> } }).BarcodeDetector;
+    if (!Detector) return;
+    const detector = new Detector({ formats: ["qr_code"] });
+    const interval = window.setInterval(() => {
+      if (!videoRef.current || detectingRef.current || videoRef.current.readyState < 2) return;
+      detectingRef.current = true;
+      void detector.detect(videoRef.current).then((matches) => {
+        const value = matches[0]?.rawValue || "";
+        if (value) {
+          stopCamera();
+          void openFromValue(value);
+        }
+      }).catch(() => undefined).finally(() => {
+        detectingRef.current = false;
+      });
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [scannerMode, cameraReady, barcodeDetectorAvailable]);
+
+  useEffect(() => () => {
+    stopCamera();
+  }, []);
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -2638,7 +2791,7 @@ function QrScanOverlay({
   }
 
   return <div className="cart-overlay" onClick={onClose}>
-    <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className="cart-sheet qr-scan-sheet" onClick={(e) => e.stopPropagation()}>
       <div className="cart-head">
         <div>
           <h3>Scan order QR</h3>
@@ -2646,17 +2799,28 @@ function QrScanOverlay({
         </div>
         <button type="button" className="ghost-button" onClick={onClose}>Close</button>
       </div>
+      {barcodeDetectorAvailable && cameraAvailable ? <div className="summary-switch-bar">
+        <button className={scannerMode === "camera" ? "tab-button active" : "tab-button"} type="button" onClick={() => setScannerMode("camera")}>Live camera</button>
+        <button className={scannerMode === "manual" ? "tab-button active" : "tab-button"} type="button" onClick={() => { stopCamera(); setScannerMode("manual"); }}>Manual</button>
+      </div> : null}
       <div className="form-grid">
+        {scannerMode === "camera" && barcodeDetectorAvailable && cameraAvailable ? <div className="wide-field qr-camera-panel">
+          <div className="qr-camera-frame">
+            <video ref={videoRef} className="qr-camera-video" playsInline muted />
+            {!cameraReady ? <div className="qr-camera-overlay">{cameraStarting ? "Starting camera..." : "Waiting for camera..."}</div> : null}
+          </div>
+          <p className="small-label">Point the QR inside the frame. It will open automatically after detection.</p>
+        </div> : null}
         <label className="wide-field">Paste QR link or code
           <input value={manualValue} onChange={(e) => setManualValue(e.target.value)} placeholder="https://... or AAPOORTI|Sales|SO-123" />
         </label>
         <div className="payment-card-actions wide-field">
           <button className="primary-button" type="button" onClick={() => void openFromValue(manualValue)}>Open status</button>
         </div>
-        <label className="wide-field">Scan from camera or image
+        <label className="wide-field">Scan from image
           <input type="file" accept="image/*" capture="environment" onChange={handleFile} />
         </label>
-        {!barcodeDetectorAvailable ? <p className="message success wide-field">If camera decoding is unsupported here, open the QR in your phone camera and the link will still work.</p> : null}
+        {!barcodeDetectorAvailable || !cameraAvailable ? <p className="message success wide-field">Live in-app camera scanning is unavailable on this browser. Use image scan, paste the link, or open the QR in your phone camera.</p> : null}
         {error ? <p className="message error wide-field">{error}</p> : null}
       </div>
     </div>
@@ -3015,6 +3179,13 @@ function App() {
 
   useEffect(() => {
     if (!pendingQrTarget || !currentUser || !snapshot) return;
+    const access = orderStatusAccess(snapshot, currentUser, pendingQrTarget);
+    if (!access.authorized) {
+      setOrderStatusTarget(pendingQrTarget);
+      clearOrderQrTargetFromLocation();
+      setPendingQrTarget(null);
+      return;
+    }
     const summary = buildOrderStatusSummary(snapshot, pendingQrTarget);
     setOrderStatusTarget(pendingQrTarget);
     if (summary) {
@@ -3272,7 +3443,12 @@ function App() {
   const applyWarehouseScope = isWarehouseScoped(currentUser);
 
   function openOrderStatus(target: OrderQrTarget, navigate = false) {
-    if (!snapshot) return;
+    if (!snapshot || !currentUser) return;
+    const access = orderStatusAccess(snapshot, currentUser, target);
+    if (!access.authorized) {
+      setOrderStatusTarget(target);
+      return;
+    }
     const summary = buildOrderStatusSummary(snapshot, target);
     setOrderStatusTarget(target);
     if (!navigate || !summary) return;
@@ -3759,7 +3935,7 @@ function App() {
         </div>
       </section>
       {scanOverlayOpen ? <QrScanOverlay onClose={() => setScanOverlayOpen(false)} onScan={handleQrScan} /> : null}
-      {orderStatusTarget ? <OrderStatusOverlay snapshot={snapshot} target={orderStatusTarget} onClose={() => setOrderStatusTarget(null)} onOpenAction={(target) => openOrderStatus(target, true)} /> : null}
+      {orderStatusTarget ? <OrderStatusOverlay snapshot={snapshot} currentUser={currentUser} target={orderStatusTarget} onClose={() => setOrderStatusTarget(null)} onOpenAction={(target) => openOrderStatus(target, true)} /> : null}
       {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>

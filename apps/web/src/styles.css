@@ -1533,6 +1533,44 @@ textarea {
   max-width: min(75vw, 520px);
 }
 
+.qr-scan-sheet {
+  max-width: min(100%, 760px);
+}
+
+.qr-camera-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.qr-camera-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #d7f5ff, #f8fafc);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.qr-camera-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.qr-camera-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.28);
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+}
+
 .rate-warning-box {
   padding: 0.9rem 1rem;
   border-radius: 14px;
