@@ -3852,7 +3852,7 @@ function App() {
               />
             ) : null
           ) : null}
-          {activeView === "Ledger" ? <TwoCol left={<Panel title="Ledger" eyebrow="Accounts visibility"><DataTable headers={["ID","Side","Order","Party","Goods","Paid","Pending"]} rows={snapshot.ledgerEntries.map((l) => [l.id, l.side, l.linkedOrderId, l.partyName, l.goodsValue, l.paidAmount, l.pendingAmount])} /></Panel>} right={<Panel title="Order Financial State" eyebrow="Pending vs settled"><DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} /></Panel>} /> : null}
+          {activeView === "Ledger" ? (isAccountsUser ? <AccountsLedgerWorkspace snapshot={snapshot} /> : <TwoCol left={<Panel title="Ledger" eyebrow="Accounts visibility"><DataTable headers={["ID","Side","Order","Party","Goods","Paid","Pending"]} rows={snapshot.ledgerEntries.map((l) => [l.id, l.side, l.linkedOrderId, l.partyName, l.goodsValue, l.paidAmount, l.pendingAmount])} /></Panel>} right={<Panel title="Order Financial State" eyebrow="Pending vs settled"><DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} /></Panel>} />) : null}
           {activeView === "Stock" ? (
             isDataAnalyst ? <AnalystInventoryView snapshot={snapshot} /> :
             isWarehouseOnly || currentRoles.includes("Warehouse Manager") ? (
@@ -10214,6 +10214,184 @@ function AccountsOverviewLegacy({ snapshot, onOpen }: { snapshot: AppSnapshot; o
   );
 }
 
+function AccountsLedgerView({ snapshot }: { snapshot: AppSnapshot }) {
+  const [searchText, setSearchText] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const openEntries = snapshot.ledgerEntries
+    .filter((entry) => entry.pendingAmount > 0)
+    .sort((left, right) => right.pendingAmount - left.pendingAmount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const groupedParties = Array.from(openEntries.reduce((map, entry) => {
+    const key = `${entry.side}:${entry.partyName}`;
+    const current = map.get(key) || { key, side: entry.side, partyName: entry.partyName, entries: [] as typeof openEntries };
+    current.entries.push(entry);
+    map.set(key, current);
+    return map;
+  }, new Map<string, { key: string; side: "Purchase" | "Sales"; partyName: string; entries: typeof openEntries }>())
+    .values())
+    .map((group) => ({
+      ...group,
+      totalGoods: group.entries.reduce((sum, entry) => sum + entry.goodsValue, 0),
+      totalPaid: group.entries.reduce((sum, entry) => sum + entry.paidAmount, 0),
+      totalPending: group.entries.reduce((sum, entry) => sum + entry.pendingAmount, 0)
+    }))
+    .filter((group) => `${group.partyName} ${group.side}`.toLowerCase().includes(searchText.trim().toLowerCase()))
+    .sort((left, right) => right.totalPending - left.totalPending || left.partyName.localeCompare(right.partyName, "en-IN"));
+  const visibleGroups = showAll ? groupedParties : groupedParties.slice(0, 8);
+
+  function partyCsvRows(group: typeof groupedParties[number]) {
+    return group.entries.map((entry) => [
+      entry.side,
+      entry.linkedOrderId,
+      entry.partyName,
+      entry.goodsValue,
+      entry.paidAmount,
+      entry.pendingAmount,
+      formatShortDate(entry.createdAt)
+    ]);
+  }
+
+  return <section className="collapse-stack">
+    <Panel title="Ledger" eyebrow="Open party balances">
+      <div className="form-grid">
+        <label className="wide-field">Search party
+          <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Party name or side" />
+        </label>
+      </div>
+      <div className="payment-card-actions top-gap">
+        <button className="ghost-button" type="button" onClick={() => downloadCsvFile("open-ledger-parties.csv", ["Side", "Order", "Party", "Goods", "Paid", "Pending", "Created"], visibleGroups.flatMap((group) => partyCsvRows(group)))}>Download visible CSV</button>
+        {groupedParties.length > 8 ? <button className="ghost-button" type="button" onClick={() => setShowAll((current) => !current)}>{showAll ? "Show top 8" : "Show all parties"}</button> : null}
+      </div>
+      <div className="stack-list payment-update-list top-gap">
+        {visibleGroups.length === 0 ? <div className="empty-card">No open parties found.</div> : visibleGroups.map((group) => <article className="list-card payment-update-card" key={group.key}>
+          <div className="payment-update-head">
+            <div>
+              <strong>{group.partyName}</strong>
+              <p>{group.side === "Purchase" ? "Supplier ledger" : "Customer ledger"} · {group.entries.length} open order(s)</p>
+            </div>
+            <span className={`status-pill ${statusPillClass("Pending")}`}>{formatCurrencyInr(group.totalPending)}</span>
+          </div>
+          <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Goods</span><strong>{formatCurrencyInr(group.totalGoods)}</strong></div>
+            <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(group.totalPaid)}</strong></div>
+            <div><span className="small-label">Pending</span><strong>{formatCurrencyInr(group.totalPending)}</strong></div>
+            <div><span className="small-label">Orders</span><strong>{group.entries.length}</strong></div>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => downloadCsvFile(safePdfFileName(`${group.partyName}-${group.side}-ledger.csv`), ["Side", "Order", "Party", "Goods", "Paid", "Pending", "Created"], partyCsvRows(group))}>Download CSV</button>
+          </div>
+        </article>)}
+      </div>
+    </Panel>
+      <Panel title="Order Financial State" eyebrow="Pending vs settled">
+        <DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} />
+      </Panel>
+  </section>;
+}
+
+function AccountsLedgerWorkspace({ snapshot }: { snapshot: AppSnapshot }) {
+  const [searchText, setSearchText] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [openPartyKey, setOpenPartyKey] = useState("");
+  const normalizedSearch = searchText.trim().toLowerCase();
+  const sourceEntries = (normalizedSearch ? snapshot.ledgerEntries : snapshot.ledgerEntries.filter((entry) => entry.pendingAmount > 0))
+    .sort((left, right) => right.pendingAmount - left.pendingAmount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const groupedParties = Array.from(sourceEntries.reduce((map, entry) => {
+    const key = `${entry.side}:${entry.partyName}`;
+    const current = map.get(key) || { key, side: entry.side, partyName: entry.partyName, entries: [] as typeof sourceEntries };
+    current.entries.push(entry);
+    map.set(key, current);
+    return map;
+  }, new Map<string, { key: string; side: "Purchase" | "Sales"; partyName: string; entries: typeof sourceEntries }>())
+    .values())
+    .map((group) => ({
+      ...group,
+      totalGoods: group.entries.reduce((sum, entry) => sum + entry.goodsValue, 0),
+      totalPaid: group.entries.reduce((sum, entry) => sum + entry.paidAmount, 0),
+      totalPending: group.entries.reduce((sum, entry) => sum + entry.pendingAmount, 0)
+    }))
+    .filter((group) => !normalizedSearch || `${group.partyName} ${group.side} ${group.entries.map((entry) => entry.linkedOrderId).join(" ")}`.toLowerCase().includes(normalizedSearch))
+    .sort((left, right) => right.totalPending - left.totalPending || left.partyName.localeCompare(right.partyName, "en-IN"));
+  const visibleGroups = showAll ? groupedParties : groupedParties.slice(0, 6);
+
+  function partyCsvRows(group: typeof groupedParties[number]) {
+    return group.entries.map((entry) => [
+      entry.side,
+      entry.linkedOrderId,
+      entry.partyName,
+      entry.goodsValue,
+      entry.paidAmount,
+      entry.pendingAmount,
+      formatShortDate(entry.createdAt)
+    ]);
+  }
+
+  useEffect(() => {
+    if (visibleGroups.length === 0) {
+      if (openPartyKey) setOpenPartyKey("");
+      return;
+    }
+    if (!visibleGroups.some((group) => group.key === openPartyKey)) {
+      setOpenPartyKey(visibleGroups[0].key);
+    }
+  }, [visibleGroups, openPartyKey]);
+
+  return <section className="collapse-stack">
+    <Panel title="Ledger" eyebrow={normalizedSearch ? "Full party ledger" : "Open party balances"}>
+      <div className="form-grid">
+        <label className="wide-field">Search party
+          <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Party name, side, or order id" />
+        </label>
+      </div>
+      <div className="payment-card-actions top-gap">
+        <button className="ghost-button" type="button" onClick={() => downloadCsvFile(normalizedSearch ? "party-ledger-search.csv" : "open-ledger-parties.csv", ["Side", "Order", "Party", "Goods", "Paid", "Pending", "Created"], visibleGroups.flatMap((group) => partyCsvRows(group)))}>Download visible CSV</button>
+        {groupedParties.length > 6 ? <button className="ghost-button" type="button" onClick={() => setShowAll((current) => !current)}>{showAll ? "Show top 6" : "Show all parties"}</button> : null}
+      </div>
+      <div className="stack-list payment-update-list top-gap">
+        {visibleGroups.length === 0 ? <div className="empty-card">{normalizedSearch ? "No party matched the search." : "No open parties found."}</div> : visibleGroups.map((group) => <article className="list-card payment-update-card" key={group.key}>
+          <div className="payment-update-head">
+            <div>
+              <strong>{group.partyName}</strong>
+              <p>{group.side === "Purchase" ? "Supplier ledger" : "Customer ledger"} | {group.entries.length} {normalizedSearch ? (group.entries.length === 1 ? "ledger entry" : "ledger entries") : (group.entries.length === 1 ? "open order" : "open orders")}</p>
+            </div>
+            <span className={`status-pill ${statusPillClass(group.totalPending <= 0 ? "Completed" : "Pending")}`}>{formatCurrencyInr(group.totalPending)}</span>
+          </div>
+          <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Goods</span><strong>{formatCurrencyInr(group.totalGoods)}</strong></div>
+            <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(group.totalPaid)}</strong></div>
+            <div><span className="small-label">Pending</span><strong>{formatCurrencyInr(group.totalPending)}</strong></div>
+            <div><span className="small-label">Orders</span><strong>{group.entries.length}</strong></div>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => setOpenPartyKey((current) => current === group.key ? "" : group.key)}>{openPartyKey === group.key ? "Hide party" : "Open party"}</button>
+            <button className="ghost-button" type="button" onClick={() => downloadCsvFile(safePdfFileName(`${group.partyName}-${group.side}-ledger.csv`), ["Side", "Order", "Party", "Goods", "Paid", "Pending", "Created"], partyCsvRows(group))}>Download CSV</button>
+          </div>
+          {openPartyKey === group.key ? <div className="stack-list top-gap">
+            {group.entries.map((entry) => <article className="list-card" key={entry.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{entry.linkedOrderId}</strong>
+                  <p>{formatShortDate(entry.createdAt)} | {entry.side}</p>
+                </div>
+                <span className={`status-pill ${statusPillClass(entry.pendingAmount <= 0 ? "Completed" : entry.paidAmount > 0 ? "Partial" : "Pending")}`}>
+                  {entry.pendingAmount <= 0 ? "Settled" : entry.paidAmount > 0 ? "Partial" : "Pending"}
+                </span>
+              </div>
+              <div className="payment-meta-grid top-gap">
+                <div><span className="small-label">Goods</span><strong>{formatCurrencyInr(entry.goodsValue)}</strong></div>
+                <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(entry.paidAmount)}</strong></div>
+                <div><span className="small-label">Pending</span><strong>{formatCurrencyInr(entry.pendingAmount)}</strong></div>
+              </div>
+            </article>)}
+          </div> : null}
+        </article>)}
+      </div>
+    </Panel>
+    <Panel title="Order Financial State" eyebrow="Pending vs settled">
+      <DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} />
+    </Panel>
+  </section>;
+}
+
 function AccountsOverview({
   snapshot,
   onOpen,
@@ -10738,23 +10916,31 @@ type ProductFormState = { sku: string; name: string; division: string; departmen
 
 function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
   const [openId, setOpenId] = useState("");
-  const headers = ["PO / Cart", "Supplier", "Products", "Taxable", "GST", "Total", "Status"];
-  const rows = groupPurchaseRows(orders, snapshot);
-  const groups = groupPurchaseOrders(orders)
+  const [partySearch, setPartySearch] = useState("");
+  const [settlementFilter, setSettlementFilter] = useState<"All" | "Unsettled" | "Settled">("All");
+  const [workflowFilter, setWorkflowFilter] = useState("All");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const allGroups = groupPurchaseOrders(orders)
     .map((group) => {
       const first = group.lines[0];
       const ledger = purchaseLedgerByOrder(snapshot, group.id);
+      const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+      const pending = ledger?.pendingAmount ?? total;
+      const paid = ledger?.paidAmount ?? 0;
+      const status = purchaseWorkflowStatus(snapshot, group.id);
       return {
         id: group.id,
         party: first?.supplierName || "Supplier",
         createdAt: first?.createdAt || "",
         products: group.lines.map((line) => line.productSku),
-        total: group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
+        total,
         taxable: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
         gst: group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
-        pending: ledger?.pendingAmount ?? group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
-        paid: ledger?.paidAmount ?? 0,
-        status: purchaseWorkflowStatus(snapshot, group.id),
+        pending,
+        paid,
+        settlement: pending > 0 ? (paid > 0 ? "Partial" : "Unsettled") : "Settled",
+        status,
         warehouse: purchaseWarehouseStatus(group.lines),
         delivery: purchaseDeliveryStatus(snapshot, group.id)
       };
@@ -10762,13 +10948,66 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
     .sort((left, right) => {
       const pendingDiff = Number(right.pending > 0) - Number(left.pending > 0);
       if (pendingDiff !== 0) return pendingDiff;
-      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
+  const workflowOptions = Array.from(new Set(allGroups.map((group) => group.status))).sort((left, right) => left.localeCompare(right, "en-IN"));
+  const filteredGroups = allGroups.filter((item) => {
+    const dateKey = indiaDateKey(new Date(item.createdAt));
+    const matchesParty = `${item.party} ${item.id}`.toLowerCase().includes(partySearch.trim().toLowerCase());
+    const matchesSettlement = settlementFilter === "All" || (settlementFilter === "Settled" ? item.pending <= 0 : item.pending > 0);
+    const matchesWorkflow = workflowFilter === "All" || item.status === workflowFilter;
+    const matchesFrom = !fromDate || dateKey >= fromDate;
+    const matchesTo = !toDate || dateKey <= toDate;
+    return matchesParty && matchesSettlement && matchesWorkflow && matchesFrom && matchesTo;
+  });
+  const headers = ["PO / Cart", "Supplier", "Date", "Products", "Taxable", "GST", "Total", "Paid", "Pending", "Settlement", "Workflow", "Warehouse", "Delivery"];
+  const rows = filteredGroups.map((item) => [
+    item.id,
+    item.party,
+    formatShortDate(item.createdAt),
+    item.products.join(", "),
+    item.taxable,
+    item.gst,
+    item.total,
+    item.paid,
+    item.pending,
+    item.settlement,
+    item.status,
+    item.warehouse,
+    item.delivery
+  ]);
   return (
-    <Panel title="Purchase Report" eyebrow="Oldest unsettled first">
-      <div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("purchase-report.csv", headers, rows)}>Download CSV</button></div>
+    <Panel title="Purchase Report" eyebrow="Party, settlement, and date filters">
+      <div className="form-grid">
+        <label>Search party / PO
+          <input value={partySearch} onChange={(e) => setPartySearch(e.target.value)} placeholder="Supplier name or PO id" />
+        </label>
+        <label>Settlement
+          <select value={settlementFilter} onChange={(e) => setSettlementFilter(e.target.value as "All" | "Unsettled" | "Settled")}>
+            <option value="All">All</option>
+            <option value="Unsettled">Unsettled</option>
+            <option value="Settled">Settled</option>
+          </select>
+        </label>
+        <label>Workflow status
+          <select value={workflowFilter} onChange={(e) => setWorkflowFilter(e.target.value)}>
+            <option value="All">All</option>
+            {workflowOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+        <label>From
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </label>
+        <label>To
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </label>
+      </div>
+      <div className="payment-card-actions top-gap">
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("purchase-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
+      </div>
       <div className="report-accordion-list">
-        {groups.length === 0 ? <div className="empty-card">No purchase orders yet.</div> : groups.map((item) => {
+        {filteredGroups.length === 0 ? <div className="empty-card">No purchase orders matched the selected filters.</div> : filteredGroups.map((item) => {
           const open = openId === item.id;
           return <article className="list-card report-accordion-card" key={item.id}>
             <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
@@ -10779,10 +11018,12 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
               </div>
               <div className="report-accordion-vitals">
                 <span><small>Total</small><strong>{formatCurrencyInr(item.total)}</strong></span>
+                <span><small>Paid</small><strong>{formatCurrencyInr(item.paid)}</strong></span>
                 <span><small>Pending</small><strong>{formatCurrencyInr(item.pending)}</strong></span>
               </div>
               <div className="report-accordion-side">
                 <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+                <span className={`status-pill ${statusPillClass(item.pending <= 0 ? "Completed" : item.paid > 0 ? "Partial" : "Pending")}`}>{item.settlement}</span>
                 <span className="status-pill">{open ? "Close" : "Open"}</span>
               </div>
             </button>
@@ -10803,13 +11044,19 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
 
 function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders: SalesOrder[] }) {
   const [openId, setOpenId] = useState("");
-  const headers = ["SO / Cart", "Shop", "Products", "Taxable", "GST", "Total", "Status"];
-  const rows = groupSalesRows(orders, snapshot);
-  const groups = groupSalesOrders(orders)
+  const [partySearch, setPartySearch] = useState("");
+  const [settlementFilter, setSettlementFilter] = useState<"All" | "Unsettled" | "Settled">("All");
+  const [workflowFilter, setWorkflowFilter] = useState("All");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const allGroups = groupSalesOrders(orders)
     .map((group) => {
       const first = group.lines[0];
       const ledger = snapshot?.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
       const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+      const pending = ledger?.pendingAmount ?? total;
+      const paid = ledger?.paidAmount ?? 0;
+      const status = snapshot ? `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}` : salesStatusLabel(first?.status || "Booked");
       return {
         id: group.id,
         party: first?.shopName || "Customer",
@@ -10818,9 +11065,10 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
         total,
         taxable: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0),
         gst: group.lines.reduce((sum, line) => sum + line.gstAmount, 0),
-        pending: ledger?.pendingAmount ?? total,
-        paid: ledger?.paidAmount ?? 0,
-        status: snapshot ? `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}` : salesStatusLabel(first?.status || "Booked"),
+        pending,
+        paid,
+        settlement: pending > 0 ? (paid > 0 ? "Partial" : "Unsettled") : "Settled",
+        status,
         delivery: snapshot ? salesDeliveryStatus(snapshot, group.id) : first?.deliveryMode || "N/A",
         fulfillment: salesFulfillmentStatus(group.lines)
       };
@@ -10828,16 +11076,67 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
     .sort((left, right) => {
       const pendingDiff = Number(right.pending > 0) - Number(left.pending > 0);
       if (pendingDiff !== 0) return pendingDiff;
-      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
+  const workflowOptions = Array.from(new Set(allGroups.map((group) => group.status))).sort((left, right) => left.localeCompare(right, "en-IN"));
+  const filteredGroups = allGroups.filter((item) => {
+    const dateKey = indiaDateKey(new Date(item.createdAt));
+    const matchesParty = `${item.party} ${item.id}`.toLowerCase().includes(partySearch.trim().toLowerCase());
+    const matchesSettlement = settlementFilter === "All" || (settlementFilter === "Settled" ? item.pending <= 0 : item.pending > 0);
+    const matchesWorkflow = workflowFilter === "All" || item.status === workflowFilter;
+    const matchesFrom = !fromDate || dateKey >= fromDate;
+    const matchesTo = !toDate || dateKey <= toDate;
+    return matchesParty && matchesSettlement && matchesWorkflow && matchesFrom && matchesTo;
+  });
+  const headers = ["SO / Cart", "Customer", "Date", "Products", "Taxable", "GST", "Total", "Paid", "Pending", "Settlement", "Workflow", "Delivery", "Fulfillment"];
+  const rows = filteredGroups.map((item) => [
+    item.id,
+    item.party,
+    formatShortDate(item.createdAt),
+    item.products.join(", "),
+    item.taxable,
+    item.gst,
+    item.total,
+    item.paid,
+    item.pending,
+    item.settlement,
+    item.status,
+    item.delivery,
+    item.fulfillment
+  ]);
   return (
-    <Panel title="Sales Report" eyebrow="Oldest unsettled first">
+    <Panel title="Sales Report" eyebrow="Party, settlement, and date filters">
+      <div className="form-grid">
+        <label>Search customer / SO
+          <input value={partySearch} onChange={(e) => setPartySearch(e.target.value)} placeholder="Customer name or SO id" />
+        </label>
+        <label>Settlement
+          <select value={settlementFilter} onChange={(e) => setSettlementFilter(e.target.value as "All" | "Unsettled" | "Settled")}>
+            <option value="All">All</option>
+            <option value="Unsettled">Unsettled</option>
+            <option value="Settled">Settled</option>
+          </select>
+        </label>
+        <label>Workflow status
+          <select value={workflowFilter} onChange={(e) => setWorkflowFilter(e.target.value)}>
+            <option value="All">All</option>
+            {workflowOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+        <label>From
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </label>
+        <label>To
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </label>
+      </div>
       <div className="payment-card-actions">
-        <button className="ghost-button" type="button" onClick={() => downloadCsvFile("sales-report.csv", headers, rows)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("sales-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
         {snapshot ? <button className="ghost-button" type="button" onClick={() => downloadDailySalesReportPdf(snapshot, orders)}>Daily PDF</button> : null}
       </div>
       <div className="report-accordion-list">
-        {groups.length === 0 ? <div className="empty-card">No sales orders yet.</div> : groups.map((item) => {
+        {filteredGroups.length === 0 ? <div className="empty-card">No sales orders matched the selected filters.</div> : filteredGroups.map((item) => {
           const open = openId === item.id;
           return <article className="list-card report-accordion-card" key={item.id}>
             <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
@@ -10848,10 +11147,12 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
               </div>
               <div className="report-accordion-vitals">
                 <span><small>Total</small><strong>{formatCurrencyInr(item.total)}</strong></span>
+                <span><small>Paid</small><strong>{formatCurrencyInr(item.paid)}</strong></span>
                 <span><small>Pending</small><strong>{formatCurrencyInr(item.pending)}</strong></span>
               </div>
               <div className="report-accordion-side">
                 <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
+                <span className={`status-pill ${statusPillClass(item.pending <= 0 ? "Completed" : item.paid > 0 ? "Partial" : "Pending")}`}>{item.settlement}</span>
                 <span className="status-pill">{open ? "Close" : "Open"}</span>
               </div>
             </button>

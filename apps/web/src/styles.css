@@ -2563,9 +2563,10 @@ textarea {
 .accounts-home-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.05fr) minmax(110px, auto);
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  grid-template-areas: "main metrics status";
   gap: clamp(0.75rem, 0.55rem + 0.35vw, 1rem);
-  align-items: center;
+  align-items: start;
   padding: clamp(0.85rem, 0.7rem + 0.35vw, 1rem) clamp(0.9rem, 0.72rem + 0.45vw, 1.1rem);
   border: 1px solid rgba(31, 41, 55, 0.08);
   border-radius: 20px;
@@ -2590,6 +2591,7 @@ textarea {
 }
 
 .accounts-home-main {
+  grid-area: main;
   display: grid;
   gap: 0.3rem;
 }
@@ -2609,15 +2611,19 @@ textarea {
 }
 
 .accounts-home-metrics {
+  grid-area: metrics;
   display: grid;
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: clamp(0.55rem, 0.35rem + 0.3vw, 0.9rem);
+  min-width: 0;
+  align-self: center;
 }
 
 .accounts-home-metrics span {
   display: grid;
   gap: 0.15rem;
   min-width: 0;
+  padding: 0.15rem 0;
 }
 
 .accounts-home-metrics small {
@@ -2631,6 +2637,14 @@ textarea {
   font-size: clamp(0.98rem, 0.9rem + 0.3vw, 1.28rem);
   line-height: 1.15;
   overflow-wrap: break-word;
+}
+
+.accounts-home-row .status-pill {
+  grid-area: status;
+  align-self: center;
+  justify-self: end;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .accounts-hero-panel {
@@ -3035,6 +3049,17 @@ textarea {
   .report-accordion-toggle,
   .report-accordion-vitals {
     grid-template-columns: 1fr;
+  }
+
+  .accounts-home-row {
+    grid-template-areas:
+      "main"
+      "metrics"
+      "status";
+  }
+
+  .accounts-home-row .status-pill {
+    justify-self: start;
   }
 
   .sidebar {
