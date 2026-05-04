@@ -785,6 +785,71 @@ textarea {
   justify-items: start;
 }
 
+.order-qr-card {
+  display: grid;
+  gap: 14px;
+}
+
+.order-qr-head {
+  align-items: flex-start;
+}
+
+.order-qr-title {
+  min-width: 0;
+}
+
+.order-qr-title p {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.order-qr-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.order-qr-image-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.order-qr-image {
+  width: 132px;
+  height: 132px;
+  border-radius: 16px;
+  background: #fff;
+  padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.order-qr-link {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.order-qr-link strong {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.order-qr-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+  align-content: start;
+  margin-top: 0;
+}
+
+.order-qr-actions .ghost-button,
+.order-qr-actions .primary-button {
+  width: 100%;
+}
+
 .date-filter-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2109,7 +2174,7 @@ textarea {
 }
 
 .dashboard-grid {
-  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
 }
 
 .warehouse-ops {
@@ -2170,14 +2235,6 @@ textarea {
 .payment-update-card {
   display: grid;
   gap: var(--space-3);
-}
-
-.payment-update-card .payment-update-head {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.payment-update-card .payment-update-head .status-pill {
-  justify-self: start;
 }
 
 .segmented-tabs {
@@ -2381,22 +2438,25 @@ textarea {
 }
 
 .payment-update-head {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
+  justify-items: start;
 }
 
 .payment-update-head > div,
 .payment-meta-grid > div {
   min-width: 0;
+  width: 100%;
 }
 
 .payment-update-head strong,
 .payment-meta-grid strong {
   display: block;
   min-width: 0;
+  width: 100%;
   font-size: clamp(1.02rem, 0.94rem + 0.4vw, 1.45rem);
   line-height: 1.2;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
@@ -2407,8 +2467,14 @@ textarea {
 
 .payment-update-head p {
   margin: 0.2rem 0 0;
+  width: 100%;
   font-size: clamp(0.92rem, 0.86rem + 0.18vw, 1.02rem);
   line-height: 1.35;
+}
+
+.payment-update-head .status-pill {
+  justify-self: start;
+  max-width: min(100%, 18rem);
 }
 
 .payment-meta-grid {
@@ -2822,6 +2888,19 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .order-qr-body {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .order-qr-image-wrap {
+    justify-content: flex-start;
+  }
+
+  .order-qr-actions {
+    width: 100%;
+  }
+
   .accounts-balance-bar,
   .accounts-priority-card,
   .accounts-payment-card,
@@ -3150,6 +3229,16 @@ textarea {
 @media (max-width: 640px) {
   :root {
     font-size: clamp(12px, 0.8vw + 10px, 14px);
+  }
+
+  .order-qr-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .order-qr-image {
+    width: 116px;
+    height: 116px;
   }
 
   .login-shell,

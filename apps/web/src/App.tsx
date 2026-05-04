@@ -1,5 +1,6 @@
 import axios from "axios";
 import { jsPDF } from "jspdf";
+import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import type {
@@ -136,6 +137,111 @@ const labels: Record<ViewKey, string> = {
 };
 
 const returnReasons: Array<PurchaseReturn["reason"]> = ["Rate Difference", "Damage", "Quality Issue", "Wrong Item", "Excess Quantity", "Other"];
+
+type OrderQrTarget = {
+  side: "Purchase" | "Sales";
+  orderId: string;
+};
+
+type OrderStatusSummary = {
+  target: OrderQrTarget;
+  title: string;
+  partyName: string;
+  createdAt: string;
+  warehouseNames: string[];
+  productSummary: string;
+  deliveryMode: string;
+  workflowStatus: string;
+  deliveryStatus: string;
+  paymentStatus: string;
+  currentAction: string;
+  completed: boolean;
+  totalAmount: number;
+  note: string;
+};
+
+function orderQrShortLabel(target: OrderQrTarget) {
+  return target.side === "Purchase" ? "PO" : "SO";
+}
+
+function buildOrderQrToken(target: OrderQrTarget) {
+  return `AAPOORTI|${target.side}|${target.orderId}`;
+}
+
+function buildOrderStatusUrl(target: OrderQrTarget) {
+  if (typeof window === "undefined") return buildOrderQrToken(target);
+  const url = new URL(window.location.href);
+  url.searchParams.set("qrSide", target.side);
+  url.searchParams.set("qrOrder", target.orderId);
+  return url.toString();
+}
+
+function parseOrderQrValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    try {
+      const url = new URL(trimmed);
+      const side = url.searchParams.get("qrSide");
+      const orderId = url.searchParams.get("qrOrder");
+      if ((side === "Purchase" || side === "Sales") && orderId) {
+        return { side, orderId } satisfies OrderQrTarget;
+      }
+    } catch {}
+  }
+  const tokenMatch = trimmed.match(/^AAPOORTI\|(Purchase|Sales)\|(.+)$/i);
+  if (tokenMatch) {
+    return { side: tokenMatch[1] === "Purchase" ? "Purchase" : "Sales", orderId: tokenMatch[2].trim() } satisfies OrderQrTarget;
+  }
+  const compactMatch = trimmed.match(/^(PO|SO)[:\s-]*(.+)$/i);
+  if (compactMatch) {
+    return { side: compactMatch[1].toUpperCase() === "PO" ? "Purchase" : "Sales", orderId: compactMatch[2].trim() } satisfies OrderQrTarget;
+  }
+  return null;
+}
+
+function readOrderQrTargetFromLocation() {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  const side = url.searchParams.get("qrSide");
+  const orderId = url.searchParams.get("qrOrder");
+  if ((side === "Purchase" || side === "Sales") && orderId) {
+    return { side, orderId } satisfies OrderQrTarget;
+  }
+  return null;
+}
+
+function clearOrderQrTargetFromLocation() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("qrSide");
+  url.searchParams.delete("qrOrder");
+  window.history.replaceState({}, "", url.toString());
+}
+
+async function copyTextToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === "undefined") return;
+  const input = document.createElement("textarea");
+  input.value = value;
+  document.body.appendChild(input);
+  input.select();
+  document.execCommand("copy");
+  document.body.removeChild(input);
+}
+
+function downloadDataUrlFile(fileName: string, dataUrl: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 function displayLabel(view: ViewKey, user?: AppUser | null) {
   if (!user) return labels[view];
@@ -686,6 +792,7 @@ type InvoicePdfConfig = {
   createdAt?: string;
   statusLabel: string;
   note?: string;
+  qrDataUrl?: string;
   rows: InvoicePdfRow[];
   totals: Array<{ label: string; value: number }>;
   nonGst: boolean;
@@ -786,6 +893,11 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.text(config.statusLabel || "-", pageWidth - margin - 4, cursorY + 16, { align: "right" });
+  if (config.qrDataUrl) {
+    try {
+      doc.addImage(config.qrDataUrl, "PNG", pageWidth - margin - 34, cursorY + 2, 22, 22);
+    } catch {}
+  }
   cursorY += 30;
 
   const metaWidth = (contentWidth - 6) / 2;
@@ -870,11 +982,12 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   return doc.output("blob");
 }
 
-function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const nonGst = isNonGstInvoice(group.lines);
   const supplier = purchaseInvoiceCounterparty(snapshot, group);
+  const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Purchase", orderId: group.id }), { width: 180, margin: 1 });
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "purchase-tax-invoice"}.pdf`),
     documentTitle: "Purchase Tax Invoice",
@@ -883,8 +996,10 @@ function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lin
     warehouseName,
     createdAt: first?.createdAt,
     statusLabel: purchaseWorkflowStatus(snapshot, group.id),
+    qrDataUrl,
     note: nonGst ? displayOrderNote(first?.note) : [
       `Purchaser: ${invoiceValue(first?.purchaserName)}`,
+      `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
       `Contact: ${invoiceValue(supplier?.contactPerson)}`,
       `Mobile: ${invoiceValue(supplier?.mobileNumber)}`,
       `Address: ${invoiceValue(supplier?.deliveryAddress || supplier?.address)}`,
@@ -909,11 +1024,12 @@ function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lin
   });
 }
 
-function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const nonGst = isNonGstInvoice(group.lines);
   const customer = salesInvoiceCounterparty(snapshot, group);
+  const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Sales", orderId: group.id }), { width: 180, margin: 1 });
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "sales-tax-invoice"}.pdf`),
     documentTitle: "Sales Tax Invoice",
@@ -922,8 +1038,10 @@ function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines:
     warehouseName,
     createdAt: first?.createdAt,
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
+    qrDataUrl,
     note: nonGst ? displayOrderNote(first?.note) : [
       `Salesman: ${invoiceValue(first?.salesmanName)}`,
+      `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
       `Contact: ${invoiceValue(customer?.contactPerson)}`,
       `Mobile: ${invoiceValue(customer?.mobileNumber)}`,
       `Address: ${invoiceValue(customer?.deliveryAddress || customer?.address)}`,
@@ -953,23 +1071,23 @@ function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines:
   });
 }
 
-function downloadPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
-  const blob = buildPurchaseInvoicePdf(snapshot, group);
+async function downloadPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const blob = await buildPurchaseInvoicePdf(snapshot, group);
   downloadBlobFile(safePdfFileName(`${group.id}.pdf`), blob);
 }
 
-function downloadSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
-  const blob = buildSalesInvoicePdf(snapshot, group);
+async function downloadSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const blob = await buildSalesInvoicePdf(snapshot, group);
   downloadBlobFile(safePdfFileName(`${group.id}.pdf`), blob);
 }
 
 async function sharePurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
-  const blob = buildPurchaseInvoicePdf(snapshot, group);
+  const blob = await buildPurchaseInvoicePdf(snapshot, group);
   await shareInvoicePdfFile(safePdfFileName(`${group.id}.pdf`), blob, `Purchase invoice ${group.id}`);
 }
 
 async function shareSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
-  const blob = buildSalesInvoicePdf(snapshot, group);
+  const blob = await buildSalesInvoicePdf(snapshot, group);
   await shareInvoicePdfFile(safePdfFileName(`${group.id}.pdf`), blob, `Sales invoice ${group.id}`);
 }
 
@@ -1015,6 +1133,7 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
             <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
             <div><span>Contact</span><strong>${escapeHtml(invoiceValue(supplier?.contactPerson))}</strong></div>
             <div><span>Address</span><strong>${escapeHtml(invoiceValue(supplier?.deliveryAddress || supplier?.address))}</strong></div>
+            <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
             <div><span>Bill Type</span><strong>Non GST</strong></div>
@@ -1055,6 +1174,7 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           <div><span>Supplier</span><strong>${escapeHtml(invoiceValue(first?.supplierName || supplier?.name))}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+          <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
           <div><span>Bill Type</span><strong>GST</strong></div>
           <div><span>Supplier GST</span><strong>${escapeHtml(invoiceValue(supplier?.gstNumber))}</strong></div>
           <div><span>Purchaser</span><strong>${escapeHtml(invoiceValue(first?.purchaserName))}</strong></div>
@@ -1128,6 +1248,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
             <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
             <div><span>Contact</span><strong>${escapeHtml(invoiceValue(customer?.contactPerson))}</strong></div>
             <div><span>Address</span><strong>${escapeHtml(invoiceValue(customer?.deliveryAddress || customer?.address))}</strong></div>
+            <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
             <div><span>Bill Type</span><strong>Non GST</strong></div>
@@ -1170,6 +1291,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <div><span>Customer</span><strong>${escapeHtml(invoiceValue(first?.shopName || customer?.name))}</strong></div>
           <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
           <div><span>Created</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
+          <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
           <div><span>Bill Type</span><strong>GST</strong></div>
           <div><span>Customer GST</span><strong>${escapeHtml(invoiceValue(customer?.gstNumber))}</strong></div>
           <div><span>Salesman</span><strong>${escapeHtml(invoiceValue(first?.salesmanName))}</strong></div>
@@ -1557,8 +1679,13 @@ function salesDeliveryTask(snapshot: AppSnapshot, orderId: string) {
 }
 
 function salesDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
+  const lines = snapshot.salesOrders.filter((order) => orderPublicId(order) === orderId);
+  if (lines.length === 0) return "Delivery not assigned";
+  if (lines.every((line) => line.status === "Delivered" || line.status === "Closed")) return "Delivered";
   const task = salesDeliveryTask(snapshot, orderId);
-  if (!task) return "Delivery not assigned";
+  if (!task) {
+    return lines.some((line) => line.deliveryMode === "Self Collection") ? "Customer pickup" : "Delivery not assigned";
+  }
   return `${deliveryTaskStatusLabel(task)}${task.assignedTo ? ` to ${task.assignedTo}` : ""}`;
 }
 
@@ -1705,10 +1832,11 @@ function purchaseNeedsInternalPickup(lines: PurchaseOrder[]) {
 }
 
 function purchaseDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
+  const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
+  if (lines.length === 0) return "Delivery not assigned";
+  if (lines.every((line) => line.status === "Received" || line.status === "Closed")) return "Received";
   const task = purchaseDeliveryTask(snapshot, orderId);
   if (!task) {
-    const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
-    if (lines.length === 0) return "Delivery not assigned";
     return purchaseNeedsInternalPickup(lines) ? "Pickup not assigned" : "Vendor delivery";
   }
   return `${deliveryTaskStatusLabel(task)}${task.assignedTo ? ` to ${task.assignedTo}` : ""}`;
@@ -1717,6 +1845,7 @@ function purchaseDeliveryStatus(snapshot: AppSnapshot, orderId: string) {
 function statusPillClass(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes("flagged") || normalized.includes("disputed") || normalized.includes("rejected")) return "status-rejected";
+  if (normalized.includes("customer pickup") || normalized.includes("vendor delivery")) return "status-pending";
   if (normalized.includes("pending") || normalized.includes("partial") || normalized.includes("cash with delivery")) return "status-pending";
   if (normalized.includes("completed") || normalized.includes("received") || normalized.includes("delivered") || normalized.includes("verified") || normalized.includes("closed")) return "status-verified";
   return "status-pending";
@@ -2222,6 +2351,318 @@ function isDeliveryTaskPending(task: DeliveryTask) {
   return task.status !== "Handed Over" && task.status !== "Delivered";
 }
 
+function buildOrderStatusSummary(snapshot: AppSnapshot, target: OrderQrTarget): OrderStatusSummary | null {
+  if (target.side === "Purchase") {
+    const group = groupPurchaseOrders(snapshot.purchaseOrders).find((item) => item.id === target.orderId);
+    if (!group) return null;
+    const first = group.lines[0];
+    const task = purchaseDeliveryTask(snapshot, target.orderId);
+    const warehouseStatus = purchaseWarehouseStatus(group.lines);
+    const paymentStatus = purchasePaymentStatus(snapshot, target.orderId);
+    const workflowStatus = purchaseWorkflowStatus(snapshot, target.orderId);
+    const completed = group.lines.every((line) => line.status === "Received" || line.status === "Closed");
+    const currentAction = completed
+      ? "Completed"
+      : first?.deliveryMode === "Self Collection"
+        ? !task
+          ? "Pickup tagging pending"
+          : isDeliveryTaskPending(task)
+            ? "Pickup receipt pending"
+            : "Warehouse receiving pending"
+        : warehouseStatus !== "Received"
+          ? "Dealer receipt pending"
+          : paymentStatus !== "Completed"
+            ? "Accounts follow-up pending"
+            : "Completed";
+    return {
+      target,
+      title: `${target.orderId} Purchase Status`,
+      partyName: first?.supplierName || "Supplier",
+      createdAt: first?.createdAt || "",
+      warehouseNames: Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))),
+      productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantityOrdered}`).join(", "),
+      deliveryMode: first?.deliveryMode || "-",
+      workflowStatus,
+      deliveryStatus: purchaseDeliveryStatus(snapshot, target.orderId),
+      paymentStatus,
+      currentAction,
+      completed,
+      totalAmount: group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
+      note: displayOrderNote(first?.note)
+    };
+  }
+  const group = groupSalesOrders(snapshot.salesOrders).find((item) => item.id === target.orderId);
+  if (!group) return null;
+  const first = group.lines[0];
+  const task = salesDeliveryTask(snapshot, target.orderId);
+  const docketIds = new Set(snapshot.deliveryDockets.filter((item) => group.lines.some((line) => line.id === item.salesOrderId)).map((item) => item.id));
+  const openConsignment = snapshot.deliveryConsignments.find((item) => item.status !== "Delivered" && item.docketIds.some((docketId) => docketIds.has(docketId)));
+  const fulfillmentStatus = salesFulfillmentStatus(group.lines);
+  const paymentStatus = salesPaymentStatus(snapshot, target.orderId);
+  const completed = group.lines.every((line) => line.status === "Delivered" || line.status === "Closed");
+  const currentAction = completed
+    ? "Completed"
+    : first?.deliveryMode === "Self Collection"
+      ? "Self collection handover pending"
+      : !task && docketIds.size === 0
+        ? "Warehouse docket pending"
+        : !task && docketIds.size > 0 && !openConsignment
+          ? "Consignment bundling pending"
+        : !task && openConsignment
+            ? "Delivery tagging pending"
+            : task && isDeliveryTaskPending(task)
+              ? "Delivery execution pending"
+              : paymentStatus !== "Completed"
+                ? "Collection pending"
+                : "Completed";
+  return {
+    target,
+    title: `${target.orderId} Sales Status`,
+    partyName: first?.shopName || "Customer",
+    createdAt: first?.createdAt || "",
+    warehouseNames: Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))),
+    productSummary: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", "),
+    deliveryMode: first?.deliveryMode || "-",
+    workflowStatus: fulfillmentStatus,
+    deliveryStatus: salesDeliveryStatus(snapshot, target.orderId),
+    paymentStatus,
+    currentAction,
+    completed,
+    totalAmount: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0),
+    note: displayOrderNote(first?.note)
+  };
+}
+
+function buildOrderStatusPdf(summary: OrderStatusSummary) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const margin = 14;
+  const width = doc.internal.pageSize.getWidth() - margin * 2;
+  let y = 18;
+  doc.setFillColor(15, 118, 110);
+  doc.roundedRect(margin, y, width, 24, 4, 4, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text(summary.title, margin + 4, y + 9);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(`Current action: ${summary.currentAction}`, margin + 4, y + 17);
+  y += 34;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Order Snapshot", margin, y);
+  y += 7;
+  const rows = [
+    ["Order", `${orderQrShortLabel(summary.target)} / ${summary.target.orderId}`],
+    ["Party", summary.partyName],
+    ["Created", formatShortDate(summary.createdAt)],
+    ["Warehouse", summary.warehouseNames.join(", ") || "-"],
+    ["Mode", summary.deliveryMode],
+    ["Workflow", summary.workflowStatus],
+    ["Delivery", summary.deliveryStatus],
+    ["Payment", summary.paymentStatus],
+    ["Current action", summary.currentAction],
+    ["Total", formatCurrencyInr(summary.totalAmount)]
+  ];
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  rows.forEach(([label, value]) => {
+    doc.setTextColor(100, 116, 139);
+    doc.text(label, margin, y);
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(value), margin + 42, y);
+    y += 7;
+  });
+  y += 2;
+  doc.setFont("helvetica", "bold");
+  doc.text("Products", margin, y);
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  const productLines = doc.splitTextToSize(summary.productSummary || "-", width);
+  doc.text(productLines, margin, y);
+  y += productLines.length * 5 + 3;
+  if (summary.note) {
+    doc.setFont("helvetica", "bold");
+    doc.text("Note", margin, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    const noteLines = doc.splitTextToSize(summary.note, width);
+    doc.text(noteLines, margin, y);
+  }
+  return doc.output("blob");
+}
+
+function OrderQrCard({
+  target,
+  title,
+  onOpenStatus
+}: {
+  target: OrderQrTarget;
+  title: string;
+  onOpenStatus: (target: OrderQrTarget) => void;
+}) {
+  const [dataUrl, setDataUrl] = useState("");
+  const link = buildOrderStatusUrl(target);
+
+  useEffect(() => {
+    let active = true;
+    void QRCode.toDataURL(link, { width: 168, margin: 1 }).then((value: string) => {
+      if (active) setDataUrl(value);
+    }).catch(() => {
+      if (active) setDataUrl("");
+    });
+    return () => {
+      active = false;
+    };
+  }, [link]);
+
+  return <article className="list-card top-gap order-qr-card">
+    <div className="payment-update-head order-qr-head">
+      <div className="order-qr-title">
+        <strong>{title}</strong>
+        <p>{target.orderId}</p>
+      </div>
+      <span className="status-pill status-pending">{orderQrShortLabel(target)}</span>
+    </div>
+    <div className="order-qr-body top-gap">
+      <div className="order-qr-image-wrap">
+        {dataUrl ? <img className="order-qr-image" src={dataUrl} alt={`${target.orderId} status QR`} /> : <span className="small-label">QR loading...</span>}
+      </div>
+      <div className="order-qr-link">
+        <span className="small-label">Deep link</span>
+        <strong>{link}</strong>
+      </div>
+      <div className="payment-card-actions order-qr-actions">
+      <button className="ghost-button" type="button" onClick={() => void copyTextToClipboard(link)}>{`Copy ${orderQrShortLabel(target)} link`}</button>
+      <button className="ghost-button" type="button" disabled={!dataUrl} onClick={() => dataUrl ? downloadDataUrlFile(safePdfFileName(`${target.orderId}-qr.png`), dataUrl) : undefined}>Download QR</button>
+      <button className="primary-button" type="button" onClick={() => onOpenStatus(target)}>Open status</button>
+      </div>
+    </div>
+  </article>;
+}
+
+function OrderStatusOverlay({
+  snapshot,
+  target,
+  onClose,
+  onOpenAction
+}: {
+  snapshot: AppSnapshot;
+  target: OrderQrTarget;
+  onClose: () => void;
+  onOpenAction: (target: OrderQrTarget) => void;
+}) {
+  const summary = buildOrderStatusSummary(snapshot, target);
+  return <div className="cart-overlay" onClick={onClose}>
+    <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="cart-head">
+        <div>
+          <h3>{summary?.title || `${target.orderId} status`}</h3>
+          <p>{summary ? (summary.completed ? "Completed status page." : "Current pending action page.") : "Order is not visible in this login scope."}</p>
+        </div>
+        <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+      </div>
+      {!summary ? <div className="empty-card">This order is not available in your current role or warehouse scope.</div> : <>
+        <article className="list-card">
+          <div className="payment-update-head">
+            <div>
+              <strong>{summary.target.orderId}</strong>
+              <p>{summary.partyName}</p>
+            </div>
+            <span className={`status-pill ${summary.completed ? "status-verified" : "status-pending"}`}>{summary.completed ? "Completed" : "Pending"}</span>
+          </div>
+          <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Workflow</span><strong>{summary.workflowStatus}</strong></div>
+            <div><span className="small-label">Delivery</span><strong>{summary.deliveryStatus}</strong></div>
+            <div><span className="small-label">Payment</span><strong>{summary.paymentStatus}</strong></div>
+            <div><span className="small-label">Current action</span><strong>{summary.currentAction}</strong></div>
+            <div><span className="small-label">Warehouse</span><strong>{summary.warehouseNames.join(", ") || "-"}</strong></div>
+            <div><span className="small-label">Mode</span><strong>{summary.deliveryMode}</strong></div>
+            <div><span className="small-label">Created</span><strong>{formatShortDate(summary.createdAt)}</strong></div>
+            <div><span className="small-label">Total</span><strong>{formatCurrencyInr(summary.totalAmount)}</strong></div>
+            <div className="wide-field"><span className="small-label">Products</span><strong>{summary.productSummary}</strong></div>
+            {summary.note ? <div className="wide-field"><span className="small-label">Note</span><strong>{summary.note}</strong></div> : null}
+          </div>
+        </article>
+        <div className="payment-card-actions top-gap">
+          <button className="primary-button" type="button" onClick={() => onOpenAction(target)}>{summary.completed ? "Open completed page" : "Open current action"}</button>
+          <button className="ghost-button" type="button" onClick={() => downloadBlobFile(safePdfFileName(`${target.orderId}-status.pdf`), buildOrderStatusPdf(summary))}>Download status PDF</button>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
+function QrScanOverlay({
+  onClose,
+  onScan
+}: {
+  onClose: () => void;
+  onScan: (target: OrderQrTarget) => void;
+}) {
+  const [manualValue, setManualValue] = useState("");
+  const [error, setError] = useState("");
+  const barcodeDetectorAvailable = typeof window !== "undefined" && "BarcodeDetector" in window;
+
+  async function openFromValue(value: string) {
+    const parsed = parseOrderQrValue(value);
+    if (!parsed) {
+      setError("QR not recognized. Paste the Aapoorti link or scan a valid PO/SO QR.");
+      return;
+    }
+    setError("");
+    onScan(parsed);
+  }
+
+  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!barcodeDetectorAvailable) {
+      setError("Camera QR decode is not available on this browser. Open the QR link directly or paste it below.");
+      return;
+    }
+    try {
+      const Detector = (window as Window & { BarcodeDetector?: new (options?: { formats?: string[] }) => { detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>> } }).BarcodeDetector;
+      if (!Detector) return;
+      const bitmap = await createImageBitmap(file);
+      const detector = new Detector({ formats: ["qr_code"] });
+      const matches = await detector.detect(bitmap);
+      const value = matches[0]?.rawValue || "";
+      await openFromValue(value);
+    } catch {
+      setError("Unable to read QR from image. Try a clearer scan or paste the link manually.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  return <div className="cart-overlay" onClick={onClose}>
+    <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="cart-head">
+        <div>
+          <h3>Scan order QR</h3>
+          <p>Open PO or SO status and jump to the current action page.</p>
+        </div>
+        <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+      </div>
+      <div className="form-grid">
+        <label className="wide-field">Paste QR link or code
+          <input value={manualValue} onChange={(e) => setManualValue(e.target.value)} placeholder="https://... or AAPOORTI|Sales|SO-123" />
+        </label>
+        <div className="payment-card-actions wide-field">
+          <button className="primary-button" type="button" onClick={() => void openFromValue(manualValue)}>Open status</button>
+        </div>
+        <label className="wide-field">Scan from camera or image
+          <input type="file" accept="image/*" capture="environment" onChange={handleFile} />
+        </label>
+        {!barcodeDetectorAvailable ? <p className="message success wide-field">If camera decoding is unsupported here, open the QR in your phone camera and the link will still work.</p> : null}
+        {error ? <p className="message error wide-field">{error}</p> : null}
+      </div>
+    </div>
+  </div>;
+}
+
 function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   const today = new Date().toISOString().slice(0, 10);
@@ -2258,10 +2699,10 @@ function homeTaskCards(snapshot: AppSnapshot, user: AppUser) {
     const scopedSalesOrders = snapshot.salesOrders.filter((item) => warehouseScope.size === 0 || warehouseScope.has(item.warehouseId));
     const scopedTasks = snapshot.deliveryTasks.filter((task) => task.routeStops.some((stop) => warehouseScope.size === 0 || warehouseScope.has(stop.warehouseId)));
     return [
-      { label: "Inbound checks", value: countGroupedOrders(scopedPurchaseOrders.filter((item) => item.status !== "Received" && item.status !== "Closed")) },
-      { label: "Outbound checks", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.status === "Booked" || item.status === "Ready for Dispatch" || item.status === "Pending Pickup" || item.status === "Out for Delivery")) },
+      { label: "Dealer receipts", value: countGroupedOrders(scopedPurchaseOrders.filter((item) => item.deliveryMode === "Dealer Delivery" && item.status !== "Received" && item.status !== "Closed")) },
+      { label: "Self handovers", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.deliveryMode === "Self Collection" && ["Booked", "Ready for Dispatch", "Pending Pickup", "Out for Delivery", "Self Pickup"].includes(item.status))) },
       { label: "Pickup tags", value: scopedTasks.filter((task) => task.side === "Purchase" && task.status === "Planned").length },
-      { label: "Dispatch tags", value: scopedTasks.filter((task) => task.side === "Sales" && task.status === "Planned").length }
+      { label: "Dispatch flow", value: countGroupedOrders(scopedSalesOrders.filter((item) => item.deliveryMode === "Delivery" && ["Booked", "Ready for Dispatch", "Pending Pickup", "Out for Delivery"].includes(item.status))) }
     ];
   }
   if (roles.includes("Accounts")) {
@@ -2491,6 +2932,9 @@ function App() {
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const [purchaseUpdateOrderId, setPurchaseUpdateOrderId] = useState("");
   const [salesUpdateOrderId, setSalesUpdateOrderId] = useState("");
+  const [scanOverlayOpen, setScanOverlayOpen] = useState(false);
+  const [orderStatusTarget, setOrderStatusTarget] = useState<OrderQrTarget | null>(null);
+  const [pendingQrTarget, setPendingQrTarget] = useState<OrderQrTarget | null>(() => readOrderQrTargetFromLocation());
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
   const emptyPartyEditForm = { id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
 
@@ -2563,6 +3007,51 @@ function App() {
     const timeout = window.setTimeout(() => setMessage(""), 2400);
     return () => window.clearTimeout(timeout);
   }, [message]);
+
+  useEffect(() => {
+    const target = readOrderQrTargetFromLocation();
+    if (target) setPendingQrTarget(target);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingQrTarget || !currentUser || !snapshot) return;
+    const summary = buildOrderStatusSummary(snapshot, pendingQrTarget);
+    setOrderStatusTarget(pendingQrTarget);
+    if (summary) {
+      const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
+      if (pendingQrTarget.side === "Purchase") {
+        if (currentRoles.includes("Warehouse Manager")) {
+          setActiveView("Receipts");
+        } else if (currentRoles.includes("Delivery Manager")) {
+          setDeliveryManagerScreen("in");
+          setActiveView("Delivery");
+        } else if (currentRoles.includes("Accounts")) {
+          setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
+        } else {
+          setActiveView("Purchases");
+        }
+      } else {
+        if (currentRoles.includes("Warehouse Manager")) {
+          setActiveView("Stock");
+        } else if (currentRoles.includes("Delivery Manager")) {
+          setDeliveryManagerScreen("out");
+          setActiveView("Delivery");
+        } else if (currentRoles.includes("Accounts") || currentRoles.includes("Collection Agent")) {
+          setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
+        } else {
+          setActiveView("SalesOrders");
+        }
+      }
+      const warehouseId = pendingQrTarget.side === "Purchase"
+        ? findPurchaseOrderByPublicId(snapshot.purchaseOrders, pendingQrTarget.orderId)?.warehouseId
+        : findSalesOrderByPublicId(snapshot.salesOrders, pendingQrTarget.orderId)?.warehouseId;
+      if (warehouseId && currentRoles.includes("Delivery Manager")) {
+        setDeliveryManagerWarehouseId(warehouseId);
+      }
+    }
+    clearOrderQrTargetFromLocation();
+    setPendingQrTarget(null);
+  }, [pendingQrTarget, currentUser, snapshot]);
 
   useEffect(() => {
     if (!currentUser || !snapshot) return;
@@ -2781,6 +3270,48 @@ function App() {
       : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
+
+  function openOrderStatus(target: OrderQrTarget, navigate = false) {
+    if (!snapshot) return;
+    const summary = buildOrderStatusSummary(snapshot, target);
+    setOrderStatusTarget(target);
+    if (!navigate || !summary) return;
+    if (target.side === "Purchase") {
+      if (currentRoles.includes("Warehouse Manager")) {
+        setActiveView("Receipts");
+      } else if (currentRoles.includes("Delivery Manager")) {
+        setDeliveryManagerScreen("in");
+        setActiveView("Delivery");
+      } else if (currentRoles.includes("Accounts")) {
+        setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
+      } else {
+        setActiveView("Purchases");
+      }
+    } else {
+      if (currentRoles.includes("Warehouse Manager")) {
+        setActiveView("Stock");
+      } else if (currentRoles.includes("Delivery Manager")) {
+        setDeliveryManagerScreen("out");
+        setActiveView("Delivery");
+      } else if (currentRoles.includes("Accounts") || currentRoles.includes("Collection Agent")) {
+        setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
+      } else {
+        setActiveView("SalesOrders");
+      }
+    }
+    const warehouseId = target.side === "Purchase"
+      ? findPurchaseOrderByPublicId(snapshot.purchaseOrders, target.orderId)?.warehouseId
+      : findSalesOrderByPublicId(snapshot.salesOrders, target.orderId)?.warehouseId;
+    if (warehouseId && currentRoles.includes("Delivery Manager")) {
+      setDeliveryManagerWarehouseId(warehouseId);
+    }
+  }
+
+  function handleQrScan(target: OrderQrTarget) {
+    setScanOverlayOpen(false);
+    clearOrderQrTargetFromLocation();
+    openOrderStatus(target, true);
+  }
   const warehousesView = applyWarehouseScope ? snapshot.warehouses.filter((item) => warehouseScope.has(item.id)) : snapshot.warehouses;
   const purchaseOrdersView = applyWarehouseScope ? snapshot.purchaseOrders.filter((item) => warehouseScope.has(item.warehouseId)) : snapshot.purchaseOrders;
   const salesOrdersView = applyWarehouseScope ? snapshot.salesOrders.filter((item) => warehouseScope.has(item.warehouseId)) : snapshot.salesOrders;
@@ -3022,7 +3553,7 @@ function App() {
             ))}
           </section> : null}
 
-          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={setActiveView} onDownloadSalesDsr={() => downloadHomeDailySalesReportPdf(snapshot, currentUser)} onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")} onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")} /> : null}
+          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={setActiveView} onOpenQrScanner={() => setScanOverlayOpen(true)} onDownloadSalesDsr={() => downloadHomeDailySalesReportPdf(snapshot, currentUser)} onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")} onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")} /> : null}
           {activeView === "Users" ? <TwoCol left={<Panel title="Create User" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/users", { ...userForm, role: userForm.roles[0], roles: userForm.roles }, "User created.", () => setUserForm({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"], warehouseIds: [], password: "1234" })); }}><label>Username<input value={userForm.username} onChange={(e) => setUserForm((c) => ({ ...c, username: e.target.value }))} /></label><label>Name<input value={userForm.fullName} onChange={(e) => setUserForm((c) => ({ ...c, fullName: e.target.value }))} /></label><label>Mobile<input value={userForm.mobileNumber} onChange={(e) => setUserForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Roles<select multiple value={userForm.roles} onChange={(e) => setUserForm((c) => ({ ...c, roles: Array.from(e.target.selectedOptions).map((option) => option.value as UserRole) }))}>{userRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Warehouses<select multiple value={userForm.warehouseIds} onChange={(e) => setUserForm((c) => ({ ...c, warehouseIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label><label>Password<input value={userForm.password} onChange={(e) => setUserForm((c) => ({ ...c, password: e.target.value }))} /></label><button className="primary-button" type="submit">Create user</button></form></Panel>} right={<Panel title="Users" eyebrow="Directory"><DataTable headers={["Username","Name","Roles","Warehouses","Mobile"]} rows={snapshot.users.map((u) => [u.username, u.fullName, (u.roles && u.roles.length > 0 ? u.roles : [u.role]).join(", "), (u.warehouseIds || []).join(", ") || "All", u.mobileNumber])} /></Panel>} /> : null}
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
@@ -3046,7 +3577,7 @@ function App() {
               initialUpdateOrderId={purchaseUpdateOrderId}
             />
           </>) : null}
-          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} />) : null}
+          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
           {activeView === "PurchaseReturns" ? <ReturnsWorkspace
             side="Purchase"
             snapshot={snapshot}
@@ -3075,7 +3606,7 @@ function App() {
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} />) : null}
+          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
           {activeView === "SalesReturns" ? <ReturnsWorkspace
             side="Sales"
             snapshot={snapshot}
@@ -3227,6 +3758,8 @@ function App() {
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
         </div>
       </section>
+      {scanOverlayOpen ? <QrScanOverlay onClose={() => setScanOverlayOpen(false)} onScan={handleQrScan} /> : null}
+      {orderStatusTarget ? <OrderStatusOverlay snapshot={snapshot} target={orderStatusTarget} onClose={() => setOrderStatusTarget(null)} onOpenAction={(target) => openOrderStatus(target, true)} /> : null}
       {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>
@@ -4722,7 +5255,7 @@ function PurchaserPurchaseWorkspace({
   );
 }
 
-function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void }) {
+function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, onOpenStatus }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void; onOpenStatus?: (target: OrderQrTarget) => void }) {
   const allGroups = groupPurchaseOrders(orders).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
@@ -4850,13 +5383,14 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                   </div>
                   <div className="purchase-status-chips top-gap">
                     <span className="status-pill status-pending"><LabelWithBadge label="PO" count={1} /></span>
-                    <span className="status-pill status-pending">{purchaseDeliveryStatus(snapshot, group.id)}</span>
+                    <span className={`status-pill ${statusPillClass(purchaseDeliveryStatus(snapshot, group.id))}`}>{purchaseDeliveryStatus(snapshot, group.id)}</span>
                     <span className={`status-pill ${statusPillClass(`Payment ${purchasePaymentStatus(snapshot, group.id)}`)}`}>{purchasePaymentStatus(snapshot, group.id)}</span>
                   </div>
                 </button>
                 {expanded ? <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Supplier</span><strong>{first?.supplierName || "Supplier"}</strong></div>
                   <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Mode</span><strong>{first?.deliveryMode || "-"}</strong></div>
                   <div><span className="small-label">Delivery</span><strong>{purchaseDeliveryStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{purchasePaymentStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</strong></div>
@@ -4866,6 +5400,9 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo }:
                     <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, group)}>WhatsApp Share</button>
                     <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, group)}>Download PDF</button>
                   </div>
+                  {onOpenStatus ? <div className="wide-field">
+                    <OrderQrCard target={{ side: "Purchase", orderId: group.id }} title="PO status QR" onOpenStatus={onOpenStatus} />
+                  </div> : null}
                 </div> : null}
               </article>
             );
@@ -5205,7 +5742,7 @@ function PurchaseCartEditor({
   );
 }
 
-function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent, onLogCollectionNote }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; onLogCollectionNote: (orderId: string, note: string) => Promise<boolean | void>; }) {
+function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent, onLogCollectionNote, onOpenStatus }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; onLogCollectionNote: (orderId: string, note: string) => Promise<boolean | void>; onOpenStatus?: (target: OrderQrTarget) => void; }) {
   const allGroups = groupSalesOrders(orders).sort((left, right) => groupNewestCreatedAt(left.lines) - groupNewestCreatedAt(right.lines));
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
@@ -5374,13 +5911,14 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                   </div>
                   <div className="purchase-status-chips top-gap">
                     <span className="status-pill status-pending"><LabelWithBadge label="SO" count={1} /></span>
-                    <span className="status-pill status-pending">{salesDeliveryStatus(snapshot, group.id)}</span>
+                    <span className={`status-pill ${statusPillClass(salesDeliveryStatus(snapshot, group.id))}`}>{salesDeliveryStatus(snapshot, group.id)}</span>
                     <span className={`status-pill ${statusPillClass(`Payment ${salesPaymentStatus(snapshot, group.id)}`)}`}>{salesPaymentStatus(snapshot, group.id)}</span>
                   </div>
                 </button>
                 {expanded ? <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
                   <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Mode</span><strong>{first?.deliveryMode || "-"}</strong></div>
                   <div><span className="small-label">Delivery</span><strong>{salesDeliveryStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{salesPaymentStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Total</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0).toFixed(2)}</strong></div>
@@ -5390,6 +5928,9 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                     <button className="ghost-button" type="button" onClick={() => void shareSalesInvoicePdf(snapshot, group)}>WhatsApp Share</button>
                     <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, group)}>Download PDF</button>
                   </div>
+                  {onOpenStatus ? <div className="wide-field">
+                    <OrderQrCard target={{ side: "Sales", orderId: group.id }} title="SO status QR" onOpenStatus={onOpenStatus} />
+                  </div> : null}
                 </div> : null}
               </article>
             );
@@ -6928,8 +7469,8 @@ function WarehouseOperationsViewV2({
   const persistKey = workspaceStorageKey(currentUser.id, `warehouse-ops-${screen}`);
   const persisted = readStoredJson(persistKey, {
     activeTab: screen === "in" ? "in" : screen === "out" ? "out" : "home" as "home" | "in" | "out",
-    inboundStep: "pickup" as "pickup" | "receive" | "planned" | "completed",
-    outboundStep: "check" as "check" | "tag" | "bundle" | "planned" | "completed",
+    inboundStep: "pickup" as "pickup" | "dealer" | "receive" | "planned" | "completed",
+    outboundStep: "check" as "check" | "self" | "tag" | "bundle" | "planned" | "completed",
     consignmentDraft: { docketIds: [] as string[], warehouseId: "", assignedTo: ["out"] as string[] }
   });
   const [activeTab, setActiveTab] = useState<"home" | "in" | "out">(persisted.activeTab || (screen === "in" ? "in" : screen === "out" ? "out" : "home"));
@@ -6961,8 +7502,8 @@ function WarehouseOperationsViewV2({
   const [receiptsMode, setReceiptsMode] = useState<"receipt" | "tag">("receipt");
   const [receiptStage, setReceiptStage] = useState<"checks" | "planned">("checks");
   const [dispatchesMode, setDispatchesMode] = useState<"dispatch" | "tag">("dispatch");
-  const [inboundStep, setInboundStep] = useState<"pickup" | "receive" | "planned" | "completed">(persisted.inboundStep || "pickup");
-  const [outboundStep, setOutboundStep] = useState<"check" | "tag" | "bundle" | "planned" | "completed">(persisted.outboundStep || (
+  const [inboundStep, setInboundStep] = useState<"pickup" | "dealer" | "receive" | "planned" | "completed">(persisted.inboundStep || (canManageWarehouseChecks ? "dealer" : "pickup"));
+  const [outboundStep, setOutboundStep] = useState<"check" | "self" | "tag" | "bundle" | "planned" | "completed">(persisted.outboundStep || (
     canManageDeliveryTagging && snapshot.deliveryDockets.some((item) => item.status === "Ready" && !item.consignmentId)
       ? "bundle"
       : canManageDeliveryTagging && snapshot.deliveryConsignments.some((item) => item.status === "Ready")
@@ -7016,8 +7557,8 @@ function WarehouseOperationsViewV2({
     });
   }, [persistKey, activeTab, inboundStep, outboundStep, consignmentDraft]);
   useEffect(() => {
-    if (!canManageDeliveryTagging && inboundStep === "pickup") setInboundStep("receive");
-    if (!canManageWarehouseChecks && inboundStep === "receive") setInboundStep(canManageDeliveryTagging ? "pickup" : "planned");
+    if (!canManageDeliveryTagging && inboundStep === "pickup") setInboundStep(canManageWarehouseChecks ? "dealer" : "planned");
+    if (!canManageWarehouseChecks && (inboundStep === "dealer" || inboundStep === "receive")) setInboundStep(canManageDeliveryTagging ? "pickup" : "planned");
     if (!canManageDeliveryTagging && (outboundStep === "tag" || outboundStep === "bundle")) setOutboundStep("check");
     if (!canManageWarehouseChecks && outboundStep === "check") {
       setOutboundStep(
@@ -7028,6 +7569,7 @@ function WarehouseOperationsViewV2({
             : "planned"
       );
     }
+    if (!canManageWarehouseChecks && outboundStep === "self") setOutboundStep("planned");
   }, [canManageDeliveryTagging, canManageWarehouseChecks, inboundStep, outboundStep, snapshot.deliveryConsignments, snapshot.deliveryDockets]);
   useEffect(() => {
     setInboundAssignedTo((current) => {
@@ -7196,23 +7738,28 @@ function WarehouseOperationsViewV2({
   const bundleReadyConsignments = snapshot.deliveryConsignments
     .filter((item) => item.status === "Ready")
     .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const selfCollectionOutboundGroups = dispatchQueueGroups
+    .filter((group) => group.lines[0].deliveryMode === "Self Collection")
+    .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const directOutboundGroups = dispatchQueueGroups
-    .filter((group) => canManageWarehouseChecks ? (group.lines[0].deliveryMode === "Self Collection" || group.lines.every((line) => !docketBySalesOrderId.has(line.id))) : group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
+    .filter((group) => group.lines[0].deliveryMode !== "Self Collection" && group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
   const completedDirectOutboundGroups = completedSalesGroups
     .filter((group) => salesGroupMatchesDate(group))
     .sort((left, right) => Math.max(...right.lines.map((line) => new Date(line.createdAt).getTime())) - Math.max(...left.lines.map((line) => new Date(line.createdAt).getTime())));
   const inboundPickupPendingCount = sortGroupsForInboundTag(pendingReceiveGroups.filter((group) => !inboundTaskForGroup(group.id) && groupNeedsPickupTask(group))).length;
-  const inboundReceivePendingCount = receivingInboundDockets.length + directReceiveGroups.length;
+  const dealerReceiptPendingCount = directReceiveGroups.length;
+  const inboundReceivePendingCount = receivingInboundDockets.length;
   const inboundPlannedPendingCount = plannedInboundDockets.length;
   const inboundCompletedCount = completedInboundDockets.length + receivedGroups.length;
-  const inboundTotalPendingCount = inboundPickupPendingCount + inboundReceivePendingCount + inboundPlannedPendingCount;
-  const outboundCheckPendingCount = canManageWarehouseChecks ? activeOutboundDockets.length + directOutboundGroups.length : activeOutboundDockets.length;
+  const inboundTotalPendingCount = inboundPickupPendingCount + dealerReceiptPendingCount + inboundReceivePendingCount + inboundPlannedPendingCount;
+  const selfCollectionPendingCount = selfCollectionOutboundGroups.length;
+  const outboundCheckPendingCount = activeOutboundDockets.length + directOutboundGroups.length;
   const outboundTagPendingCount = bundleReadyConsignments.length;
   const outboundBundlePendingCount = openDockets.length + bundleReadyConsignments.length;
   const outboundPlannedPendingCount = plannedOutboundDockets.length;
   const outboundCompletedCount = completedOutboundDockets.length + completedDirectOutboundGroups.length;
-  const outboundTotalPendingCount = outboundCheckPendingCount + outboundTagPendingCount + outboundBundlePendingCount + outboundPlannedPendingCount;
+  const outboundTotalPendingCount = outboundCheckPendingCount + selfCollectionPendingCount + outboundTagPendingCount + outboundBundlePendingCount + outboundPlannedPendingCount;
   const outboundExportHeaders = outboundStep === "tag"
     ? consignmentExportHeaders()
     : outboundStep === "bundle"
@@ -7222,6 +7769,8 @@ function WarehouseOperationsViewV2({
     ? consignmentExportRows(snapshot, bundleReadyConsignments)
     : outboundStep === "bundle"
       ? docketExportRows(snapshot, openDockets)
+      : outboundStep === "self"
+        ? outboundOpsExportRows(snapshot, selfCollectionOutboundGroups, [])
       : outboundStep === "planned"
         ? outboundOpsExportRows(snapshot, [], plannedOutboundDockets.map((item) => ({ task: item.task })))
         : outboundStep === "completed"
@@ -7231,6 +7780,8 @@ function WarehouseOperationsViewV2({
     ? "Outbound Tag Queue Report"
     : outboundStep === "bundle"
       ? "Outbound Bundle Queue Report"
+      : outboundStep === "self"
+        ? "Self Collection Handover Report"
       : outboundStep === "planned"
         ? "Planned Outbound Tasks Report"
         : outboundStep === "completed"
@@ -7240,6 +7791,8 @@ function WarehouseOperationsViewV2({
     ? "outbound-tag"
     : outboundStep === "bundle"
       ? "outbound-bundle"
+      : outboundStep === "self"
+        ? "outbound-self"
       : outboundStep === "planned"
         ? "outbound-planned"
         : outboundStep === "completed"
@@ -7254,13 +7807,21 @@ function WarehouseOperationsViewV2({
   const inboundExportHeaders = inboundStep === "pickup" ? purchaseOrderExportHeaders() : inboundOpsExportHeaders();
   const inboundExportRowsData = inboundStep === "pickup"
     ? purchaseOrderExportRows(snapshot, inboundPickupGroups)
+    : inboundStep === "dealer"
+      ? inboundOpsExportRows(snapshot, directReceiveGroups, [])
+    : inboundStep === "receive"
+      ? inboundOpsExportRows(snapshot, [], receivingInboundDockets)
     : inboundStep === "planned"
       ? inboundOpsExportRows(snapshot, [], plannedInboundDockets)
       : inboundStep === "completed"
         ? inboundOpsExportRows(snapshot, receivedGroups, completedInboundDockets)
-        : inboundOpsExportRows(snapshot, directReceiveGroups, receivingInboundDockets);
+        : inboundOpsExportRows(snapshot, [], []);
   const inboundExportTitle = inboundStep === "pickup"
     ? "Inbound Pickup Queue Report"
+    : inboundStep === "dealer"
+      ? "Dealer Delivery Receipt Report"
+    : inboundStep === "receive"
+      ? "Inbound Pickup Receipt Report"
     : inboundStep === "planned"
       ? "Planned Inbound Tasks Report"
       : inboundStep === "completed"
@@ -7268,6 +7829,10 @@ function WarehouseOperationsViewV2({
       : "Warehouse Inbound Receive Report";
   const inboundExportPrefix = inboundStep === "pickup"
     ? "inbound-pickup"
+    : inboundStep === "dealer"
+      ? "inbound-dealer"
+    : inboundStep === "receive"
+      ? "inbound-receive"
     : inboundStep === "planned"
       ? "inbound-planned"
       : inboundStep === "completed"
@@ -7512,7 +8077,7 @@ function WarehouseOperationsViewV2({
           <span>{groupWeight(group, !received).toFixed(2)} kg</span>
           <span>{formatDateTimeIst(first.createdAt)}</span>
         </div>
-        <span className="status-pill status-pending">{received ? "Received" : needsPickupTask && inboundTask ? deliveryTaskStatusLabel(inboundTask) : first.status}</span>
+        <span className={`status-pill ${statusPillClass(received ? "Received" : needsPickupTask && inboundTask ? deliveryTaskStatusLabel(inboundTask) : first.status)}`}>{received ? "Received" : needsPickupTask && inboundTask ? deliveryTaskStatusLabel(inboundTask) : first.status}</span>
       </button>
       {needsPickupTask && inboundTask ? <p className="message success">Inbound task: {inboundTask.id} · {inboundTask.assignedTo} · {inboundTask.routeStops.length || 1} pickup stop(s)</p> : null}
       {!needsPickupTask ? <p className="message success">Vendor delivery. Warehouse only needs to receive and check the goods.</p> : null}
@@ -7575,7 +8140,7 @@ function WarehouseOperationsViewV2({
           {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
           <span>{formatDateTimeIst(task.createdAt)}</span>
         </div>
-        <span className="status-pill status-pending">{docketStatus}</span>
+        <span className={`status-pill ${statusPillClass(docketStatus)}`}>{docketStatus}</span>
       </button>
       {task.transportType === "External" && task.freightAmount ? <p className="message success">External vehicle {task.vehicleNumber || "Pending"} · Freight {task.freightAmount.toFixed(2)}</p> : null}
       {expanded ? <div className="stack-list top-gap">
@@ -7596,7 +8161,7 @@ function WarehouseOperationsViewV2({
                 <span>{groupPendingQty(group)} pending</span>
                 <span>{groupWeight(group, true).toFixed(2)} kg</span>
               </div>
-              <span className="status-pill status-pending">{vendorReceived ? "Received" : vendorPartial ? "Partially Received" : "Pending"}</span>
+              <span className={`status-pill ${statusPillClass(vendorReceived ? "Received" : vendorPartial ? "Partially Received" : "Pending")}`}>{vendorReceived ? "Received" : vendorPartial ? "Partially Received" : "Pending"}</span>
             </button>
             {vendorExpanded ? <div className="stack-list top-gap">
               {paidBeforeReceiving(group) ? <p className="message success">Payment already settled. Kept on top until receiving is completed.</p> : null}
@@ -7677,7 +8242,7 @@ function WarehouseOperationsViewV2({
           <span>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</span>
           <span>{formatDateTimeIst(first.createdAt)}</span>
         </div>
-        <span className="status-pill status-pending">{group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status)}</span>
+        <span className={`status-pill ${statusPillClass(group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status))}`}>{group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status)}</span>
       </button>
       {expanded ? <div className="form-grid top-gap">
         <label>Container weight<input type="number" step="any" value={draft.containerWeightKg} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, containerWeightKg: e.target.value } }))} /></label>
@@ -7758,7 +8323,7 @@ function WarehouseOperationsViewV2({
           {task.vehicleNumber ? <span>{task.vehicleNumber}</span> : null}
           <span>{formatDateTimeIst(task.createdAt)}</span>
         </div>
-        <span className="status-pill status-pending">{deliveryTaskStatusLabel(task)}</span>
+        <span className={`status-pill ${statusPillClass(deliveryTaskStatusLabel(task))}`}>{deliveryTaskStatusLabel(task)}</span>
       </button>
       {task.transportType === "External" && task.freightAmount ? <p className="message success">External vehicle {task.vehicleNumber || "Pending"} · Freight {task.freightAmount.toFixed(2)}</p> : null}
       {expanded ? <div className="stack-list top-gap">
@@ -7778,7 +8343,7 @@ function WarehouseOperationsViewV2({
                 <span>{group.lines.reduce((sum, line) => sum + line.quantity, 0)} qty</span>
                 <span>{paymentPending.toFixed(2)} pending</span>
               </div>
-              <span className="status-pill status-pending">{salesStatusLabel(first.status)}</span>
+              <span className={`status-pill ${statusPillClass(salesStatusLabel(first.status))}`}>{salesStatusLabel(first.status)}</span>
             </button>
             {stopExpanded ? renderOutgoingGroup(group, mode) : null}
           </article>;
@@ -7877,20 +8442,20 @@ function WarehouseOperationsViewV2({
           <button className={activeTab === "out" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("out")}><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></button>
         </div>
         <div className="simple-summary payment-summary-grid top-gap">
-          <div className="list-card"><div><strong>{pendingReceiveGroups.length}</strong><p>Pending to receive</p></div></div>
-          <div className="list-card"><div><strong>{receivedGroups.length}</strong><p>Received</p></div></div>
-          <div className="list-card"><div><strong>{dispatchQueueOrders.length}</strong><p>{canManageWarehouseChecks ? "Orders to send" : "Dispatch orders"}</p></div></div>
+          <div className="list-card"><div><strong>{canManageWarehouseChecks ? dealerReceiptPendingCount : inboundPickupPendingCount}</strong><p>{canManageWarehouseChecks ? "Dealer receipts" : "Pickup tags"}</p></div></div>
+          <div className="list-card"><div><strong>{canManageWarehouseChecks ? inboundReceivePendingCount : plannedInboundDockets.length}</strong><p>{canManageWarehouseChecks ? "Pickup receipts" : "Planned routes"}</p></div></div>
+          <div className="list-card"><div><strong>{canManageWarehouseChecks ? selfCollectionPendingCount : outboundTagPendingCount}</strong><p>{canManageWarehouseChecks ? "Self handovers" : "Dispatch tags"}</p></div></div>
           <div className="list-card"><div><strong>{snapshot.receiptChecks.filter((item) => item.flagged || item.partialReceipt).length}</strong><p>Partial / flagged</p></div></div>
         </div>
       </Panel> : null}
       {(screen === "full" && activeTab === "home") ? <>
         <Panel title={canManageWarehouseChecks ? "Warehouse Summary" : "Delivery Summary"} eyebrow="Home">
           <div className="stack-list warehouse-order-list">
-          <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("in"); setInboundStep(canManageDeliveryTagging ? "pickup" : "receive"); }}>
-            <strong><LabelWithBadge label="In" count={inboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Tag pickup, then monitor inward movement step by step." : "Receive inward orders and complete warehouse checks."}</p>
+          <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("in"); setInboundStep(canManageDeliveryTagging ? "pickup" : "dealer"); }}>
+            <strong><LabelWithBadge label="In" count={inboundTotalPendingCount} /></strong><p>{canManageDeliveryTagging ? "Tag supplier pickups, then monitor dealer and pickup receipts separately." : "Track pickup routing and receive inward tasks."}</p>
           </button>
           <button type="button" className="list-card warehouse-step-card" onClick={() => { setActiveTab("out"); setOutboundStep(canManageWarehouseChecks ? "check" : ((snapshot.deliveryDockets.some((item) => item.status === "Ready" && !item.consignmentId) || snapshot.deliveryConsignments.some((item) => item.status === "Ready")) ? "bundle" : "planned")); }}>
-            <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageWarehouseChecks ? "Check orders and create outbound dockets for dispatch." : "Bundle warehouse dockets into consignments and tag delivery."}</p>
+            <strong><LabelWithBadge label="Out" count={outboundTotalPendingCount} /></strong><p>{canManageWarehouseChecks ? "Check deliveries, hand over self-collection orders, and create outbound dockets." : "Bundle warehouse dockets into consignments and tag delivery."}</p>
           </button>
         </div>
         {!canManageWarehouseChecks ? <p className="message success top-gap">Customer self-collection handover stays with warehouse. Delivery manager only tracks status and delivery-side workload.</p> : null}
@@ -7900,9 +8465,10 @@ function WarehouseOperationsViewV2({
         <Panel title={canManageWarehouseChecks ? "Receipts" : "Inbound Routing"} eyebrow={canManageWarehouseChecks ? "Incoming orders" : "Pickup routes"}>
           <div className="segmented-tabs">
             {canManageDeliveryTagging ? <button className={inboundStep === "pickup" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("pickup")}><LabelWithBadge label="1. Pickup" count={inboundPickupPendingCount} /></button> : null}
-            {canManageWarehouseChecks ? <button className={inboundStep === "receive" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("receive")}><LabelWithBadge label={canManageDeliveryTagging ? "2. Receive" : "1. Receive"} count={inboundReceivePendingCount} /></button> : null}
-            <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "3. Planned" : canManageDeliveryTagging ? "2. Planned" : "2. Planned"} count={inboundPlannedPendingCount} /></button>
-            <button className={inboundStep === "completed" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("completed")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "4. Completed" : "3. Completed"} count={inboundCompletedCount} /></button>
+            {canManageWarehouseChecks ? <button className={inboundStep === "dealer" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("dealer")}><LabelWithBadge label={canManageDeliveryTagging ? "2. Dealer" : "1. Dealer"} count={dealerReceiptPendingCount} /></button> : null}
+            {canManageWarehouseChecks ? <button className={inboundStep === "receive" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("receive")}><LabelWithBadge label={canManageDeliveryTagging ? "3. Receive" : "2. Receive"} count={inboundReceivePendingCount} /></button> : null}
+            <button className={inboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "4. Planned" : canManageDeliveryTagging ? "2. Planned" : "3. Planned"} count={inboundPlannedPendingCount} /></button>
+            <button className={inboundStep === "completed" ? "tab-button active" : "tab-button"} type="button" onClick={() => setInboundStep("completed")}><LabelWithBadge label={canManageDeliveryTagging && canManageWarehouseChecks ? "5. Completed" : canManageDeliveryTagging ? "3. Completed" : "4. Completed"} count={inboundCompletedCount} /></button>
           </div>
         </Panel>
         {canManageDeliveryTagging && inboundStep === "pickup" ? <><Panel title="Tag In Delivery Team" eyebrow="Self collection only">
@@ -8000,19 +8566,30 @@ function WarehouseOperationsViewV2({
           </form>
           {pendingReceiveGroups.every((group) => !groupNeedsPickupTask(group) || Boolean(inboundTaskForGroup(group.id))) ? <p className="message success top-gap">No self-collection inbound pickup is waiting. Dealer-delivery orders are received directly by warehouse.</p> : null}
           <div className="payment-card-actions top-gap">
-            {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button> : <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned routes</button>}
+            {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("dealer")}>Go to dealer receipts</button> : <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned routes</button>}
           </div>
-        </Panel></> : inboundStep === "receive" ? <>
-            <Panel title="Checks On In" eyebrow="Single dockets to receive">
+        </Panel></> : inboundStep === "dealer" ? <>
+            <Panel title="Dealer Delivery Receipts" eyebrow="Receive direct vendor drops">
               <div className="warehouse-order-list">
-                {receivingInboundDockets.length === 0 && directReceiveGroups.length === 0 ? <div className="empty-card">No incoming orders pending.</div> : <>
-                  {receivingInboundDockets.map((item) => renderReceiveTaskDocket(item.task, false))}
-                  {directReceiveGroups.map((group) => renderReceiveGroup(group, false))}
-                </>}
+                {directReceiveGroups.length === 0 ? <div className="empty-card">No dealer-delivery receipts pending.</div> : directReceiveGroups.map((group) => renderReceiveGroup(group, false))}
               </div>
             </Panel>
             <div className="payment-card-actions">
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button> : null}
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to pickup receipts</button>
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned dockets</button>
+              <button className="ghost-button" type="button" onClick={() => setInboundStep("completed")}>View completed</button>
+            </div>
+          </> : inboundStep === "receive" ? <>
+            <Panel title="Pickup Receipts" eyebrow="Receive tagged self-collection loads">
+              <div className="warehouse-order-list">
+                {receivingInboundDockets.length === 0 ? <div className="empty-card">No pickup receipts pending.</div> : <>
+                  {receivingInboundDockets.map((item) => renderReceiveTaskDocket(item.task, false))}
+                </>}
+              </div>
+            </Panel>
+            <div className="payment-card-actions">
+              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("dealer")}>Back to dealer receipts</button> : null}
               <button className="ghost-button" type="button" onClick={() => setInboundStep("planned")}>View planned dockets</button>
               <button className="ghost-button" type="button" onClick={() => setInboundStep("completed")}>View completed</button>
             </div>
@@ -8022,7 +8599,8 @@ function WarehouseOperationsViewV2({
             </div>
             <div className="payment-card-actions top-gap">
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button> : null}
-              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to receive</button> : null}
+              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("dealer")}>Go to dealer receipts</button> : null}
+              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Go to pickup receipts</button> : null}
               <button className="ghost-button" type="button" onClick={() => setInboundStep("completed")}>View completed</button>
             </div>
           </Panel></> : <>{completedDateControls}
@@ -8039,7 +8617,8 @@ function WarehouseOperationsViewV2({
               </div>
               <div className="payment-card-actions top-gap">
                 {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setInboundStep("pickup")}>Back to pickup</button> : null}
-                {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Back to receive</button> : null}
+                {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("dealer")}>Back to dealer receipts</button> : null}
+                {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setInboundStep("receive")}>Back to pickup receipts</button> : null}
               </div>
             </Panel>
           </>}
@@ -8077,10 +8656,11 @@ function WarehouseOperationsViewV2({
         <Panel title="Dispatches" eyebrow="Outgoing orders">
           <div className="segmented-tabs">
             {canManageWarehouseChecks ? <button className={outboundStep === "check" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("check")}><LabelWithBadge label="1. Check" count={outboundCheckPendingCount} /></button> : null}
-            {canManageDeliveryTagging ? <button className={outboundStep === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("tag")}><LabelWithBadge label={canManageWarehouseChecks ? "2. Tag" : "1. Tag"} count={outboundTagPendingCount} /></button> : null}
-            {canManageDeliveryTagging ? <button className={outboundStep === "bundle" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("bundle")}><LabelWithBadge label={canManageWarehouseChecks ? "3. Bundle" : "2. Bundle"} count={outboundBundlePendingCount} /></button> : null}
-            <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "4. Planned" : "3. Planned") : "2. Planned"} count={outboundPlannedPendingCount} /></button>
-            <button className={outboundStep === "completed" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("completed")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "5. Completed" : "4. Completed") : "3. Completed"} count={outboundCompletedCount} /></button>
+            {canManageWarehouseChecks ? <button className={outboundStep === "self" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("self")}><LabelWithBadge label="2. Self" count={selfCollectionPendingCount} /></button> : null}
+            {canManageDeliveryTagging ? <button className={outboundStep === "tag" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("tag")}><LabelWithBadge label={canManageWarehouseChecks ? "3. Tag" : "1. Tag"} count={outboundTagPendingCount} /></button> : null}
+            {canManageDeliveryTagging ? <button className={outboundStep === "bundle" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("bundle")}><LabelWithBadge label={canManageWarehouseChecks ? "4. Bundle" : "2. Bundle"} count={outboundBundlePendingCount} /></button> : null}
+            <button className={outboundStep === "planned" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("planned")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "5. Planned" : "3. Planned") : "3. Planned"} count={outboundPlannedPendingCount} /></button>
+            <button className={outboundStep === "completed" ? "tab-button active" : "tab-button"} type="button" onClick={() => setOutboundStep("completed")}><LabelWithBadge label={canManageDeliveryTagging ? (canManageWarehouseChecks ? "6. Completed" : "4. Completed") : "4. Completed"} count={outboundCompletedCount} /></button>
           </div>
         </Panel>
         {outboundStep === "completed" ? <>{completedDateControls}
@@ -8103,10 +8683,20 @@ function WarehouseOperationsViewV2({
               {directOutboundGroups.map((group) => renderOutgoingGroup(group, "check-out"))}
             </>}
           </div>
-          {canManageDeliveryTagging ? <div className="payment-card-actions top-gap">
-            <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button>
+          <div className="payment-card-actions top-gap">
+            {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("self")}>Go to self collection</button> : null}
+            {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button> : null}
             <button className="ghost-button" type="button" onClick={() => setOutboundStep("completed")}>View completed</button>
-          </div> : null}
+          </div>
+        </Panel> : outboundStep === "self" ? <Panel title="Self Collection Handovers" eyebrow="Customer pickup from godown">
+          <div className="warehouse-order-list">
+            {selfCollectionOutboundGroups.length === 0 ? <div className="empty-card">No self-collection handovers pending.</div> : selfCollectionOutboundGroups.map((group) => renderOutgoingGroup(group, "check-out"))}
+          </div>
+          <div className="payment-card-actions top-gap">
+            {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}
+            {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("bundle")}>Go to bundle</button> : null}
+            <button className="ghost-button" type="button" onClick={() => setOutboundStep("completed")}>View completed</button>
+          </div>
         </Panel> : outboundStep === "tag" ? <>
           <Panel title="Tag Outbound Delivery Team" eyebrow="Assign bundled consignments">
             <form className="form-grid" onSubmit={async (event) => {
@@ -8226,6 +8816,7 @@ function WarehouseOperationsViewV2({
               }}>Club selected deliveries</button> : null}
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("tag")}>Back to tag</button> : null}
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Go to check</button> : null}
+              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("self")}>Go to self collection</button> : null}
               <button className="ghost-button" type="button" onClick={() => setOutboundStep("completed")}>View completed</button>
             </div>
           </Panel> : outboundStep === "bundle" ? <>{renderOutboundBundlePanel()}<div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => setOutboundStep("completed")}>View completed</button></div></> : <Panel title="Completed Dispatches" eyebrow="Done deliveries">
@@ -8237,6 +8828,7 @@ function WarehouseOperationsViewV2({
             </div>
             <div className="payment-card-actions top-gap">
               {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("check")}>Back to check</button> : null}
+              {canManageWarehouseChecks ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("self")}>Back to self collection</button> : null}
               {canManageDeliveryTagging ? <button className="ghost-button" type="button" onClick={() => setOutboundStep("planned")}>Back to planned</button> : null}
             </div>
           </Panel>}</> : null}
@@ -8960,11 +9552,12 @@ function DeliveryManagerHome({
   );
 }
 
-function Overview({ snapshot, currentUser, simpleMode, onOpen, onDownloadSalesDsr, onUploadProof, onCreatePurchaseAdvance }: {
+function Overview({ snapshot, currentUser, simpleMode, onOpen, onOpenQrScanner, onDownloadSalesDsr, onUploadProof, onCreatePurchaseAdvance }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   simpleMode: boolean;
   onOpen: (view: ViewKey) => void;
+  onOpenQrScanner: () => void;
   onDownloadSalesDsr: () => void;
   onUploadProof: (file: File) => Promise<unknown>;
   onCreatePurchaseAdvance: (body: {
@@ -9044,6 +9637,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen, onDownloadSalesDs
               <strong>Daily Sales PDF</strong>
               <span>Download today&apos;s scoped DSR for your role.</span>
             </button> : null}
+            <button type="button" className="simple-action-card" onClick={onOpenQrScanner}>
+              <strong>Scan Order QR</strong>
+              <span>Open PO or SO status and jump to the pending action.</span>
+            </button>
           </div>
         </Panel>
         <Panel title="Today" eyebrow="Quick summary">
@@ -9061,7 +9658,10 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen, onDownloadSalesDs
         <div className="simple-summary payment-summary-grid">
           {taskCards.map((card) => <div className="list-card" key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
         </div>
-        {showDailySalesReport ? <div className="payment-card-actions top-gap"><button className="ghost-button" type="button" onClick={onDownloadSalesDsr}>Daily Sales PDF</button></div> : null}
+        <div className="payment-card-actions top-gap">
+          <button className="ghost-button" type="button" onClick={onOpenQrScanner}>Scan Order QR</button>
+          {showDailySalesReport ? <button className="ghost-button" type="button" onClick={onDownloadSalesDsr}>Daily Sales PDF</button> : null}
+        </div>
       </Panel>
       <Panel title="Purchase Orders" eyebrow="Inbound"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel>
       <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
