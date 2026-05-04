@@ -19,6 +19,7 @@ This workspace starts the B2B web app for:
 - `apps/api`: Express API with health and module endpoints
 - `packages/domain`: shared process definitions and sample records
 - `docs/b2b-product-blueprint.md`: translated business flow and module plan
+- `docs/user-product-flow-guide.md`: user-facing operational guide for full product flow
 
 ## Run
 

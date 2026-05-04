@@ -16,6 +16,7 @@ import {
   mergeDeliveryTasks,
   createNote,
   createPayment,
+  createPurchaseAdvancePayment,
   createProduct,
   createPurchaseCart,
   createPurchaseOrder,
@@ -538,6 +539,26 @@ app.post("/payments", async (req, res) => wrap(res, async () => {
       mode: requiredString(req.body?.mode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       referenceNumber,
+      voucherNumber: optionalString(req.body?.voucherNumber),
+      utrNumber: optionalString(req.body?.utrNumber),
+      proofName: optionalString(req.body?.proofName),
+      verificationStatus: requiredString(req.body?.verificationStatus, "Verification status") as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved",
+      verificationNote: optionalString(req.body?.verificationNote),
+      operationDate: optionalString(req.body?.operationDate)
+    },
+    currentUser
+  );
+}));
+
+app.post("/payments/purchase-advance", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Accounts"]);
+  return createPurchaseAdvancePayment(
+    {
+      supplierId: requiredString(req.body?.supplierId, "Supplier"),
+      amount: requiredNumber(req.body?.amount, "Amount"),
+      mode: requiredString(req.body?.mode, "Payment mode") as PaymentMode,
+      cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
+      referenceNumber: requiredString(req.body?.referenceNumber, "Reference number"),
       voucherNumber: optionalString(req.body?.voucherNumber),
       utrNumber: optionalString(req.body?.utrNumber),
       proofName: optionalString(req.body?.proofName),

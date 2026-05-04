@@ -761,7 +761,8 @@ textarea {
 
 .purchase-status-name {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .purchase-status-chips {
@@ -851,7 +852,7 @@ textarea {
   width: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr) auto;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(260px, 1fr) minmax(120px, auto);
   gap: 1rem;
   align-items: center;
   background: transparent;
@@ -874,11 +875,12 @@ textarea {
 
 .report-accordion-main p {
   margin: 0;
+  overflow-wrap: break-word;
 }
 
 .report-accordion-vitals {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.85rem;
 }
 
@@ -886,6 +888,11 @@ textarea {
 .report-accordion-side {
   display: grid;
   gap: 0.15rem;
+  min-width: 0;
+}
+
+.report-accordion-vitals span {
+  flex: 1 1 120px;
 }
 
 .report-accordion-vitals small {
@@ -1539,7 +1546,8 @@ textarea {
   width: auto;
   max-width: 100%;
   line-height: 1.25;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .cart-line strong,
@@ -1550,7 +1558,8 @@ textarea {
   display: block;
   min-width: 0;
   line-height: 1.25;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .checkout-progress {
@@ -2191,16 +2200,30 @@ textarea {
 }
 
 .big-checkbox {
-  align-items: center;
+  align-items: start;
   cursor: pointer;
-  display: inline-flex;
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 28px minmax(0, 1fr);
+  width: 100%;
 }
 
 .big-checkbox input {
   display: none;
 }
 
-.big-checkbox span {
+.big-checkbox > div {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  width: 100%;
+}
+
+.big-checkbox .wide-field {
+  grid-column: auto;
+}
+
+.big-checkbox > span {
   background: #fff;
   border: 2px solid rgba(15, 23, 42, 0.25);
   border-radius: 10px;
@@ -2228,7 +2251,7 @@ textarea {
 }
 
 .warehouse-order-row {
-  align-items: center;
+  align-items: start;
   background: rgba(15, 23, 42, 0.06);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
@@ -2236,8 +2259,8 @@ textarea {
   cursor: pointer;
   display: grid;
   gap: 0.85rem;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, auto) auto;
-  padding: 1rem 1.1rem;
+  grid-template-columns: minmax(220px, 1.25fr) minmax(0, 1fr) minmax(120px, auto);
+  padding: clamp(0.8rem, 1vw, 1rem) clamp(0.9rem, 1.2vw, 1.1rem);
   text-align: left;
   width: 100%;
 }
@@ -2246,24 +2269,74 @@ textarea {
 .warehouse-order-meta {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
 }
 
 .warehouse-order-main strong {
-  font-size: 1rem;
+  font-size: clamp(0.98rem, 0.92rem + 0.18vw, 1.18rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .warehouse-order-main span {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: clamp(0.84rem, 0.8rem + 0.12vw, 0.94rem);
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .warehouse-order-meta {
-  grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
-  justify-content: end;
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: stretch;
 }
 
-.warehouse-order-row span {
-  font-size: 0.88rem;
+.warehouse-order-meta span {
+  min-width: min(150px, 100%);
+  flex: 1 1 130px;
+  display: inline-flex;
+  align-items: center;
+  font-size: clamp(0.82rem, 0.78rem + 0.12vw, 0.9rem);
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.warehouse-order-row .status-pill {
+  justify-self: end;
+  max-width: 220px;
+  min-width: 110px;
+  text-align: center;
+  white-space: normal;
+  font-size: clamp(0.82rem, 0.78rem + 0.12vw, 0.9rem);
+  line-height: 1.3;
+}
+
+@media (max-width: 1600px) {
+  .accounts-home-row,
+  .report-accordion-toggle {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report-accordion-side {
+    justify-items: start;
+  }
+}
+
+@media (max-width: 1500px) {
+  .warehouse-order-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .warehouse-order-meta {
+    gap: 0.55rem;
+  }
+
+  .warehouse-order-row .status-pill {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 900px) {
@@ -2272,6 +2345,7 @@ textarea {
   }
 
   .warehouse-order-meta {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     justify-content: start;
   }
 
@@ -2295,11 +2369,11 @@ textarea {
 }
 
 .payment-meta-grid {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
 }
 
 .payment-card-actions {
-  grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   align-items: center;
 }
 
@@ -2342,7 +2416,7 @@ textarea {
 .accounts-home-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.25fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.15fr) minmax(120px, auto);
   gap: 1rem;
   align-items: center;
   padding: 1rem 1.1rem;
@@ -2752,7 +2826,8 @@ textarea {
 }
 
 .table-wrap {
-  overflow-x: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-radius: var(--radius-card);
 }
 

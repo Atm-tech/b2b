@@ -205,6 +205,9 @@ export type PaymentRecord = {
   id: string;
   side: "Purchase" | "Sales";
   linkedOrderId: string;
+  paymentKind?: "Order" | "Advance";
+  counterpartyId?: string;
+  counterpartyName?: string;
   amount: number;
   mode: PaymentMode;
   cashTiming?: CashTiming;

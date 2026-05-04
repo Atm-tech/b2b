@@ -117,6 +117,9 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cart_id TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_kind TEXT NOT NULL DEFAULT 'Order';
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS counterparty_id TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS counterparty_name TEXT;
     ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS container_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS net_weight_kg DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE receipt_checks ADD COLUMN IF NOT EXISTS weighing_proof_name TEXT;
@@ -530,6 +533,9 @@ async function mapPayments(client?: DbClient): Promise<PaymentRecord[]> {
     id: stringValue(row.id),
     side: stringValue(row.side) as PaymentRecord["side"],
     linkedOrderId: stringValue(row.linked_order_id),
+    paymentKind: (row.payment_kind ? stringValue(row.payment_kind) : "Order") as "Order" | "Advance",
+    counterpartyId: row.counterparty_id ? stringValue(row.counterparty_id) : undefined,
+    counterpartyName: row.counterparty_name ? stringValue(row.counterparty_name) : undefined,
     amount: numberValue(row.amount),
     mode: stringValue(row.mode) as PaymentMode,
     cashTiming: row.cash_timing ? (stringValue(row.cash_timing) as PaymentRecord["cashTiming"]) : undefined,
@@ -714,8 +720,8 @@ function buildStockSummary(warehouses: Warehouse[], products: ProductMaster[], i
 }
 
 async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, partyName: string, goodsValue: number, paidAmount: number, client?: DbClient, createdAt = now()) {
-  const pendingAmount = Math.max(goodsValue - paidAmount, 0);
-  const status = pendingAmount === 0 ? "Settled" : paidAmount > 0 ? "Partial" : "Pending";
+  const pendingAmount = goodsValue - paidAmount;
+  const status = pendingAmount <= 0 ? "Settled" : paidAmount > 0 ? "Partial" : "Pending";
   const existing = await one<{ id: string }>("SELECT id FROM ledger_entries WHERE side = $1 AND linked_order_id = $2", [side, linkedOrderId], client);
   if (existing) {
     await query(
@@ -1896,9 +1902,9 @@ async function insertAdvancePayment(side: "Purchase" | "Sales", linkedOrderId: s
   if (!payment || payment.amount <= 0) return;
   await query(
     `INSERT INTO payments (
-      id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+      id, side, linked_order_id, payment_kind, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
       proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Submitted', $11, $12, NULL, $13, $13)`,
+    ) VALUES ($1, $2, $3, 'Order', $4, $5, $6, $7, $8, $9, $10, 'Submitted', $11, $12, NULL, $13, $13)`,
     [
       makeId("PAY"),
       side,
@@ -1938,9 +1944,9 @@ export async function createPayment(payload: {
   await withTransaction(async (client) => {
     await query(
       `INSERT INTO payments (
-        id, side, linked_order_id, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+        id, side, linked_order_id, payment_kind, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
         proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      ) VALUES ($1, $2, $3, 'Order', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         makeId("PAY"),
         payload.side,
@@ -1968,6 +1974,54 @@ export async function createPayment(payload: {
   return getSnapshot();
 }
 
+export async function createPurchaseAdvancePayment(payload: {
+  supplierId: string;
+  amount: number;
+  mode: PaymentMode;
+  cashTiming?: PaymentRecord["cashTiming"];
+  referenceNumber: string;
+  voucherNumber?: string;
+  utrNumber?: string;
+  proofName?: string;
+  verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
+  verificationNote?: string;
+  operationDate?: string;
+}, currentUser: CurrentUser) {
+  await ready;
+  const createdAt = operationalDate(payload.operationDate);
+  const submittedAt = payload.verificationStatus === "Submitted" || payload.verificationStatus === "Disputed" ? createdAt : null;
+  const supplier = await one<Record<string, unknown>>("SELECT id, name FROM counterparties WHERE id = $1 AND type = 'Supplier'", [payload.supplierId]);
+  if (!supplier) throw new Error("Supplier not found.");
+  const advanceId = makeId("ADV");
+  await query(
+    `INSERT INTO payments (
+      id, side, linked_order_id, payment_kind, counterparty_id, counterparty_name, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
+      proof_name, verification_status, verification_note, created_by, verified_by, created_at, submitted_at
+    ) VALUES ($1, 'Purchase', $2, 'Advance', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    [
+      makeId("PAY"),
+      advanceId,
+      payload.supplierId,
+      stringValue(supplier.name),
+      payload.amount,
+      payload.mode,
+      payload.cashTiming || null,
+      payload.referenceNumber.trim(),
+      payload.voucherNumber?.trim() || null,
+      payload.utrNumber?.trim() || null,
+      payload.proofName?.trim() || null,
+      payload.verificationStatus,
+      payload.verificationNote?.trim() || "Advance paid by accounts for purchase.",
+      currentUser.fullName,
+      payload.verificationStatus === "Verified" || payload.verificationStatus === "Resolved" ? currentUser.fullName : null,
+      createdAt,
+      submittedAt
+    ]
+  );
+  await upsertLedger("Purchase", advanceId, stringValue(supplier.name), 0, payload.amount, undefined, createdAt);
+  return getSnapshot();
+}
+
 export async function verifyPayment(paymentId: string, status: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved", note: string, currentUser: CurrentUser) {
   await ready;
   return withTransaction(async (client) => {
@@ -1981,7 +2035,19 @@ export async function verifyPayment(paymentId: string, status: "Pending" | "Subm
       [status, note.trim(), currentUser.fullName, paymentId],
       client
     );
-    await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id), client);
+    if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Order") {
+      await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id), client);
+    } else if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Advance") {
+      await upsertLedger(
+        stringValue(payment.side) as "Purchase" | "Sales",
+        stringValue(payment.linked_order_id),
+        payment.counterparty_name ? stringValue(payment.counterparty_name) : stringValue(payment.linked_order_id),
+        0,
+        status === "Rejected" ? 0 : numberValue(payment.amount),
+        client,
+        isoValue(payment.created_at) || now()
+      );
+    }
     return getSnapshot();
   });
 }
@@ -2935,7 +3001,19 @@ export async function updatePayment(paymentId: string, payload: {
       paymentId
     ]
   );
-  await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id));
+  if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Order") {
+    await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id));
+  } else if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Advance") {
+    await upsertLedger(
+      stringValue(payment.side) as "Purchase" | "Sales",
+      stringValue(payment.linked_order_id),
+      payment.counterparty_name ? stringValue(payment.counterparty_name) : stringValue(payment.linked_order_id),
+      0,
+      payload.verificationStatus === "Rejected" ? 0 : payload.amount,
+      undefined,
+      isoValue(payment.created_at) || now()
+    );
+  }
   return getSnapshot();
 }
 
