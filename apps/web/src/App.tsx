@@ -3032,14 +3032,101 @@ function purchaseCartEditState(snapshot: AppSnapshot, orderId: string, currentUs
   const isAdmin = userRoleList(currentUser).includes("Admin");
   const ownsCart = lines.some((line) => line.purchaserId === currentUser.id || line.purchaserName === currentUser.fullName);
   if (!isAdmin && !ownsCart) return { editable: false, reason: "Only the purchaser or admin can edit this purchase cart." };
+  if (!isAdmin && lines.some((line) => line.status === "Cancelled" || line.status === "Closed" || line.status === "Received")) {
+    return { editable: false, reason: "Purchase order is closed. Only admin can edit this purchase cart now." };
+  }
   if (!isAdmin && lines.some((line) => line.quantityReceived > 0)) {
     return { editable: false, reason: "Receiving has started. Only admin can edit this purchase cart now." };
+  }
+  const ledger = purchaseLedgerByOrder(snapshot, orderId);
+  if (!isAdmin && (ledger?.paidAmount || 0) > 0) {
+    return { editable: false, reason: "Payment is already recorded. Only admin can edit this purchase cart now." };
   }
   const assignedDelivery = purchaseDeliveryTask(snapshot, orderId);
   if (!isAdmin && assignedDelivery) {
     return { editable: false, reason: "Delivery is assigned. Only admin can edit this purchase cart now." };
   }
   return { editable: true, reason: "" };
+}
+
+function purchaseCartDraftSignature(draft: {
+  paymentMode: PaymentMode;
+  cashTiming: string;
+  deliveryMode: "Dealer Delivery" | "Self Collection";
+  note: string;
+  status: PurchaseOrder["status"];
+  lines: Array<{
+    id?: string;
+    clientKey: string;
+    productSku: string;
+    warehouseId: string;
+    quantityOrdered: string;
+    rate: string;
+    gstRate: GstRateInput;
+    gstAmount: string;
+    taxableAmount: string;
+    taxMode: TaxModeInput;
+  }>;
+}) {
+  return JSON.stringify({
+    paymentMode: draft.paymentMode,
+    cashTiming: draft.cashTiming,
+    deliveryMode: draft.deliveryMode,
+    note: draft.note,
+    status: draft.status,
+    lines: draft.lines.map((line) => ({
+      id: line.id || "",
+      productSku: line.productSku,
+      warehouseId: line.warehouseId,
+      quantityOrdered: line.quantityOrdered,
+      rate: line.rate,
+      gstRate: line.gstRate,
+      gstAmount: line.gstAmount,
+      taxableAmount: line.taxableAmount,
+      taxMode: line.taxMode
+    }))
+  });
+}
+
+function salesOrderDraftSignature(draft: {
+  paymentMode: PaymentMode;
+  cashTiming: string;
+  deliveryMode: "Self Collection" | "Delivery";
+  note: string;
+  status: SalesStatus;
+  lines: Array<{
+    id?: string;
+    clientKey: string;
+    productSku: string;
+    warehouseId: string;
+    rate: string;
+    quantity: string;
+    totalAmount: number;
+    gstRate: GstRateInput;
+    gstAmount: string;
+    taxableAmount: string;
+    taxMode: TaxModeInput;
+  }>;
+}) {
+  return JSON.stringify({
+    paymentMode: draft.paymentMode,
+    cashTiming: draft.cashTiming,
+    deliveryMode: draft.deliveryMode,
+    note: draft.note,
+    status: draft.status,
+    lines: draft.lines.map((line) => ({
+      id: line.id || "",
+      productSku: line.productSku,
+      warehouseId: line.warehouseId,
+      rate: line.rate,
+      quantity: line.quantity,
+      totalAmount: line.totalAmount,
+      gstRate: line.gstRate,
+      gstAmount: line.gstAmount,
+      taxableAmount: line.taxableAmount,
+      taxMode: line.taxMode
+    }))
+  });
 }
 
 function salesOrderEditState(snapshot: AppSnapshot, orderId: string, currentUser: AppUser) {
@@ -3095,7 +3182,9 @@ function App() {
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const [purchaseUpdateOrderId, setPurchaseUpdateOrderId] = useState("");
+  const [purchaseEditorDirty, setPurchaseEditorDirty] = useState(false);
   const [salesUpdateOrderId, setSalesUpdateOrderId] = useState("");
+  const [salesEditorDirty, setSalesEditorDirty] = useState(false);
   const [scanOverlayOpen, setScanOverlayOpen] = useState(false);
   const [orderStatusTarget, setOrderStatusTarget] = useState<OrderQrTarget | null>(null);
   const [pendingQrTarget, setPendingQrTarget] = useState<OrderQrTarget | null>(() => readOrderQrTargetFromLocation());
@@ -3172,6 +3261,39 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  function closePurchaseEditor() {
+    setPurchaseEditorDirty(false);
+    setPurchaseUpdateOrderId("");
+  }
+
+  function closeSalesEditor() {
+    setSalesEditorDirty(false);
+    setSalesUpdateOrderId("");
+  }
+
+  function confirmPurchaseEditorDiscard() {
+    if (!purchaseEditorDirty) return true;
+    return window.confirm("Are you sure? This will undo all the changes.");
+  }
+
+  function confirmSalesEditorDiscard() {
+    if (!salesEditorDirty) return true;
+    return window.confirm("Are you sure? This will undo all the changes.");
+  }
+
+  function navigateToView(nextView: ViewKey) {
+    if (activeView === "Purchase" && purchaseUpdateOrderId && nextView !== "Purchase") {
+      if (!confirmPurchaseEditorDiscard()) return;
+      closePurchaseEditor();
+    }
+    if (activeView === "Sales" && salesUpdateOrderId && nextView !== "Sales") {
+      if (!confirmSalesEditorDiscard()) return;
+      closeSalesEditor();
+    }
+    if (nextView === "Sales" && activeView !== "Sales") setSalesUpdateOrderId("");
+    setActiveView(nextView);
+  }
+
   useEffect(() => {
     const target = readOrderQrTargetFromLocation();
     if (target) setPendingQrTarget(target);
@@ -3192,25 +3314,25 @@ function App() {
       const currentRoles = currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role];
       if (pendingQrTarget.side === "Purchase") {
         if (currentRoles.includes("Warehouse Manager")) {
-          setActiveView("Receipts");
+          navigateToView("Receipts");
         } else if (currentRoles.includes("Delivery Manager")) {
           setDeliveryManagerScreen("in");
-          setActiveView("Delivery");
+          navigateToView("Delivery");
         } else if (currentRoles.includes("Accounts")) {
-          setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
+          navigateToView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
         } else {
-          setActiveView("Purchases");
+          navigateToView("Purchases");
         }
       } else {
         if (currentRoles.includes("Warehouse Manager")) {
-          setActiveView("Stock");
+          navigateToView("Stock");
         } else if (currentRoles.includes("Delivery Manager")) {
           setDeliveryManagerScreen("out");
-          setActiveView("Delivery");
+          navigateToView("Delivery");
         } else if (currentRoles.includes("Accounts") || currentRoles.includes("Collection Agent")) {
-          setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
+          navigateToView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
         } else {
-          setActiveView("SalesOrders");
+          navigateToView("SalesOrders");
         }
       }
       const warehouseId = pendingQrTarget.side === "Purchase"
@@ -3454,25 +3576,25 @@ function App() {
     if (!navigate || !summary) return;
     if (target.side === "Purchase") {
       if (currentRoles.includes("Warehouse Manager")) {
-        setActiveView("Receipts");
+        navigateToView("Receipts");
       } else if (currentRoles.includes("Delivery Manager")) {
         setDeliveryManagerScreen("in");
-        setActiveView("Delivery");
+        navigateToView("Delivery");
       } else if (currentRoles.includes("Accounts")) {
-        setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
+        navigateToView(summary.paymentStatus === "Completed" && summary.completed ? "Purchases" : "Payments");
       } else {
-        setActiveView("Purchases");
+        navigateToView("Purchases");
       }
     } else {
       if (currentRoles.includes("Warehouse Manager")) {
-        setActiveView("Stock");
+        navigateToView("Stock");
       } else if (currentRoles.includes("Delivery Manager")) {
         setDeliveryManagerScreen("out");
-        setActiveView("Delivery");
+        navigateToView("Delivery");
       } else if (currentRoles.includes("Accounts") || currentRoles.includes("Collection Agent")) {
-        setActiveView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
+        navigateToView(summary.paymentStatus === "Completed" && summary.completed ? "SalesOrders" : "Payments");
       } else {
-        setActiveView("SalesOrders");
+        navigateToView("SalesOrders");
       }
     }
     const warehouseId = target.side === "Purchase"
@@ -3541,23 +3663,23 @@ function App() {
   }, 0);
   const topMetricCards = isAccountsUser
     ? [
-      { label: "Total Purchase", value: formatCurrencyInr(totalPurchaseValue), note: "Booked supplier value", size: "large" as const, tone: "danger" as const, onOpen: () => setActiveView("Purchases") },
-      { label: "Total Sales", value: formatCurrencyInr(totalSalesValue), note: "Billed customer value", size: "large" as const, tone: "good" as const, onOpen: () => setActiveView("SalesOrders") },
-      { label: "Stock Value", value: formatCurrencyInr(stockValue), note: "Current inventory value", size: "large" as const, tone: "pending" as const, onOpen: () => setActiveView("Stock") },
-      { label: "Cashflow", value: formatCurrencyInr(cashflowNetValue), note: "Verified in minus out", size: "large" as const, tone: cashflowNetValue >= 0 ? "good" as const : "danger" as const, onOpen: () => setActiveView("Payments") },
-      { label: "P&L Spread", value: formatCurrencyInr(pnlSpreadValue), note: "Sales minus purchase", tone: pnlSpreadValue >= 0 ? "good" as const : "danger" as const, onOpen: () => setActiveView("Ledger") },
-      { label: "Pending Purchase", value: formatCurrencyInr(purchasePendingValue), note: "Supplier dues open", tone: "pending" as const, onOpen: () => setActiveView("Payments") },
-      { label: "Pending Sales", value: formatCurrencyInr(salesPendingValue), note: "Customer dues open", tone: "pending" as const, onOpen: () => setActiveView("SalesOrders") },
-      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live SKUs", onOpen: () => setActiveView("Stock") },
-      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => setActiveView("Parties") }
+      { label: "Total Purchase", value: formatCurrencyInr(totalPurchaseValue), note: "Booked supplier value", size: "large" as const, tone: "danger" as const, onOpen: () => navigateToView("Purchases") },
+      { label: "Total Sales", value: formatCurrencyInr(totalSalesValue), note: "Billed customer value", size: "large" as const, tone: "good" as const, onOpen: () => navigateToView("SalesOrders") },
+      { label: "Stock Value", value: formatCurrencyInr(stockValue), note: "Current inventory value", size: "large" as const, tone: "pending" as const, onOpen: () => navigateToView("Stock") },
+      { label: "Cashflow", value: formatCurrencyInr(cashflowNetValue), note: "Verified in minus out", size: "large" as const, tone: cashflowNetValue >= 0 ? "good" as const : "danger" as const, onOpen: () => navigateToView("Payments") },
+      { label: "P&L Spread", value: formatCurrencyInr(pnlSpreadValue), note: "Sales minus purchase", tone: pnlSpreadValue >= 0 ? "good" as const : "danger" as const, onOpen: () => navigateToView("Ledger") },
+      { label: "Pending Purchase", value: formatCurrencyInr(purchasePendingValue), note: "Supplier dues open", tone: "pending" as const, onOpen: () => navigateToView("Payments") },
+      { label: "Pending Sales", value: formatCurrencyInr(salesPendingValue), note: "Customer dues open", tone: "pending" as const, onOpen: () => navigateToView("SalesOrders") },
+      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live SKUs", onOpen: () => navigateToView("Stock") },
+      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => navigateToView("Parties") }
     ]
     : [
-      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live catalogue", onOpen: () => setActiveView("Products") },
-      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => setActiveView("Parties") },
-      { label: "Pending Purchase Pay", value: String(snapshot.metrics.pendingPurchasePayments), note: "Supplier follow-up", tone: "pending" as const, onOpen: () => setActiveView("Purchases") },
-      { label: "Pending Sales Pay", value: String(snapshot.metrics.pendingSalesPayments), note: "Customer collection", tone: "pending" as const, onOpen: () => setActiveView("SalesOrders") },
-      { label: "Partial Receipts", value: String(snapshot.metrics.partialReceipts), note: "Warehouse exceptions", onOpen: () => setActiveView("Receipts") },
-      { label: "Available Stock", value: String(snapshot.metrics.availableInventoryUnits), note: "Ready units", onOpen: () => setActiveView("Stock") }
+      { label: "Products", value: String(snapshot.metrics.productCount), note: "Live catalogue", onOpen: () => navigateToView("Products") },
+      { label: "Parties", value: String(snapshot.metrics.partyCount), note: "Suppliers and customers", onOpen: () => navigateToView("Parties") },
+      { label: "Pending Purchase Pay", value: String(snapshot.metrics.pendingPurchasePayments), note: "Supplier follow-up", tone: "pending" as const, onOpen: () => navigateToView("Purchases") },
+      { label: "Pending Sales Pay", value: String(snapshot.metrics.pendingSalesPayments), note: "Customer collection", tone: "pending" as const, onOpen: () => navigateToView("SalesOrders") },
+      { label: "Partial Receipts", value: String(snapshot.metrics.partialReceipts), note: "Warehouse exceptions", onOpen: () => navigateToView("Receipts") },
+      { label: "Available Stock", value: String(snapshot.metrics.availableInventoryUnits), note: "Ready units", onOpen: () => navigateToView("Stock") }
     ];
 
   function isNaGst(value: string) {
@@ -3684,7 +3806,7 @@ function App() {
                 <div><span className="small-label">Mobile</span><strong>{currentUser.mobileNumber || "Pending"}</strong></div>
               </div>
               <div className="profile-action-list">
-                {!forceSimpleMode ? <button className="ghost-button" type="button" onClick={() => { const nextMode = !effectiveSimpleMode; setSimpleMode(nextMode); setActiveView(getVisibleViewsForMode(currentUser, nextMode)[0]); setProfileOpen(false); }}>{effectiveSimpleMode ? "Show Advanced" : "Show Simple"}</button> : null}
+                {!forceSimpleMode ? <button className="ghost-button" type="button" onClick={() => { const nextMode = !effectiveSimpleMode; const nextView = getVisibleViewsForMode(currentUser, nextMode)[0]; setSimpleMode(nextMode); if (nextView) navigateToView(nextView); setProfileOpen(false); }}>{effectiveSimpleMode ? "Show Advanced" : "Show Simple"}</button> : null}
                 <button className="ghost-button" type="button" onClick={() => void doLogout()}>Logout</button>
               </div>
             </div> : null}
@@ -3708,7 +3830,7 @@ function App() {
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
             {safeVisibleViews.map((view) => (
-              <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>
+              <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => navigateToView(view)}>
                 <span>{displayLabel(view, currentUser)}</span><small>{view}</small>
               </button>
             ))}
@@ -3729,7 +3851,7 @@ function App() {
             ))}
           </section> : null}
 
-          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={setActiveView} onOpenQrScanner={() => setScanOverlayOpen(true)} onDownloadSalesDsr={() => downloadHomeDailySalesReportPdf(snapshot, currentUser)} onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")} onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")} /> : null}
+          {activeView === "Overview" ? <Overview snapshot={snapshot} currentUser={currentUser} simpleMode={effectiveSimpleMode} onOpen={navigateToView} onOpenQrScanner={() => setScanOverlayOpen(true)} onDownloadSalesDsr={() => downloadHomeDailySalesReportPdf(snapshot, currentUser)} onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")} onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")} /> : null}
           {activeView === "Users" ? <TwoCol left={<Panel title="Create User" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/users", { ...userForm, role: userForm.roles[0], roles: userForm.roles }, "User created.", () => setUserForm({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"], warehouseIds: [], password: "1234" })); }}><label>Username<input value={userForm.username} onChange={(e) => setUserForm((c) => ({ ...c, username: e.target.value }))} /></label><label>Name<input value={userForm.fullName} onChange={(e) => setUserForm((c) => ({ ...c, fullName: e.target.value }))} /></label><label>Mobile<input value={userForm.mobileNumber} onChange={(e) => setUserForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Roles<select multiple value={userForm.roles} onChange={(e) => setUserForm((c) => ({ ...c, roles: Array.from(e.target.selectedOptions).map((option) => option.value as UserRole) }))}>{userRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Warehouses<select multiple value={userForm.warehouseIds} onChange={(e) => setUserForm((c) => ({ ...c, warehouseIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label><label>Password<input value={userForm.password} onChange={(e) => setUserForm((c) => ({ ...c, password: e.target.value }))} /></label><button className="primary-button" type="submit">Create user</button></form></Panel>} right={<Panel title="Users" eyebrow="Directory"><DataTable headers={["Username","Name","Roles","Warehouses","Mobile"]} rows={snapshot.users.map((u) => [u.username, u.fullName, (u.roles && u.roles.length > 0 ? u.roles : [u.role]).join(", "), (u.warehouseIds || []).join(", ") || "All", u.mobileNumber])} /></Panel>} /> : null}
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
@@ -3751,9 +3873,11 @@ function App() {
               onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
               onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
               initialUpdateOrderId={purchaseUpdateOrderId}
+              onExitEditor={closePurchaseEditor}
+              onEditorDirtyChange={setPurchaseEditorDirty}
             />
           </>) : null}
-          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
+          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseEditorDirty(false); setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
           {activeView === "PurchaseReturns" ? <ReturnsWorkspace
             side="Purchase"
             snapshot={snapshot}
@@ -3764,7 +3888,7 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
           /> : null}
-          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={() => setSalesUpdateOrderId("")} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Customer order booking"
@@ -3782,7 +3906,7 @@ function App() {
             onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
+          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
           {activeView === "SalesReturns" ? <ReturnsWorkspace
             side="Sales"
             snapshot={snapshot}
@@ -3947,7 +4071,7 @@ function App() {
             ? salesOrderCount
             : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
-        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => { if (view === "Sales") setSalesUpdateOrderId(""); setActiveView(view); }}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
+        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
       })}</nav>}
     </main>
   );
@@ -5346,7 +5470,9 @@ function PurchaserPurchaseWorkspace({
   onUploadProof,
   onSubmit,
   initialUpdateOrderId,
-  onUpdateCart
+  onUpdateCart,
+  onExitEditor,
+  onEditorDirtyChange
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
@@ -5362,6 +5488,8 @@ function PurchaserPurchaseWorkspace({
   onUploadProof: (file: File) => Promise<unknown>;
   onSubmit: CatalogOrderViewProps["onSubmit"];
   initialUpdateOrderId?: string;
+  onExitEditor: () => void;
+  onEditorDirtyChange: (dirty: boolean) => void;
   onUpdateCart: (orderId: string, body: {
     paymentMode: PaymentMode;
     cashTiming?: string;
@@ -5381,23 +5509,20 @@ function PurchaserPurchaseWorkspace({
     }>;
   }) => Promise<boolean | void>;
 }) {
-  const workspaceKey = workspaceStorageKey(currentUser.id, "purchase-workspace");
-  const persisted = readStoredJson(workspaceKey, { tab: initialUpdateOrderId ? "update" : "current" as "current" | "update" | "summary" });
-  const [tab, setTab] = useState<"current" | "update" | "summary">(persisted.tab || (initialUpdateOrderId ? "update" : "current"));
-  const myOrders = purchaseOrders
-    .filter((order) => order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)
-    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
-  const pendingPoCount = countGroupedOrders(myOrders);
   useEffect(() => {
-    if (initialUpdateOrderId) setTab("update");
-  }, [initialUpdateOrderId]);
-  useEffect(() => {
-    writeStoredJson(workspaceKey, { tab });
-  }, [tab, workspaceKey]);
+    if (!initialUpdateOrderId) onEditorDirtyChange(false);
+  }, [initialUpdateOrderId, onEditorDirtyChange]);
 
   return (
     <section className="module-stack">
-      {tab === "current" ? <CatalogOrderView
+      {initialUpdateOrderId ? <PurchaseCartEditor
+        snapshot={snapshot}
+        currentUser={currentUser}
+        onUpdateCart={onUpdateCart}
+        initialOrderId={initialUpdateOrderId}
+        onExit={onExitEditor}
+        onDirtyChange={onEditorDirtyChange}
+      /> : <CatalogOrderView
         mode="purchase"
         title="New Purchase"
         eyebrow="Create supplier order"
@@ -5414,19 +5539,7 @@ function PurchaserPurchaseWorkspace({
         onUploadProof={onUploadProof}
         onSubmit={onSubmit}
         rightPanel={null}
-      /> : null}
-      {tab === "update" ? <PurchaseCartEditor
-        snapshot={snapshot}
-        currentUser={currentUser}
-        onUpdateCart={onUpdateCart}
-        initialOrderId={initialUpdateOrderId}
-      /> : null}
-      {tab === "summary" ? <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={myOrders} /> : null}
-      <div className="purchase-module-tab-bar">
-        <button className={tab === "current" ? "tab-button active po-tab-button" : "tab-button po-tab-button"} type="button" onClick={() => setTab("current")}><LabelWithBadge label="PO" count={pendingPoCount} /></button>
-        <button className={tab === "update" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("update")}>Edit Cart</button>
-        <button className={tab === "summary" ? "tab-button active" : "tab-button"} type="button" onClick={() => setTab("summary")}><LabelWithBadge label="Purchases" count={pendingPoCount} /></button>
-      </div>
+      />}
     </section>
   );
 }
@@ -5656,11 +5769,15 @@ function PurchaseCartEditor({
   snapshot,
   currentUser,
   onUpdateCart,
-  initialOrderId
+  initialOrderId,
+  onExit,
+  onDirtyChange
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   initialOrderId?: string;
+  onExit: () => void;
+  onDirtyChange: (dirty: boolean) => void;
   onUpdateCart: (orderId: string, body: {
     paymentMode: PaymentMode;
     cashTiming?: string;
@@ -5710,9 +5827,16 @@ function PurchaseCartEditor({
       taxMode: TaxModeInput;
     }>;
   } | null>(null);
+  const [initialDraftState, setInitialDraftState] = useState("");
 
-  const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
+  const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || (!selectedOrderId ? editableGroups[0] || null : null);
   const editState = selectedGroup ? purchaseCartEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No purchase carts available." };
+  const draftDirty = Boolean(draft && initialDraftState && purchaseCartDraftSignature(draft) !== initialDraftState);
+
+  function confirmDiscardChanges() {
+    if (!draftDirty) return true;
+    return window.confirm("Are you sure? This will undo all the changes.");
+  }
 
   useEffect(() => {
     if (initialOrderId) setSelectedOrderId(initialOrderId);
@@ -5723,7 +5847,7 @@ function PurchaseCartEditor({
       if (selectedOrderId) setSelectedOrderId("");
       return;
     }
-    if (!editableGroups.some((group) => group.id === selectedOrderId)) {
+    if (!selectedOrderId) {
       setSelectedOrderId(editableGroups[0].id);
     }
   }, [editableGroups, selectedOrderId]);
@@ -5731,11 +5855,11 @@ function PurchaseCartEditor({
   useEffect(() => {
     if (!selectedGroup) {
       setDraft(null);
+      setInitialDraftState("");
       return;
     }
     const first = selectedGroup.lines[0];
-    setSelectedOrderId((current) => current || selectedGroup.id);
-    setDraft({
+    const nextDraft: NonNullable<typeof draft> = {
       paymentMode: first.paymentMode,
       cashTiming: first.cashTiming || "",
       deliveryMode: first.deliveryMode,
@@ -5751,10 +5875,19 @@ function PurchaseCartEditor({
         gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
         gstAmount: String(line.gstAmount),
         taxableAmount: String(line.taxableAmount),
-        taxMode: line.taxMode === "NA" ? "NA" : (line.taxMode || "Exclusive")
+        taxMode: line.taxMode === "NA" ? "NA" : ((line.taxMode || "Exclusive") as TaxModeInput)
       }))
-    });
+    };
+    setSelectedOrderId((current) => current || selectedGroup.id);
+    setDraft(nextDraft);
+    setInitialDraftState(purchaseCartDraftSignature(nextDraft));
   }, [selectedGroup?.id]);
+
+  useEffect(() => {
+    onDirtyChange(draftDirty);
+  }, [draftDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   function updateDraftLine(lineKey: string, updates: Partial<{
     productSku: string;
@@ -5763,6 +5896,7 @@ function PurchaseCartEditor({
     gstRate: GstRateInput;
     taxMode: TaxModeInput;
   }>) {
+    onDirtyChange(true);
     setDraft((current) => {
       if (!current) return current;
       return {
@@ -5794,6 +5928,7 @@ function PurchaseCartEditor({
 
   function addDraftLine() {
     if (!selectedGroup) return;
+    onDirtyChange(true);
     const fallbackProduct = snapshot.products[0];
     if (!fallbackProduct) return;
     const gstRate = fallbackProduct.defaultGstRate === "NA" ? "NA" : String(fallbackProduct.defaultGstRate || 0) as GstRateInput;
@@ -5818,7 +5953,7 @@ function PurchaseCartEditor({
   async function cancelPurchaseGroup() {
     if (!selectedGroup || !draft || !editState.editable) return;
     if (!window.confirm(`Cancel purchase order ${selectedGroup.id}?`)) return;
-    await onUpdateCart(selectedGroup.id, {
+    const success = await onUpdateCart(selectedGroup.id, {
       paymentMode: draft.paymentMode,
       cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
       deliveryMode: draft.deliveryMode,
@@ -5836,6 +5971,10 @@ function PurchaseCartEditor({
         taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
       }))
     });
+    if (success !== false) {
+      onDirtyChange(false);
+      onExit();
+    }
   }
 
   return (
@@ -5846,7 +5985,7 @@ function PurchaseCartEditor({
           onSubmit={async (event) => {
             event.preventDefault();
             if (!selectedGroup || !draft || !editState.editable) return;
-            await onUpdateCart(selectedGroup.id, {
+            const success = await onUpdateCart(selectedGroup.id, {
               paymentMode: draft.paymentMode,
               cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
               deliveryMode: draft.deliveryMode,
@@ -5864,14 +6003,24 @@ function PurchaseCartEditor({
                 taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
               }))
             });
+            if (success !== false) {
+              onDirtyChange(false);
+              onExit();
+            }
           }}
         >
           <label className="wide-field">
             Purchase cart
-            <select value={selectedGroup?.id || ""} onChange={(e) => setSelectedOrderId(e.target.value)}>
+            <select value={selectedGroup?.id || ""} onChange={(e) => {
+              const nextOrderId = e.target.value;
+              if (nextOrderId === selectedOrderId) return;
+              if (!confirmDiscardChanges()) return;
+              setSelectedOrderId(nextOrderId);
+            }}>
               {editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.supplierName || "Supplier"}`}</option>)}
             </select>
           </label>
+          {!selectedGroup && selectedOrderId ? <p className="message error wide-field">{`Purchase cart ${selectedOrderId} is not editable anymore. Open another PO from the list.`}</p> : null}
           {selectedGroup ? <>
             <div className="message-chip-grid wide-field">
               <span className="status-pill">{selectedGroup.lines[0]?.supplierName || "Supplier"}</span>
@@ -5880,6 +6029,11 @@ function PurchaseCartEditor({
             </div>
             {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
             <div className="payment-card-actions wide-field">
+              <button className="ghost-button" type="button" onClick={() => {
+                if (!confirmDiscardChanges()) return;
+                onDirtyChange(false);
+                onExit();
+              }}>Back</button>
               <button className="ghost-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
               <button className="ghost-button" type="button" onClick={() => void cancelPurchaseGroup()} disabled={!editState.editable}>Cancel PO</button>
             </div>
@@ -5895,7 +6049,7 @@ function PurchaseCartEditor({
                   <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}>
                     <div className="compact-order-editor-actions">
                       <button className="ghost-button compact-icon-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button>
-                      <button className="ghost-button compact-icon-button" type="button" onClick={() => setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current)} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button>
+                      <button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button>
                     </div>
                     <div className="compact-order-editor-product">
                       {!line.id ? <select value={line.productSku} onChange={(e) => updateDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>
@@ -6245,11 +6399,12 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   );
 }
 
-function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, onUpdateSalesOrder }: {
+function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, onDirtyChange, onUpdateSalesOrder }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   initialOrderId: string;
   onNewOrder: () => void;
+  onDirtyChange: (dirty: boolean) => void;
   onUpdateSalesOrder: (id: string, body: {
     paymentMode: PaymentMode;
     cashTiming?: string;
@@ -6281,6 +6436,13 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
   const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ clientKey: string; id?: string; productSku: string; warehouseId: string; rate: string; quantity: string; totalAmount: number; gstRate: GstRateInput; gstAmount: string; taxableAmount: string; taxMode: TaxModeInput }> } | null>(null);
+  const [initialDraftState, setInitialDraftState] = useState("");
+  const draftDirty = Boolean(draft && initialDraftState && salesOrderDraftSignature(draft) !== initialDraftState);
+
+  function confirmDiscardChanges() {
+    if (!draftDirty) return true;
+    return window.confirm("Are you sure? This will undo all the changes.");
+  }
 
   useEffect(() => {
     if (initialOrderId) setSelectedOrderId(initialOrderId);
@@ -6299,10 +6461,11 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   useEffect(() => {
     if (!selectedGroup) {
       setDraft(null);
+      setInitialDraftState("");
       return;
     }
     const first = selectedGroup.lines[0];
-    setDraft({
+    const nextDraft: NonNullable<typeof draft> = {
       paymentMode: first.paymentMode,
       cashTiming: first.cashTiming || "",
       deliveryMode: first.deliveryMode,
@@ -6319,12 +6482,21 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
         gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
         gstAmount: String(line.gstAmount),
         taxableAmount: String(line.taxableAmount),
-        taxMode: line.taxMode === "NA" ? "NA" : (line.taxMode || "Exclusive")
+        taxMode: line.taxMode === "NA" ? "NA" : ((line.taxMode || "Exclusive") as TaxModeInput)
       }))
-    });
+    };
+    setDraft(nextDraft);
+    setInitialDraftState(salesOrderDraftSignature(nextDraft));
   }, [selectedGroup?.id]);
 
+  useEffect(() => {
+    onDirtyChange(draftDirty);
+  }, [draftDirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+
   function updateSalesDraftLine(lineKey: string, updates: Partial<{ productSku: string; quantity: string; rate: string; gstRate: GstRateInput; taxMode: TaxModeInput }>) {
+    onDirtyChange(true);
     setDraft((current) => {
       if (!current) return current;
       return {
@@ -6357,6 +6529,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
 
   function addSalesDraftLine() {
     if (!selectedGroup) return;
+    onDirtyChange(true);
     const fallbackProduct = snapshot.products[0];
     if (!fallbackProduct) return;
     const gstRate = fallbackProduct.defaultGstRate === "NA" ? "NA" : String(fallbackProduct.defaultGstRate || 0) as GstRateInput;
@@ -6382,7 +6555,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   async function cancelSalesGroup() {
     if (!selectedGroup || !draft || !editState.editable) return;
     if (!window.confirm(`Cancel sales order ${selectedGroup.id}?`)) return;
-    await onUpdateSalesOrder(selectedGroup.id, {
+    const success = await onUpdateSalesOrder(selectedGroup.id, {
       paymentMode: draft.paymentMode,
       cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
       deliveryMode: draft.deliveryMode,
@@ -6400,6 +6573,10 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
         taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
       }))
     });
+    if (success !== false) {
+      onDirtyChange(false);
+      onNewOrder();
+    }
   }
 
   return (
@@ -6407,7 +6584,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
       {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
         event.preventDefault();
         if (!selectedGroup || !draft || !editState.editable) return;
-        await onUpdateSalesOrder(selectedGroup.id, {
+        const success = await onUpdateSalesOrder(selectedGroup.id, {
           paymentMode: draft.paymentMode,
           cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
           deliveryMode: draft.deliveryMode,
@@ -6425,8 +6602,17 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
             taxMode: line.gstRate === "NA" ? "NA" : line.taxMode
           }))
         });
+        if (success !== false) {
+          onDirtyChange(false);
+          onNewOrder();
+        }
       }}>
-        <label className="wide-field">Sales order<select value={selectedGroup?.id || ""} onChange={(e) => setSelectedOrderId(e.target.value)}>{editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.shopName || "Customer"}`}</option>)}</select></label>
+        <label className="wide-field">Sales order<select value={selectedGroup?.id || ""} onChange={(e) => {
+          const nextOrderId = e.target.value;
+          if (nextOrderId === selectedOrderId) return;
+          if (!confirmDiscardChanges()) return;
+          setSelectedOrderId(nextOrderId);
+        }}>{editableGroups.map((group) => <option key={group.id} value={group.id}>{`${group.id} - ${group.lines[0]?.shopName || "Customer"}`}</option>)}</select></label>
         {selectedGroup ? <>
           <div className="message-chip-grid wide-field">
             <span className="status-pill">{selectedGroup.lines[0]?.shopName || "Customer"}</span>
@@ -6435,6 +6621,11 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
           </div>
           {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
           <div className="payment-card-actions wide-field">
+            <button className="ghost-button" type="button" onClick={() => {
+              if (!confirmDiscardChanges()) return;
+              onDirtyChange(false);
+              onNewOrder();
+            }}>Back</button>
             <button className="ghost-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
             <button className="ghost-button" type="button" onClick={() => void cancelSalesGroup()} disabled={!editState.editable}>Cancel SO</button>
           </div>
@@ -6445,9 +6636,13 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
               <span>Qty</span>
               <span>Rate</span>
             </div>
-            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current)} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}</select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
+            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}</select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
           </> : <div className="empty-card">No sales order lines available.</div>}</div>
-          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={onNewOrder}>New SO</button></div>
+          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={() => {
+            if (!confirmDiscardChanges()) return;
+            onDirtyChange(false);
+            onNewOrder();
+          }}>New SO</button></div>
         </> : null}
       </form>}
     </Panel>
