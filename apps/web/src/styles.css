@@ -566,8 +566,6 @@ textarea {
 }
 
 .simple-tab-bar {
-  position: sticky;
-  bottom: 10px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
@@ -640,6 +638,18 @@ textarea {
 .module-stack {
   display: grid;
   gap: var(--space-3);
+}
+
+@media (min-width: 981px) {
+  .simple-tab-bar {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    right: max(10px, env(safe-area-inset-right, 0px));
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    z-index: 70;
+    width: min(100%, 1120px);
+    margin-inline: auto;
+  }
 }
 
 .collapse-stack {
@@ -3073,13 +3083,13 @@ textarea {
     bottom: max(10px, env(safe-area-inset-bottom, 0px));
     z-index: 70;
     display: flex;
-    gap: clamp(4px, 1.4vw, 8px);
-    padding: clamp(6px, 1.8vw, 10px);
+    gap: 2px;
+    padding: 3px;
     border: 1px solid rgba(31, 41, 55, 0.08);
-    border-radius: 24px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.94);
     backdrop-filter: blur(18px);
-    box-shadow: 0 18px 38px rgba(15, 23, 42, 0.16);
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
   }
 
   .purchase-module-tab-bar,
@@ -3094,17 +3104,17 @@ textarea {
   .mobile-tab-bar .tab-button {
     flex: 1 1 0;
     min-width: 0;
-    padding: clamp(8px, 2vw, 12px) clamp(4px, 1.8vw, 10px);
+    padding: 4px 6px;
     border: 1px solid rgba(255, 255, 255, 0.74);
-    border-radius: 16px;
+    border-radius: 11px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0)),
       linear-gradient(135deg, #fbffff, #e5f5f4 52%, #cfe9e8);
-    box-shadow: 0 10px 18px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    box-shadow: 0 6px 12px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
     color: #143737;
-    font-size: clamp(0.7rem, 2.6vw, 0.9rem);
+    font-size: clamp(0.58rem, 1.9vw, 0.74rem);
     font-weight: 800;
-    min-height: clamp(42px, 10vw, 54px);
+    min-height: 30px;
     white-space: nowrap;
     overflow: visible;
     text-overflow: initial;
@@ -3115,39 +3125,39 @@ textarea {
       linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0)),
       linear-gradient(135deg, #63adad, #3d7f7f);
     color: #fff;
-    box-shadow: 0 14px 24px rgba(35, 93, 93, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+    box-shadow: 0 8px 16px rgba(35, 93, 93, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.32);
   }
 
   .mobile-tab-bar .purchaser-po-tab {
     position: relative;
-    flex: 0 0 clamp(64px, 18vw, 80px);
-    width: clamp(64px, 18vw, 80px);
-    min-width: clamp(64px, 18vw, 80px);
-    height: clamp(64px, 18vw, 80px);
-    min-height: clamp(64px, 18vw, 80px);
+    flex: 0 0 44px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
     padding: 0;
     border: 1px solid rgba(209, 250, 246, 0.82);
     border-radius: 999px;
-    transform: translateY(-10px);
+    transform: translateY(-5px);
     background:
       radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.95) 0 9%, rgba(196, 241, 236, 0.54) 18%, rgba(255, 255, 255, 0) 36%),
       radial-gradient(circle at 72% 78%, rgba(22, 78, 75, 0.62), rgba(22, 78, 75, 0) 42%),
       linear-gradient(145deg, #9bc9c4 0%, #5d9893 50%, #2f6965 100%);
     color: #fff;
-    font-size: clamp(0.88rem, 3.2vw, 1.08rem);
+    font-size: 0.68rem;
     font-weight: 900;
-    box-shadow: 0 18px 28px rgba(22, 78, 75, 0.3), inset 0 9px 15px rgba(255, 255, 255, 0.32), inset 0 -13px 18px rgba(22, 78, 75, 0.32);
+    box-shadow: 0 10px 16px rgba(22, 78, 75, 0.2), inset 0 6px 10px rgba(255, 255, 255, 0.28), inset 0 -10px 14px rgba(22, 78, 75, 0.24);
     text-shadow: 0 1px 4px rgba(15, 23, 42, 0.32);
   }
 
   .mobile-tab-bar .purchaser-po-tab.active {
-    outline: 3px solid rgba(99, 102, 241, 0.72);
-    outline-offset: 3px;
+    outline: 2px solid rgba(99, 102, 241, 0.62);
+    outline-offset: 2px;
     background:
       radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.96) 0 9%, rgba(211, 250, 246, 0.6) 18%, rgba(255, 255, 255, 0) 36%),
       radial-gradient(circle at 72% 78%, rgba(22, 78, 75, 0.56), rgba(22, 78, 75, 0) 42%),
       linear-gradient(145deg, #a8d8d3 0%, #6aa9a4 50%, #377a75 100%);
-    box-shadow: 0 0 0 7px rgba(99, 102, 241, 0.14), 0 20px 30px rgba(22, 78, 75, 0.34), inset 0 9px 15px rgba(255, 255, 255, 0.36), inset 0 -13px 18px rgba(22, 78, 75, 0.3);
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12), 0 12px 18px rgba(22, 78, 75, 0.22), inset 0 6px 10px rgba(255, 255, 255, 0.34), inset 0 -10px 14px rgba(22, 78, 75, 0.26);
   }
 
   .purchase-module-tab-bar {
@@ -3612,7 +3622,30 @@ textarea {
 
   .login-shell,
   .app-shell {
-    padding: 10px 10px 104px;
+    padding: 10px 10px 90px;
+  }
+
+  .mobile-tab-bar {
+    gap: 3px;
+    padding: 4px;
+    border-radius: 16px;
+  }
+
+  .mobile-tab-bar .tab-button {
+    min-height: 34px;
+    padding: 5px 4px;
+    font-size: 0.62rem;
+    border-radius: 12px;
+  }
+
+  .mobile-tab-bar .purchaser-po-tab {
+    flex-basis: 52px;
+    width: 52px;
+    min-width: 52px;
+    height: 52px;
+    min-height: 52px;
+    font-size: 0.74rem;
+    transform: translateY(-8px);
   }
 
   .app-topbar {
