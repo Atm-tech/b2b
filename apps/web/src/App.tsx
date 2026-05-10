@@ -90,7 +90,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
-  Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger", "Stock", "Notes"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns", "Ledger", "Notes"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -104,7 +104,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
-  Accounts: ["Overview", "Purchases", "SalesOrders", "Payments", "Ledger"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -817,6 +817,119 @@ function downloadBlobFile(fileName: string, blob: Blob) {
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
+}
+
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function downloadExcelTextWorkbook(fileName: string, headers: string[], rows: string[][], sheetName = "Sheet1") {
+  const headerXml = headers.map((cell) => `<Cell ss:StyleID="Text"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join("");
+  const rowXml = rows.map((row) => `<Row>${row.map((cell) => `<Cell ss:StyleID="Text"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join("")}</Row>`).join("");
+  const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+  <Styles>
+    <Style ss:ID="Text">
+      <NumberFormat ss:Format="@"/>
+    </Style>
+  </Styles>
+  <Worksheet ss:Name="${escapeXml(sheetName)}">
+    <Table>
+      <Row>${headerXml}</Row>
+      ${rowXml}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+  downloadBlobFile(fileName, new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8;" }));
+}
+
+function numberToWordsUnder1000(value: number): string {
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  if (value < 20) return ones[value];
+  if (value < 100) return `${tens[Math.floor(value / 10)]}${value % 10 ? ` ${ones[value % 10]}` : ""}`.trim();
+  return `${ones[Math.floor(value / 100)]} Hundred${value % 100 ? ` ${numberToWordsUnder1000(value % 100)}` : ""}`.trim();
+}
+
+function numberToIndianWords(value: number) {
+  const integer = Math.floor(Math.max(0, value));
+  if (integer === 0) return "Zero";
+  const parts: string[] = [];
+  const crore = Math.floor(integer / 10000000);
+  const lakh = Math.floor((integer % 10000000) / 100000);
+  const thousand = Math.floor((integer % 100000) / 1000);
+  const hundred = integer % 1000;
+  if (crore) parts.push(`${numberToWordsUnder1000(crore)} Crore`);
+  if (lakh) parts.push(`${numberToWordsUnder1000(lakh)} Lakh`);
+  if (thousand) parts.push(`${numberToWordsUnder1000(thousand)} Thousand`);
+  if (hundred) parts.push(numberToWordsUnder1000(hundred));
+  return parts.join(" ").trim();
+}
+
+function formatChequeAmountWords(value: number) {
+  const whole = Math.floor(Math.max(0, value));
+  const paise = Math.round((Math.max(0, value) - whole) * 100);
+  const rupeesText = `${numberToIndianWords(whole)} Rupees`;
+  return paise > 0 ? `${rupeesText} and ${numberToWordsUnder1000(paise)} Paise Only` : `${rupeesText} Only`;
+}
+
+function openChequePrintWindow(payload: { partyName: string; amount: number; date: string; referenceNumber: string; note: string; }) {
+  if (typeof window === "undefined") return;
+  const printWindow = window.open("", "_blank", "width=900,height=600");
+  if (!printWindow) return;
+  const amountText = payload.amount.toFixed(2);
+  const words = formatChequeAmountWords(payload.amount);
+  printWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <title>Cheque Print</title>
+    <style>
+      body { font-family: "Segoe UI", sans-serif; margin: 0; padding: 24px; color: #0f172a; }
+      .sheet { width: 100%; max-width: 860px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 18px; padding: 28px; }
+      .top, .line { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+      .top { margin-bottom: 20px; }
+      .payee, .amount-box, .note-box { border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px 16px; }
+      .payee { margin-bottom: 14px; }
+      .amount-box { min-width: 180px; text-align: right; font-size: 28px; font-weight: 800; }
+      .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; display: block; margin-bottom: 6px; }
+      .value { font-size: 24px; font-weight: 800; }
+      .words { min-height: 64px; border-bottom: 1px dashed #94a3b8; padding: 8px 0 12px; margin-bottom: 14px; font-size: 20px; font-weight: 700; }
+      .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .note-box { min-height: 88px; }
+      @media print { body { padding: 0; } .sheet { border: 0; border-radius: 0; } }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="top">
+        <div><span class="label">Date</span><div class="value">${escapeXml(payload.date)}</div></div>
+        <div class="amount-box">${escapeXml(amountText)}</div>
+      </div>
+      <div class="payee">
+        <span class="label">Pay</span>
+        <div class="value">${escapeXml(payload.partyName)}</div>
+      </div>
+      <span class="label">Amount In Words</span>
+      <div class="words">${escapeXml(words)}</div>
+      <div class="meta">
+        <div class="note-box"><span class="label">Reference</span><div>${escapeXml(payload.referenceNumber)}</div></div>
+        <div class="note-box"><span class="label">Narration</span><div>${escapeXml(payload.note)}</div></div>
+      </div>
+    </div>
+    <script>window.onload = function(){ window.print(); };</script>
+  </body>
+</html>`);
+  printWindow.document.close();
 }
 
 async function shareInvoicePdfFile(fileName: string, blob: Blob, title: string) {
@@ -2950,6 +3063,36 @@ function snapshotForWarehouse(snapshot: AppSnapshot, warehouseId: string): AppSn
   };
 }
 
+function snapshotForWarehouseScope(snapshot: AppSnapshot, warehouseIds: string[]): AppSnapshot {
+  const allowedWarehouseIds = new Set(warehouseIds.filter(Boolean));
+  if (allowedWarehouseIds.size === 0) return snapshot;
+  const purchaseOrderIds = new Set(snapshot.purchaseOrders.filter((item) => allowedWarehouseIds.has(item.warehouseId)).map((item) => orderPublicId(item)));
+  const salesOrderIds = new Set(snapshot.salesOrders.filter((item) => allowedWarehouseIds.has(item.warehouseId)).map((item) => orderPublicId(item)));
+  const consignmentIds = new Set(snapshot.deliveryConsignments.filter((item) => allowedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
+  const receiptIds = new Set(snapshot.receiptChecks.filter((item) => allowedWarehouseIds.has(item.warehouseId)).map((item) => item.grcNumber));
+  const deliveryTaskIds = new Set(snapshot.deliveryTasks.filter((task) =>
+    task.routeStops.some((stop) => allowedWarehouseIds.has(stop.warehouseId)) ||
+    (task.consignmentId ? consignmentIds.has(task.consignmentId) : false) ||
+    task.linkedOrderIds.some((id) => purchaseOrderIds.has(id) || salesOrderIds.has(id))
+  ).map((task) => task.id));
+
+  return {
+    ...snapshot,
+    warehouses: snapshot.warehouses.filter((item) => allowedWarehouseIds.has(item.id)),
+    purchaseOrders: snapshot.purchaseOrders.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    salesOrders: snapshot.salesOrders.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    receiptChecks: snapshot.receiptChecks.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    inventoryLots: snapshot.inventoryLots.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    stockSummary: snapshot.stockSummary.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    deliveryDockets: snapshot.deliveryDockets.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    deliveryConsignments: snapshot.deliveryConsignments.filter((item) => allowedWarehouseIds.has(item.warehouseId)),
+    deliveryTasks: snapshot.deliveryTasks.filter((item) => deliveryTaskIds.has(item.id)),
+    ledgerEntries: snapshot.ledgerEntries.filter((item) => purchaseOrderIds.has(item.linkedOrderId) || salesOrderIds.has(item.linkedOrderId)),
+    payments: snapshot.payments.filter((item) => purchaseOrderIds.has(item.linkedOrderId) || salesOrderIds.has(item.linkedOrderId)),
+    notes: snapshot.notes.filter((item) => purchaseOrderIds.has(item.entityId) || salesOrderIds.has(item.entityId) || deliveryTaskIds.has(item.entityId) || receiptIds.has(item.entityId))
+  };
+}
+
 function mapsDirectionsUrl(stops: string[]) {
   const cleaned = stops.map((item) => item.trim()).filter(Boolean);
   if (cleaned.length === 0) return "";
@@ -3181,6 +3324,21 @@ function App() {
   const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
+  const [accountsPartySearch, setAccountsPartySearch] = useState("");
+  const [accountsPartyUpdateId, setAccountsPartyUpdateId] = useState("");
+  const [accountsPartyPaymentId, setAccountsPartyPaymentId] = useState("");
+  const [accountsPartyPaymentForm, setAccountsPartyPaymentForm] = useState({
+    partyId: "",
+    linkedOrderId: "",
+    amount: "0",
+    mode: "NEFT" as PaymentMode,
+    cashTiming: "In Hand",
+    referenceNumber: "",
+    voucherNumber: "",
+    utrNumber: "",
+    verificationNote: "Supplier payment recorded by accounts",
+    operationDate: indiaDateKey()
+  });
   const [purchaseUpdateOrderId, setPurchaseUpdateOrderId] = useState("");
   const [purchaseEditorDirty, setPurchaseEditorDirty] = useState(false);
   const [salesUpdateOrderId, setSalesUpdateOrderId] = useState("");
@@ -3725,12 +3883,152 @@ function App() {
     }
   }
 
+  function buildPartyEditDraft(item: Counterparty) {
+    return {
+      id: item.id,
+      name: item.name,
+      gstNumber: item.gstNumber,
+      bankName: item.bankName,
+      bankAccountNumber: item.bankAccountNumber,
+      ifscCode: item.ifscCode,
+      mobileNumber: item.mobileNumber,
+      address: item.address,
+      city: item.city,
+      contactPerson: item.contactPerson
+    };
+  }
+
+  function startAccountsPartyUpdate(item: Counterparty) {
+    setAccountsPartyPaymentId("");
+    setAccountsPartyUpdateId(item.id);
+    setPartyEditForm(buildPartyEditDraft(item));
+  }
+
+  function startAccountsPartyPayment(item: Counterparty, orderId = "", pendingAmount = 0, paymentMode: PaymentMode = "NEFT") {
+    setAccountsPartyUpdateId("");
+    setAccountsPartyPaymentId(item.id);
+    setAccountsPartyPaymentForm({
+      partyId: item.id,
+      linkedOrderId: orderId,
+      amount: pendingAmount > 0 ? String(Number(pendingAmount.toFixed(2))) : "0",
+      mode: paymentMode,
+      cashTiming: "In Hand",
+      referenceNumber: "",
+      voucherNumber: "",
+      utrNumber: "",
+      verificationNote: `Supplier payment recorded by accounts for ${item.name}`,
+      operationDate: indiaDateKey()
+    });
+  }
+
+  async function saveAccountsPartyUpdate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const sourceParties = counterparties.filter((item) => item.id !== partyEditForm.id);
+    const nextErrors = getPartyIdentityErrors({ ...partyEditForm, type: "Supplier" }, sourceParties);
+    if (nextErrors.name || nextErrors.gstNumber || nextErrors.bankAccountNumber || nextErrors.ifscCode) {
+      setError(
+        nextErrors.name
+          ? "Supplier name is required and must be unique."
+          : nextErrors.gstNumber
+            ? "GST number is required and must be unique. Use N/A for non-GST suppliers."
+            : nextErrors.bankAccountNumber
+              ? "Bank account number is required and must be unique. Use N/A when not available."
+              : "IFSC code is required and must be unique. Use N/A when not available."
+      );
+      return;
+    }
+    await patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Supplier updated.", () => {
+      setAccountsPartyUpdateId("");
+      setPartyEditForm(emptyPartyEditForm);
+    });
+  }
+
+  async function saveAccountsPartyPayment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = Number(accountsPartyPaymentForm.amount || 0);
+    if (!accountsPartyPaymentForm.partyId || !accountsPartyPaymentForm.linkedOrderId) {
+      setError("Select a pending purchase order first.");
+      return;
+    }
+    if (amount <= 0) {
+      setError("Enter a valid payment amount.");
+      return;
+    }
+    const verificationStatus = accountsPartyPaymentForm.utrNumber.trim() ? "Verified" : "Pending";
+    const verificationNote = accountsPartyPaymentForm.verificationNote.trim()
+      || (verificationStatus === "Verified"
+        ? "Supplier payment recorded by accounts."
+        : "Supplier payment recorded by accounts. Awaiting UTR / reconciliation.");
+    await post("/payments", {
+      side: "Purchase",
+      linkedOrderId: accountsPartyPaymentForm.linkedOrderId,
+      amount,
+      mode: accountsPartyPaymentForm.mode,
+      cashTiming: accountsPartyPaymentForm.mode === "Cash" ? accountsPartyPaymentForm.cashTiming : undefined,
+      referenceNumber: accountsPartyPaymentForm.referenceNumber.trim() || accountsPartyPaymentForm.linkedOrderId,
+      voucherNumber: accountsPartyPaymentForm.voucherNumber.trim() || undefined,
+      utrNumber: accountsPartyPaymentForm.utrNumber.trim() || undefined,
+      verificationStatus,
+      verificationNote,
+      operationDate: accountsPartyPaymentForm.operationDate || undefined
+    }, "Supplier payment recorded.", () => {
+      setAccountsPartyPaymentId("");
+      setAccountsPartyPaymentForm({
+        partyId: "",
+        linkedOrderId: "",
+        amount: "0",
+        mode: "NEFT",
+        cashTiming: "In Hand",
+        referenceNumber: "",
+        voucherNumber: "",
+        utrNumber: "",
+        verificationNote: "Supplier payment recorded by accounts",
+        operationDate: indiaDateKey()
+      });
+    });
+  }
+
   const partyItems = currentUser.role === "Sales" ? shops : suppliers;
   const partyRoleLabel = currentUser.role === "Sales" ? "Customer" : "Supplier";
   const partyFormGstNa = partyForm.gstNumber.trim().toUpperCase() === "N/A";
   const partyFormBankNa = [partyForm.bankName, partyForm.bankAccountNumber, partyForm.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
   const partyEditFormGstNa = partyEditForm.gstNumber.trim().toUpperCase() === "N/A";
   const partyEditFormBankNa = [partyEditForm.bankName, partyEditForm.bankAccountNumber, partyEditForm.ifscCode].every((value) => value.trim().toUpperCase() === "N/A");
+  const accountsSupplierOrders = suppliers.flatMap((supplier) => groupPurchaseOrders(snapshot.purchaseOrders)
+    .filter((group) => group.lines[0]?.supplierId === supplier.id)
+    .map((group) => {
+      const first = group.lines[0];
+      const totalAmount = purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id);
+      const ledger = purchaseLedgerByOrder(snapshot, group.id);
+      return {
+        supplierId: supplier.id,
+        orderId: group.id,
+        createdAt: first?.createdAt || "",
+        paymentMode: (first?.paymentMode || "NEFT") as PaymentMode,
+        totalAmount,
+        paidAmount: ledger?.paidAmount ?? 0,
+        pendingAmount: ledger?.pendingAmount ?? totalAmount,
+        workflowStatus: purchaseWorkflowStatus(snapshot, group.id)
+      };
+    }))
+    .filter((item) => item.pendingAmount > 0)
+    .sort((left, right) => right.pendingAmount - left.pendingAmount);
+  const filteredAccountsSuppliers = suppliers.filter((item) => {
+    const query = accountsPartySearch.trim().toLowerCase();
+    if (!query) return true;
+    const haystack = [
+      item.name,
+      item.contactPerson,
+      item.mobileNumber,
+      item.city,
+      item.gstNumber,
+      item.bankName,
+      item.bankAccountNumber,
+      item.ifscCode,
+      item.address
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
   const partiesView = isAdminUser ? (
     <section className="collapse-stack">
       <CollapsiblePanel title="Supplier Master" eyebrow="Admin view" open={openPartyPanel === "supplier-master"} onToggle={() => setOpenPartyPanel((current) => current === "supplier-master" ? "" : "supplier-master")}>
@@ -3739,6 +4037,127 @@ function App() {
       <CollapsiblePanel title="Customer Master" eyebrow="Admin view" open={openPartyPanel === "customer-master"} onToggle={() => setOpenPartyPanel((current) => current === "customer-master" ? "" : "customer-master")}>
         <PartyVitalsList snapshot={snapshot} parties={shops} type="Shop" />
       </CollapsiblePanel>
+    </section>
+  ) : isAccountsUser ? (
+    <section className="collapse-stack">
+      <CollapsiblePanel title="Create Supplier" eyebrow="Accounts" open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
+        <form className="form-grid" onSubmit={saveStandaloneParty}>
+          <label>Type<input value="Supplier / Vendor" readOnly /></label>
+          <label className={partyFormErrors.name ? "field-error" : ""}>Name<input value={partyForm.name} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, name: false })); setPartyForm((c) => ({ ...c, name: e.target.value })); }} /></label>
+          <label className={partyFormErrors.gstNumber ? "field-error" : ""}>GST<input value={partyForm.gstNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.value })); }} placeholder="GST number or N/A" /></label>
+          <label className="checkbox-line"><input type="checkbox" checked={partyFormGstNa} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.checked ? "N/A" : "" })); }} />GST N/A</label>
+          <label>Bank name<input value={partyForm.bankName} onChange={(e) => setPartyForm((c) => ({ ...c, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label>
+          <label className={partyFormErrors.bankAccountNumber ? "field-error" : ""}>Bank account<input value={partyForm.bankAccountNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, bankAccountNumber: false })); setPartyForm((c) => ({ ...c, bankAccountNumber: e.target.value })); }} placeholder="Account number or N/A" /></label>
+          <label className={partyFormErrors.ifscCode ? "field-error" : ""}>IFSC<input value={partyForm.ifscCode} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, ifscCode: false })); setPartyForm((c) => ({ ...c, ifscCode: e.target.value.toUpperCase() })); }} placeholder="IFSC code or N/A" /></label>
+          <label className="checkbox-line"><input type="checkbox" checked={partyFormBankNa} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, bankAccountNumber: false, ifscCode: false })); setPartyForm((c) => ({ ...c, bankName: e.target.checked ? "N/A" : "", bankAccountNumber: e.target.checked ? "N/A" : "", ifscCode: e.target.checked ? "N/A" : "" })); }} />Bank details N/A</label>
+          <label>Mobile<input value={partyForm.mobileNumber} onChange={(e) => setPartyForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label>
+          <label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label>
+          <label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label>
+          <label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label>
+          <button className="primary-button" type="submit">Save supplier</button>
+        </form>
+      </CollapsiblePanel>
+
+      <Panel title="Supplier List" eyebrow="Search, update, pay">
+        <div className="form-grid">
+          <label className="wide-field">Search supplier<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Name, GST, mobile, bank, city" /></label>
+        </div>
+        <div className="stack-list payment-update-list top-gap">
+          {filteredAccountsSuppliers.length === 0 ? <div className="empty-card">No suppliers match this search.</div> : filteredAccountsSuppliers.map((item) => {
+            const pendingOrders = accountsSupplierOrders.filter((order) => order.supplierId === item.id);
+            const totalPending = pendingOrders.reduce((sum, order) => sum + order.pendingAmount, 0);
+            const totalPaid = pendingOrders.reduce((sum, order) => sum + order.paidAmount, 0);
+            const isUpdating = accountsPartyUpdateId === item.id;
+            const isPaying = accountsPartyPaymentId === item.id;
+            return <article className="list-card payment-update-card" key={item.id}>
+              <div className="payment-update-head">
+                <div>
+                  <strong>{item.name}</strong>
+                  <p>{item.id} | {item.city || "No city"}{item.mobileNumber ? ` | ${item.mobileNumber}` : ""}</p>
+                </div>
+                <span className={`status-pill ${totalPending > 0 ? "status-pending" : "status-completed"}`}>{totalPending > 0 ? "Payment pending" : "Settled"}</span>
+              </div>
+              <div className="payment-meta-grid">
+                <div><span className="small-label">GST</span><strong>{item.gstNumber || "N/A"}</strong></div>
+                <div><span className="small-label">Bank</span><strong>{item.bankName || "N/A"}</strong></div>
+                <div><span className="small-label">Account</span><strong>{item.bankAccountNumber || "N/A"}</strong></div>
+                <div><span className="small-label">IFSC</span><strong>{item.ifscCode || "N/A"}</strong></div>
+                <div><span className="small-label">Contact</span><strong>{item.contactPerson || "N/A"}</strong></div>
+                <div><span className="small-label">Address</span><strong>{item.address || "N/A"}</strong></div>
+                <div><span className="small-label">Pending dues</span><strong>{formatCurrencyInr(totalPending)}</strong></div>
+                <div><span className="small-label">Open PO</span><strong>{String(pendingOrders.length)}</strong></div>
+                <div><span className="small-label">Already paid</span><strong>{formatCurrencyInr(totalPaid)}</strong></div>
+              </div>
+              <div className="payment-card-actions">
+                <button className={isUpdating ? "primary-button" : "ghost-button"} type="button" onClick={() => isUpdating ? setAccountsPartyUpdateId("") : startAccountsPartyUpdate(item)}>{isUpdating ? "Close update" : "Update supplier"}</button>
+                <button className={isPaying ? "primary-button" : "ghost-button"} type="button" onClick={() => isPaying ? setAccountsPartyPaymentId("") : startAccountsPartyPayment(item, pendingOrders[0]?.orderId || "", pendingOrders[0]?.pendingAmount || 0, pendingOrders[0]?.paymentMode || "NEFT")}>{isPaying ? "Close payment" : "Create payment"}</button>
+              </div>
+
+              {pendingOrders.length > 0 ? <div className="stack-list top-gap">
+                {pendingOrders.slice(0, 4).map((order) => (
+                  <div className="list-card" key={order.orderId}>
+                    <div className="payment-update-head">
+                      <div>
+                        <strong>{order.orderId}</strong>
+                        <p>{formatShortDate(order.createdAt)} | {order.workflowStatus}</p>
+                      </div>
+                      <button className="ghost-button" type="button" onClick={() => startAccountsPartyPayment(item, order.orderId, order.pendingAmount, order.paymentMode)}>Pay this PO</button>
+                    </div>
+                    <div className="payment-meta-grid">
+                      <div><span className="small-label">Pending</span><strong>{formatCurrencyInr(order.pendingAmount)}</strong></div>
+                      <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(order.paidAmount)}</strong></div>
+                      <div><span className="small-label">Total</span><strong>{formatCurrencyInr(order.totalAmount)}</strong></div>
+                      <div><span className="small-label">Mode</span><strong>{order.paymentMode}</strong></div>
+                    </div>
+                  </div>
+                ))}
+              </div> : null}
+
+              {isUpdating ? <form className="form-grid top-gap" onSubmit={saveAccountsPartyUpdate}>
+                <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((current) => ({ ...current, name: e.target.value }))} /></label>
+                <label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((current) => ({ ...current, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label>
+                <label className="checkbox-line"><input type="checkbox" checked={partyEditFormGstNa} onChange={(e) => setPartyEditForm((current) => ({ ...current, gstNumber: e.target.checked ? "N/A" : "" }))} />GST N/A</label>
+                <label>Bank name<input value={partyEditForm.bankName} onChange={(e) => setPartyEditForm((current) => ({ ...current, bankName: e.target.value }))} placeholder="Bank name or N/A" /></label>
+                <label>Bank account<input value={partyEditForm.bankAccountNumber} onChange={(e) => setPartyEditForm((current) => ({ ...current, bankAccountNumber: e.target.value }))} placeholder="Account number or N/A" /></label>
+                <label>IFSC<input value={partyEditForm.ifscCode} onChange={(e) => setPartyEditForm((current) => ({ ...current, ifscCode: e.target.value.toUpperCase() }))} placeholder="IFSC code or N/A" /></label>
+                <label className="checkbox-line"><input type="checkbox" checked={partyEditFormBankNa} onChange={(e) => setPartyEditForm((current) => ({ ...current, bankName: e.target.checked ? "N/A" : "", bankAccountNumber: e.target.checked ? "N/A" : "", ifscCode: e.target.checked ? "N/A" : "" }))} />Bank details N/A</label>
+                <label>Mobile<input value={partyEditForm.mobileNumber} onChange={(e) => setPartyEditForm((current) => ({ ...current, mobileNumber: e.target.value }))} /></label>
+                <label>Contact<input value={partyEditForm.contactPerson} onChange={(e) => setPartyEditForm((current) => ({ ...current, contactPerson: e.target.value }))} /></label>
+                <label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((current) => ({ ...current, city: e.target.value }))} /></label>
+                <label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((current) => ({ ...current, address: e.target.value }))} /></label>
+                <div className="payment-card-actions wide-field">
+                  <button className="primary-button" type="submit">Update supplier</button>
+                  <button className="ghost-button" type="button" onClick={() => setAccountsPartyUpdateId("")}>Cancel</button>
+                </div>
+              </form> : null}
+
+              {isPaying ? <form className="form-grid top-gap" onSubmit={saveAccountsPartyPayment}>
+                <label>Pending PO<select value={accountsPartyPaymentForm.linkedOrderId} onChange={(e) => {
+                  const selectedOrder = pendingOrders.find((order) => order.orderId === e.target.value);
+                  setAccountsPartyPaymentForm((current) => ({
+                    ...current,
+                    linkedOrderId: e.target.value,
+                    amount: selectedOrder ? String(Number(selectedOrder.pendingAmount.toFixed(2))) : current.amount,
+                    mode: selectedOrder?.paymentMode || current.mode
+                  }));
+                }}>{[<option key="blank" value="">Select pending PO</option>, ...pendingOrders.map((order) => <option key={order.orderId} value={order.orderId}>{`${order.orderId} | ${formatCurrencyInr(order.pendingAmount)}`}</option>)]}</select></label>
+                <label>Amount<input type="number" step="any" value={accountsPartyPaymentForm.amount} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, amount: e.target.value }))} /></label>
+                <label>Mode<select value={accountsPartyPaymentForm.mode} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
+                {accountsPartyPaymentForm.mode === "Cash" ? <label>Cash timing<select value={accountsPartyPaymentForm.cashTiming} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, cashTiming: e.target.value }))}><option>In Hand</option><option>Advance</option><option>On Delivery</option><option>Against Bill</option></select></label> : null}
+                <label>Reference<input value={accountsPartyPaymentForm.referenceNumber} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, referenceNumber: e.target.value }))} placeholder="Ref no. or PO id" /></label>
+                <label>Voucher<input value={accountsPartyPaymentForm.voucherNumber} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, voucherNumber: e.target.value }))} /></label>
+                <label>UTR<input value={accountsPartyPaymentForm.utrNumber} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, utrNumber: e.target.value }))} placeholder="Leave blank if pending" /></label>
+                <label>Date<input type="date" value={accountsPartyPaymentForm.operationDate} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
+                <label className="wide-field">Note<input value={accountsPartyPaymentForm.verificationNote} onChange={(e) => setAccountsPartyPaymentForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
+                <div className="payment-card-actions wide-field">
+                  <button className="primary-button" type="submit">Save payment</button>
+                  <button className="ghost-button" type="button" onClick={() => setAccountsPartyPaymentId("")}>Cancel</button>
+                </div>
+              </form> : null}
+            </article>;
+          })}
+        </div>
+      </Panel>
     </section>
   ) : (
     <section className="collapse-stack">
@@ -7349,9 +7768,37 @@ function AccountsPaymentsView({
     verificationNote: "Payment recorded by accounts",
     operationDate: today
   });
+  const paymentSheetHeaders = ["PYMT_PROD_TYPE_CODE", "PYMT_MODE", "DEBIT_ACC_NO", "BNF_NAME", "BENE_ACC_NO", "BENE_IFSC", "AMOUNT", "DEBIT_NARR", "CREDIT_NARR", "MOBILE_NUM", "EMAIL_ID", "REMARK", "PYMT_DATE", "REF_NO", "ADDL_INFO1", "ADDL_INFO2", "ADDL_INFO3", "ADDL_INFO4", "ADDL_INFO5"];
+  const accountsPaymentConfigKey = workspaceStorageKey("accounts", "payment-config");
+  const [makePaymentMode, setMakePaymentMode] = useState<"Cheque" | "Excel">("Excel");
+  const [paymentExportConfig, setPaymentExportConfig] = useState(() => readStoredJson(accountsPaymentConfigKey, {
+    productCode: "",
+    debitAccountNumber: "",
+    mobileNumber: "",
+    emailId: ""
+  }));
+  const [paymentMakerError, setPaymentMakerError] = useState("");
+  const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
+  const [paymentPreview, setPaymentPreview] = useState<null | {
+    outputMode: "Cheque" | "Excel";
+    dbMode: PaymentMode;
+    sheetMode: string;
+    fileName: string;
+    partyName: string;
+    amount: number;
+    paymentDate: string;
+    referenceNumber: string;
+    remark: string;
+    narration: string;
+    row: string[];
+  }>(null);
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
+
+  useEffect(() => {
+    writeStoredJson(accountsPaymentConfigKey, paymentExportConfig);
+  }, [accountsPaymentConfigKey, paymentExportConfig]);
 
   const filteredAdvancePayments = purchaseAdvancePayments.filter((payment) => {
     const haystack = [
@@ -7384,6 +7831,120 @@ function AccountsPaymentsView({
       verificationNote: side === "Purchase" ? "Purchase payment recorded by accounts" : "Customer payment recorded by accounts",
       operationDate: current.operationDate || today
     }));
+  }
+
+  function buildAccountsPaymentPreview() {
+    const amount = Number(createForm.amount || 0);
+    if (createForm.side !== "Purchase") {
+      return { error: "Make payment is only available for purchase payouts." };
+    }
+    if (amount <= 0) {
+      return { error: "Enter a valid payment amount first." };
+    }
+    const order = accountOrderOptions.find((item) => item.side === "Purchase" && item.id === createForm.linkedOrderId);
+    const purchaseOrder = findPurchaseOrderByPublicId(snapshot.purchaseOrders, createForm.linkedOrderId);
+    const counterparty = snapshot.counterparties.find((item) => item.id === purchaseOrder?.supplierId);
+    if (!order || !purchaseOrder || !counterparty) {
+      return { error: "Purchase order or supplier details are missing." };
+    }
+    if (makePaymentMode === "Excel" && (!paymentExportConfig.productCode.trim() || !paymentExportConfig.debitAccountNumber.trim())) {
+      return { error: "Enter the fixed product code and debit account number for Excel export." };
+    }
+    if (!counterparty.bankAccountNumber.trim() || !counterparty.ifscCode.trim()) {
+      return { error: "Supplier bank details are missing." };
+    }
+    const ifsc = counterparty.ifscCode.trim().toUpperCase();
+    const sheetMode = makePaymentMode === "Cheque"
+      ? "CHEQUE"
+      : ifsc.startsWith("ICIC")
+        ? "FT"
+        : amount >= 200000
+          ? "RTGS"
+          : "NEFT";
+    const dbMode: PaymentMode = makePaymentMode === "Cheque" ? "Cheque" : amount >= 200000 ? "RTGS" : "NEFT";
+    const paymentDate = createForm.operationDate || today;
+    const referenceNumber = createForm.referenceNumber.trim() || createForm.linkedOrderId;
+    const narration = createForm.verificationNote.trim() || `Against ${createForm.linkedOrderId}`;
+    const remark = createForm.voucherNumber.trim() || `${makePaymentMode} ${createForm.linkedOrderId}`;
+    return {
+      outputMode: makePaymentMode,
+      dbMode,
+      sheetMode,
+      fileName: safePdfFileName(`${referenceNumber}-${sheetMode}-payment.xls`),
+      partyName: counterparty.name,
+      amount,
+      paymentDate,
+      referenceNumber,
+      remark,
+      narration,
+      row: [
+        paymentExportConfig.productCode.trim(),
+        sheetMode,
+        paymentExportConfig.debitAccountNumber.trim(),
+        counterparty.name,
+        counterparty.bankAccountNumber.trim(),
+        ifsc,
+        amount.toFixed(2),
+        narration,
+        narration,
+        paymentExportConfig.mobileNumber.trim(),
+        paymentExportConfig.emailId.trim(),
+        remark,
+        paymentDate,
+        referenceNumber,
+        counterparty.name,
+        counterparty.name,
+        counterparty.name,
+        counterparty.name,
+        counterparty.name
+      ]
+    };
+  }
+
+  function openAccountsPaymentPreview() {
+    const next = buildAccountsPaymentPreview();
+    if ("error" in next) {
+      setPaymentMakerError(next.error || "Unable to prepare payment preview.");
+      setPaymentPreview(null);
+      return;
+    }
+    setPaymentMakerError("");
+    setPaymentPreview(next);
+  }
+
+  async function finalizeAccountsPayment() {
+    if (!paymentPreview) return;
+    setPaymentMakerBusy(true);
+    const verificationNote = paymentPreview.outputMode === "Excel"
+      ? `Bank instruction file generated by accounts in ${paymentPreview.sheetMode}. Awaiting UTR reconciliation.`
+      : "Cheque print generated by accounts. Awaiting clearance / reconciliation.";
+    const success = await onCreatePayment({
+      side: "Purchase",
+      linkedOrderId: createForm.linkedOrderId,
+      amount: paymentPreview.amount,
+      mode: paymentPreview.dbMode,
+      referenceNumber: paymentPreview.referenceNumber,
+      voucherNumber: paymentPreview.remark || undefined,
+      utrNumber: paymentPreview.outputMode === "Excel" ? "Pending" : undefined,
+      verificationStatus: "Pending",
+      verificationNote,
+      operationDate: paymentPreview.paymentDate || undefined
+    });
+    setPaymentMakerBusy(false);
+    if (success === false) return;
+    if (paymentPreview.outputMode === "Excel") {
+      downloadExcelTextWorkbook(paymentPreview.fileName, paymentSheetHeaders, [paymentPreview.row], "Sheet1");
+    } else {
+      openChequePrintWindow({
+        partyName: paymentPreview.partyName,
+        amount: paymentPreview.amount,
+        date: paymentPreview.paymentDate,
+        referenceNumber: paymentPreview.referenceNumber,
+        note: paymentPreview.narration
+      });
+    }
+    setPaymentPreview(null);
+    setPaymentMakerError("");
   }
 
   return (
@@ -7538,8 +8099,55 @@ function AccountsPaymentsView({
           <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setCreateForm((current) => ({ ...current, proofName: String((uploaded as { fileName: string }).fileName) })); }} /></label>
           <label>Proof name<input value={createForm.proofName} onChange={(e) => setCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
           <label className="wide-field">Note<input value={createForm.verificationNote} onChange={(e) => setCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
-          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit">Record payment</button></div>
+          <label className="wide-field">
+            Make payment
+            <div className="payment-card-actions top-gap">
+              <label className="checkbox-line"><input type="radio" name="accounts-make-payment" checked={makePaymentMode === "Cheque"} onChange={() => setMakePaymentMode("Cheque")} />Cheque</label>
+              <label className="checkbox-line"><input type="radio" name="accounts-make-payment" checked={makePaymentMode === "Excel"} onChange={() => setMakePaymentMode("Excel")} />Excel</label>
+            </div>
+          </label>
+          {makePaymentMode === "Excel" ? <>
+            <label>Product code<input value={paymentExportConfig.productCode} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, productCode: e.target.value }))} placeholder="Same for all bank files" /></label>
+            <label>Debit account<input value={paymentExportConfig.debitAccountNumber} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, debitAccountNumber: e.target.value }))} placeholder="Same for all bank files" /></label>
+            <label>Mobile<input value={paymentExportConfig.mobileNumber} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, mobileNumber: e.target.value }))} placeholder="Optional export value" /></label>
+            <label>Email<input value={paymentExportConfig.emailId} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, emailId: e.target.value }))} placeholder="Optional export value" /></label>
+          </> : null}
+          {paymentMakerError ? <p className="message error wide-field">{paymentMakerError}</p> : null}
+          <div className="payment-card-actions wide-field">
+            <button className="primary-button" type="submit">Record payment</button>
+            <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview}>Make payment</button>
+          </div>
         </form>
+        {paymentPreview ? <div className="stack-list top-gap">
+          <article className="list-card">
+            <div className="payment-update-head">
+              <div>
+                <strong>{paymentPreview.outputMode === "Excel" ? "Excel payout preview" : "Cheque print preview"}</strong>
+                <p>{createForm.linkedOrderId} · {paymentPreview.partyName}</p>
+              </div>
+              <span className="status-pill">{paymentPreview.outputMode === "Excel" ? paymentPreview.sheetMode : "Cheque"}</span>
+            </div>
+            <div className="payment-meta-grid top-gap">
+              <div><span className="small-label">Amount</span><strong>{paymentPreview.amount.toFixed(2)}</strong></div>
+              <div><span className="small-label">Payment date</span><strong>{paymentPreview.paymentDate}</strong></div>
+              <div><span className="small-label">Reference</span><strong>{paymentPreview.referenceNumber}</strong></div>
+              <div><span className="small-label">Recorded mode</span><strong>{paymentPreview.dbMode}</strong></div>
+              <div className="wide-field"><span className="small-label">Narration</span><strong>{paymentPreview.narration}</strong></div>
+            </div>
+            {paymentPreview.outputMode === "Excel" ? <div className="table-wrap top-gap">
+              <table>
+                <thead><tr>{paymentSheetHeaders.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+                <tbody><tr>{paymentPreview.row.map((value, index) => <td key={`${paymentSheetHeaders[index]}-${index}`}>{value}</td>)}</tr></tbody>
+              </table>
+            </div> : <div className="payment-meta-grid top-gap">
+              <div className="wide-field"><span className="small-label">Amount in words</span><strong>{formatChequeAmountWords(paymentPreview.amount)}</strong></div>
+            </div>}
+            <div className="payment-card-actions top-gap">
+              <button className="ghost-button" type="button" onClick={() => setPaymentPreview(null)} disabled={paymentMakerBusy}>Cancel</button>
+              <button className="primary-button" type="button" onClick={() => void finalizeAccountsPayment()} disabled={paymentMakerBusy}>{paymentMakerBusy ? "Finalizing..." : paymentPreview.outputMode === "Excel" ? "Finalize and download XLS" : "Finalize and print cheque"}</button>
+            </div>
+          </article>
+        </div> : null}
       </Panel>
       <Panel title="Pending Verification" eyebrow="Accounts must complete payment">
         <div className="stack-list payment-update-list">
@@ -7835,6 +8443,10 @@ function WarehouseOperationsViewV2({
   canManageDeliveryTagging?: boolean;
   canManageWarehouseChecks?: boolean;
 }) {
+  const warehouseScope = userWarehouseScope(currentUser);
+  if (canManageWarehouseChecks && isWarehouseScoped(currentUser) && warehouseScope.size > 0) {
+    snapshot = snapshotForWarehouseScope(snapshot, Array.from(warehouseScope));
+  }
   type PurchaseGroup = { id: string; lines: PurchaseOrder[] };
   type SalesGroup = { id: string; lines: SalesOrder[] };
   const persistKey = workspaceStorageKey(currentUser.id, `warehouse-ops-${screen}`);
@@ -8461,7 +9073,7 @@ function WarehouseOperationsViewV2({
           <button className="ghost-button" type="button" onClick={() => setExpandedReceiveSummary((current) => ({ ...current, [group.id]: !summaryExpanded }))}>{summaryExpanded ? "Hide summary" : "Show summary"}</button>
         </div>
         {summaryExpanded ? <article className="list-card warehouse-summary-card">
-          <strong>Order Summary</strong>
+          <strong>Packing Summary</strong>
           <div className="payment-meta-grid top-gap">
             <div><span className="small-label">Total qty</span><strong>{group.lines.reduce((sum, line) => sum + line.quantityOrdered, 0)}</strong></div>
             <div><span className="small-label">Pending qty</span><strong>{groupPendingQty(group)}</strong></div>
@@ -8601,6 +9213,10 @@ function WarehouseOperationsViewV2({
     const totalWeight = group.lines.reduce((sum, line) => sum + (snapshot.deliveryDockets.find((item) => item.salesOrderId === line.id)?.weightKg || 0), 0);
     const isProcessing = Boolean(processingSendKeys[group.id]);
     const isSelfCollection = first.deliveryMode === "Self Collection";
+    const warehouseNames = Array.from(new Set(group.lines.map((line) => warehouseById.get(line.warehouseId)?.name || line.warehouseId))).join(", ");
+    const totalQty = group.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const goodsTotal = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
+    const orderTotal = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
     return <article className="list-card payment-update-card warehouse-order-card" key={group.id}>
       <button className="warehouse-order-row" type="button" onClick={() => setExpandedSend((current) => ({ ...current, [group.id]: !expanded }))}>
         <div className="warehouse-order-main">
@@ -8609,13 +9225,35 @@ function WarehouseOperationsViewV2({
         </div>
         <div className="warehouse-order-meta">
           <span>{group.lines.length} products</span>
-          <span>{group.lines.reduce((sum, line) => sum + line.quantity, 0)} qty</span>
-          <span>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</span>
+          <span>{totalQty} qty</span>
+          <span>{goodsTotal.toFixed(2)}</span>
           <span>{formatDateTimeIst(first.createdAt)}</span>
         </div>
         <span className={`status-pill ${statusPillClass(group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status))}`}>{group.lines.some((line) => line.status === "Out for Delivery") ? salesStatusLabel("Out for Delivery") : salesStatusLabel(first.status)}</span>
       </button>
       {expanded ? <div className="form-grid top-gap">
+        <article className="list-card warehouse-summary-card wide-field">
+          <strong>SO Dispatch Sheet</strong>
+          <div className="payment-meta-grid top-gap">
+            <div><span className="small-label">Customer</span><strong>{first.shopName}</strong></div>
+            <div><span className="small-label">Warehouse</span><strong>{warehouseNames}</strong></div>
+            <div><span className="small-label">Delivery mode</span><strong>{first.deliveryMode}</strong></div>
+            <div><span className="small-label">Payment</span><strong>{first.paymentMode}{first.cashTiming ? ` / ${first.cashTiming}` : ""}</strong></div>
+            <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
+            <div><span className="small-label">Grand total</span><strong>{orderTotal.toFixed(2)}</strong></div>
+          </div>
+          <div className="payment-card-actions top-gap">
+            <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`SO ${group.id}`, salesInvoiceHtml(snapshot, group))}>Print SO</button>
+            <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, group)}>Download PDF</button>
+            <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
+          </div>
+          <div className="stack-list top-gap">
+            {group.lines.map((line) => <article className="list-card" key={line.id}>
+              <strong>{line.productSku}</strong>
+              <p>{line.quantity} qty | Rate {line.rate.toFixed(2)} | Total {(line.totalAmount + line.deliveryCharge).toFixed(2)}</p>
+            </article>)}
+          </div>
+        </article>
         <label>Container weight<input type="number" step="any" value={draft.containerWeightKg} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, containerWeightKg: e.target.value } }))} /></label>
         <label>Weighing photo<input type="file" accept="image/*" onChange={(e) => void uploadWeighingProof(group.id, e.target.files?.[0] || null, "outgoing")} /></label>
         <label>Proof name<input value={draft.weighingProofName} onChange={(e) => setOutgoingDrafts((current) => ({ ...current, [group.id]: { ...draft, weighingProofName: e.target.value } }))} /></label>
@@ -8651,11 +9289,11 @@ function WarehouseOperationsViewV2({
           <button className="ghost-button" type="button" onClick={() => setExpandedSendSummary((current) => ({ ...current, [group.id]: !summaryExpanded }))}>{summaryExpanded ? "Hide summary" : "Show summary"}</button>
         </div>
         {summaryExpanded ? <article className="list-card warehouse-summary-card wide-field">
-          <strong>Order Summary</strong>
+          <strong>Packing Summary</strong>
           <div className="payment-meta-grid top-gap">
-            <div><span className="small-label">Total qty</span><strong>{group.lines.reduce((sum, line) => sum + line.quantity, 0)}</strong></div>
+            <div><span className="small-label">Total qty</span><strong>{totalQty}</strong></div>
             <div><span className="small-label">Total weight</span><strong>{totalWeight.toFixed(2)} kg</strong></div>
-            <div><span className="small-label">Total amount</span><strong>{group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toFixed(2)}</strong></div>
+            <div><span className="small-label">Goods amount</span><strong>{goodsTotal.toFixed(2)}</strong></div>
             <div><span className="small-label">Pending amount</span><strong>{paymentPending.toFixed(2)}</strong></div>
           </div>
           <div className="form-grid top-gap">
