@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS products (
   department TEXT NOT NULL DEFAULT '',
   section_name TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL,
+  sub_category TEXT NOT NULL DEFAULT '',
   unit TEXT NOT NULL,
   default_weight_kg DOUBLE PRECISION NOT NULL,
   tolerance_kg DOUBLE PRECISION NOT NULL,
@@ -157,6 +158,30 @@ CREATE TABLE IF NOT EXISTS sales_returns (
   photo_name TEXT,
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS probationary_sales (
+  id TEXT PRIMARY KEY,
+  sales_order_id TEXT NOT NULL,
+  sales_cart_id TEXT,
+  shop_id TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  available_quantity_at_sale DOUBLE PRECISION NOT NULL,
+  sold_quantity DOUBLE PRECISION NOT NULL,
+  original_probationary_quantity DOUBLE PRECISION NOT NULL,
+  pending_probationary_quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tax_mode TEXT NOT NULL DEFAULT 'Exclusive',
+  total_amount DOUBLE PRECISION NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'Pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  cleared_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS payments (

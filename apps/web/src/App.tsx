@@ -550,6 +550,17 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
         padding-bottom: 16px;
         border-bottom: 1px solid #e2e8f0;
       }
+      .invoice-head-main,
+      .invoice-head-side,
+      .invoice-kachcha-head-main,
+      .invoice-kachcha-head-side {
+        display: grid;
+        gap: 10px;
+      }
+      .invoice-head-side,
+      .invoice-kachcha-head-side {
+        justify-items: end;
+      }
       .invoice-head h1 {
         margin: 6px 0 0;
         font-size: 28px;
@@ -584,6 +595,10 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
       }
       .invoice-meta-wide {
         grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .invoice-meta .wide,
+      .invoice-kachcha-meta .wide {
+        grid-column: 1 / -1;
       }
       .invoice-meta div,
       .invoice-totals div {
@@ -654,6 +669,26 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
         margin: 4px 0 0;
         font-size: 26px;
         line-height: 1;
+      }
+      .invoice-qr-card {
+        display: grid;
+        gap: 6px;
+        justify-items: center;
+      }
+      .invoice-qr-image {
+        width: 96px;
+        height: 96px;
+        padding: 4px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        object-fit: contain;
+      }
+      .invoice-qr-card span {
+        color: #64748b;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
       .invoice-kachcha-meta {
         display: grid;
@@ -729,6 +764,20 @@ function printInvoiceDocument(title: string, bodyHtml: string) {
         color: #9a3412;
         font-size: 13px;
       }
+      @media (max-width: 720px) {
+        .invoice-head,
+        .invoice-kachcha-head,
+        .invoice-meta,
+        .invoice-meta-wide,
+        .invoice-kachcha-meta,
+        .invoice-totals {
+          grid-template-columns: 1fr;
+        }
+        .invoice-head-side,
+        .invoice-kachcha-head-side {
+          justify-items: start;
+        }
+      }
       @media print {
         body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
         .invoice-shell { padding: 0; max-width: none; }
@@ -794,6 +843,9 @@ type InvoicePdfConfig = {
   partyLabel: string;
   partyName: string;
   warehouseName: string;
+  contactName: string;
+  mobileNumber: string;
+  address: string;
   createdAt?: string;
   statusLabel: string;
   note?: string;
@@ -954,6 +1006,9 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   const margin = 12;
   const contentWidth = pageWidth - margin * 2;
   let cursorY = 14;
+  const qrBoxSize = config.qrDataUrl ? 22 : 0;
+  const qrBoxWidth = config.qrDataUrl ? 28 : 0;
+  const headerTextRight = pageWidth - margin - qrBoxWidth - 4;
 
   const drawMetaCard = (x: number, y: number, width: number, label: string, value: string) => {
     doc.setDrawColor(215, 222, 231);
@@ -1007,13 +1062,16 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   doc.text(config.nonGst ? "Estimate" : config.documentTitle, margin + 4, cursorY + 16);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(config.fileName.replace(/\.pdf$/i, ""), pageWidth - margin - 4, cursorY + 8, { align: "right" });
+  doc.text(config.fileName.replace(/\.pdf$/i, ""), headerTextRight, cursorY + 8, { align: "right" });
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text(config.statusLabel || "-", pageWidth - margin - 4, cursorY + 16, { align: "right" });
+  const statusLines = doc.splitTextToSize(config.statusLabel || "-", 44);
+  doc.text(statusLines.slice(0, 2), headerTextRight, cursorY + 14, { align: "right" });
   if (config.qrDataUrl) {
     try {
-      doc.addImage(config.qrDataUrl, "PNG", pageWidth - margin - 34, cursorY + 2, 22, 22);
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(pageWidth - margin - 24, cursorY + 2, 24, 24, 3, 3, "F");
+      doc.addImage(config.qrDataUrl, "PNG", pageWidth - margin - 23, cursorY + 3, qrBoxSize, qrBoxSize);
     } catch {}
   }
   cursorY += 30;
@@ -1024,6 +1082,11 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   cursorY += 20;
   drawMetaCard(margin, cursorY, metaWidth, "Date", formatShortDate(config.createdAt));
   drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Bill Type", config.nonGst ? "Estimate" : "GST");
+  cursorY += 20;
+  drawMetaCard(margin, cursorY, metaWidth, "Contact", config.contactName);
+  drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Mobile", config.mobileNumber);
+  cursorY += 20;
+  drawMetaCard(margin, cursorY, contentWidth, "Address", config.address);
   cursorY += 24;
 
   drawTableHeader(cursorY);
@@ -1112,6 +1175,9 @@ async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: strin
     partyLabel: "Supplier",
     partyName: `${invoiceValue(first?.supplierName || supplier?.name)} | GST ${invoiceValue(supplier?.gstNumber)}`,
     warehouseName,
+    contactName: invoiceValue(supplier?.contactPerson),
+    mobileNumber: invoiceValue(supplier?.mobileNumber),
+    address: invoiceValue([supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ")),
     createdAt: first?.createdAt,
     statusLabel: purchaseWorkflowStatus(snapshot, group.id),
     qrDataUrl,
@@ -1154,6 +1220,9 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
     partyLabel: "Customer",
     partyName: `${invoiceValue(first?.shopName || customer?.name)} | GST ${invoiceValue(customer?.gstNumber)}`,
     warehouseName,
+    contactName: invoiceValue(customer?.contactPerson),
+    mobileNumber: invoiceValue(customer?.mobileNumber),
+    address: invoiceValue([customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ")),
     createdAt: first?.createdAt,
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
     qrDataUrl,
@@ -1209,7 +1278,17 @@ async function shareSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
   await shareInvoicePdfFile(safePdfFileName(`${group.id}.pdf`), blob, `Sales invoice ${group.id}`);
 }
 
-function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+async function printPurchaseInvoice(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Purchase", orderId: group.id }), { width: 180, margin: 1 });
+  printInvoiceDocument(`PO ${group.id}`, purchaseInvoiceHtml(snapshot, group, qrDataUrl));
+}
+
+async function printSalesInvoice(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Sales", orderId: group.id }), { width: 180, margin: 1 });
+  printInvoiceDocument(`SO ${group.id}`, salesInvoiceHtml(snapshot, group, qrDataUrl));
+}
+
+function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }, qrDataUrl?: string) {
   const first = group.lines[0];
   const supplier = purchaseInvoiceCounterparty(snapshot, group);
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
@@ -1241,16 +1320,20 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
       <main class="invoice-kachcha-shell">
         <section class="invoice-kachcha-card">
           <div class="invoice-kachcha-head">
-            <div>
+            <div class="invoice-kachcha-head-main">
               <h1 class="invoice-kachcha-title">Purchase Estimate</h1>
               <div class="invoice-subhead">${escapeHtml(group.id)}</div>
             </div>
-            <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+            <div class="invoice-kachcha-head-side">
+              <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+              ${qrDataUrl ? `<div class="invoice-qr-card"><img class="invoice-qr-image" src="${qrDataUrl}" alt="PO QR" /><span>Order QR</span></div>` : ""}
+            </div>
           </div>
           <div class="invoice-kachcha-meta">
             <div><span>Supplier</span><strong>${escapeHtml(first?.supplierName || "Supplier")}</strong></div>
             <div><span>Contact</span><strong>${escapeHtml(invoiceValue(supplier?.contactPerson))}</strong></div>
-            <div><span>Address</span><strong>${escapeHtml(invoiceValue(supplier?.deliveryAddress || supplier?.address))}</strong></div>
+            <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(supplier?.mobileNumber))}</strong></div>
+            <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ")))}</strong></div>
             <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
@@ -1280,13 +1363,16 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
     <main class="invoice-shell">
       <section class="invoice-card">
         <div class="invoice-head">
-          <div>
+          <div class="invoice-head-main">
             <div class="invoice-brand">AAPOORTI B2B</div>
             <span class="invoice-badge">Purchase Tax Invoice</span>
             <h1>${escapeHtml(group.id)}</h1>
             <div class="invoice-subhead">Professional purchase bill format</div>
           </div>
-          <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+          <div class="invoice-head-side">
+            <div><strong>${escapeHtml(purchaseWorkflowStatus(snapshot, group.id))}</strong></div>
+            ${qrDataUrl ? `<div class="invoice-qr-card"><img class="invoice-qr-image" src="${qrDataUrl}" alt="PO QR" /><span>Order QR</span></div>` : ""}
+          </div>
         </div>
         <div class="invoice-meta invoice-meta-wide">
           <div><span>Supplier</span><strong>${escapeHtml(invoiceValue(first?.supplierName || supplier?.name))}</strong></div>
@@ -1297,7 +1383,8 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
           <div><span>Supplier GST</span><strong>${escapeHtml(invoiceValue(supplier?.gstNumber))}</strong></div>
           <div><span>Purchaser</span><strong>${escapeHtml(invoiceValue(first?.purchaserName))}</strong></div>
           <div><span>Contact</span><strong>${escapeHtml(invoiceValue(supplier?.contactPerson))}</strong></div>
-          <div><span>Address</span><strong>${escapeHtml(invoiceValue(supplier?.deliveryAddress || supplier?.address))}</strong></div>
+          <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(supplier?.mobileNumber))}</strong></div>
+          <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ")))}</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -1323,7 +1410,7 @@ function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: 
   `;
 }
 
-function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }, qrDataUrl?: string) {
   const first = group.lines[0];
   const customer = salesInvoiceCounterparty(snapshot, group);
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
@@ -1356,16 +1443,20 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <main class="invoice-kachcha-shell">
         <section class="invoice-kachcha-card">
           <div class="invoice-kachcha-head">
-            <div>
+            <div class="invoice-kachcha-head-main">
               <h1 class="invoice-kachcha-title">Sales Estimate</h1>
               <div class="invoice-subhead">${escapeHtml(group.id)}</div>
             </div>
-            <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+            <div class="invoice-kachcha-head-side">
+              <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+              ${qrDataUrl ? `<div class="invoice-qr-card"><img class="invoice-qr-image" src="${qrDataUrl}" alt="SO QR" /><span>Order QR</span></div>` : ""}
+            </div>
           </div>
           <div class="invoice-kachcha-meta">
             <div><span>Customer</span><strong>${escapeHtml(first?.shopName || "Customer")}</strong></div>
             <div><span>Contact</span><strong>${escapeHtml(invoiceValue(customer?.contactPerson))}</strong></div>
-            <div><span>Address</span><strong>${escapeHtml(invoiceValue(customer?.deliveryAddress || customer?.address))}</strong></div>
+            <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(customer?.mobileNumber))}</strong></div>
+            <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ")))}</strong></div>
             <div><span>Delivery Mode</span><strong>${escapeHtml(invoiceValue(first?.deliveryMode))}</strong></div>
             <div><span>Warehouse</span><strong>${escapeHtml(warehouseNames.join(", "))}</strong></div>
             <div><span>Date</span><strong>${escapeHtml(formatShortDate(first?.createdAt))}</strong></div>
@@ -1397,13 +1488,16 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
     <main class="invoice-shell">
       <section class="invoice-card">
         <div class="invoice-head">
-          <div>
+          <div class="invoice-head-main">
             <div class="invoice-brand">AAPOORTI B2B</div>
             <span class="invoice-badge">Sales Tax Invoice</span>
             <h1>${escapeHtml(group.id)}</h1>
             <div class="invoice-subhead">Professional sales bill format</div>
           </div>
-          <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+          <div class="invoice-head-side">
+            <div><strong>${escapeHtml(`${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`)}</strong></div>
+            ${qrDataUrl ? `<div class="invoice-qr-card"><img class="invoice-qr-image" src="${qrDataUrl}" alt="SO QR" /><span>Order QR</span></div>` : ""}
+          </div>
         </div>
         <div class="invoice-meta invoice-meta-wide">
           <div><span>Customer</span><strong>${escapeHtml(invoiceValue(first?.shopName || customer?.name))}</strong></div>
@@ -1414,7 +1508,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <div><span>Customer GST</span><strong>${escapeHtml(invoiceValue(customer?.gstNumber))}</strong></div>
           <div><span>Salesman</span><strong>${escapeHtml(invoiceValue(first?.salesmanName))}</strong></div>
           <div><span>Contact</span><strong>${escapeHtml(invoiceValue(customer?.contactPerson))}</strong></div>
-          <div><span>Address</span><strong>${escapeHtml(invoiceValue(customer?.deliveryAddress || customer?.address))}</strong></div>
+          <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(customer?.mobileNumber))}</strong></div>
+          <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ")))}</strong></div>
         </div>
         <table class="invoice-line-table">
           <thead>
@@ -3305,8 +3400,8 @@ function App() {
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
   const [warehouseForm, setWarehouseForm] = useState({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" as "Warehouse" | "Yard" });
-  const [productForm, setProductForm] = useState({ sku: "", name: "", division: "", department: "", section: "", category: "", unit: "", defaultGstRate: "0" as GstRateInput, defaultTaxMode: "Exclusive" as TaxModeInput, defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: [] as string[] });
-  const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,unit,defaultGstRate,defaultTaxMode,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,rsp");
+  const [productForm, setProductForm] = useState({ sku: "", name: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", defaultGstRate: "0" as GstRateInput, defaultTaxMode: "Exclusive" as TaxModeInput, defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: [] as string[] });
+  const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,subCategory,unit,defaultGstRate,defaultTaxMode,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,rsp");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
   const [partyFormErrors, setPartyFormErrors] = useState({ name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
@@ -4322,7 +4417,7 @@ function App() {
             persistKey={workspaceStorageKey(currentUser.id, "sales-catalog")}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines) => post("/sales-orders/cart", { ...salesForm, lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
+            onSubmit={(advancePayment, operationDate, lines, options) => post("/sales-orders/cart", { ...salesForm, allowProbationarySale: Boolean(options?.allowProbationarySale), lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
           {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
@@ -4511,7 +4606,7 @@ type CatalogOrderViewProps = {
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
   onUploadProof: (file: File) => Promise<unknown>;
-  onSubmit: (advancePayment: { amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber?: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationNote?: string } | undefined, operationDate: string | undefined, lines: CartLine[]) => Promise<boolean | void> | boolean | void;
+  onSubmit: (advancePayment: { amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber?: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationNote?: string } | undefined, operationDate: string | undefined, lines: CartLine[], options?: { allowProbationarySale?: boolean }) => Promise<boolean | void> | boolean | void;
   rightPanel: React.ReactNode;
 };
 
@@ -5178,6 +5273,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     return warehouseId ? getWarehouseStock(sku, warehouseId) : getAvailableStock(sku);
   }
 
+  function getProbationaryQuantity(line: CartLine) {
+    return Math.max(0, Number(line.quantity || 0) - getLineAvailableStock(line.productSku, orderForm.warehouseId || ""));
+  }
+
   function getWarehouseName(warehouseId: string) {
     return warehouses.find((item) => item.id === warehouseId)?.name || warehouseId;
   }
@@ -5581,7 +5680,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     </div> : null}
                     {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
                     {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}.</div> : null}
-                    {!isPurchase && Number(line.quantity || 0) > getLineAvailableStock(line.productSku, orderForm.warehouseId || "") ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. Reduce quantity to continue.</div> : null}
+                    {!isPurchase && getProbationaryQuantity(line) > 0 ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. Extra {getProbationaryQuantity(line)} will go to probationary sales after confirmation.</div> : null}
                     {billTaxOverride.enabled ? <div className="message success top-gap">Whole bill tax override is active for all products in this cart.</div> : null}
                   </article>)}
                 </div>
@@ -5852,7 +5951,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     onClick={async () => {
                       if (submittingCart) return;
                       setSubmittingCart(true);
-                      const success = await onSubmit(buildAdvancePaymentPayload(), checkoutDate || undefined, cartLines);
+                      const probationaryLines = !isPurchase ? cartLines
+                        .map((line) => ({ line, probationaryQuantity: getProbationaryQuantity(line) }))
+                        .filter((item) => item.probationaryQuantity > 0) : [];
+                      const allowProbationarySale = probationaryLines.length > 0
+                        ? window.confirm(`Probationary warning:\n${probationaryLines.map((item) => `${item.line.productSku}: sold ${Number(item.line.quantity || 0)}, available ${getLineAvailableStock(item.line.productSku, orderForm.warehouseId || "")}, probationary ${item.probationaryQuantity}`).join("\n")}\n\nContinue and record the extra quantity in probationary sales for accounts review?`)
+                        : false;
+                      if (probationaryLines.length > 0 && !allowProbationarySale) {
+                        setSubmittingCart(false);
+                        return;
+                      }
+                      const success = await onSubmit(buildAdvancePaymentPayload(), checkoutDate || undefined, cartLines, { allowProbationarySale });
                       if (success === false) {
                         setSubmittingCart(false);
                         return;
@@ -6105,6 +6214,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, o
                   <div><span className="small-label">Warehouse</span><strong>{purchaseWarehouseStatus(group.lines)}</strong></div>
                   <div className="payment-card-actions wide-field top-gap">
                     {editState.editable && onUpdatePo ? <button className="primary-button" type="button" onClick={() => onUpdatePo(group.id)}>Update PO</button> : <span className="small-label">{editState.reason}</span>}
+                    <button className="ghost-button" type="button" onClick={() => void printPurchaseInvoice(snapshot, group)}>Print PO</button>
                     <button className="ghost-button" type="button" onClick={() => void sharePurchaseInvoicePdf(snapshot, group)}>WhatsApp Share</button>
                     <button className="ghost-button" type="button" onClick={() => downloadPurchaseInvoicePdf(snapshot, group)}>Download PDF</button>
                   </div>
@@ -9243,7 +9353,7 @@ function WarehouseOperationsViewV2({
             <div><span className="small-label">Grand total</span><strong>{orderTotal.toFixed(2)}</strong></div>
           </div>
           <div className="payment-card-actions top-gap">
-            <button className="ghost-button" type="button" onClick={() => printInvoiceDocument(`SO ${group.id}`, salesInvoiceHtml(snapshot, group))}>Print SO</button>
+            <button className="ghost-button" type="button" onClick={() => void printSalesInvoice(snapshot, group)}>Print SO</button>
             <button className="ghost-button" type="button" onClick={() => downloadSalesInvoicePdf(snapshot, group)}>Download PDF</button>
             <a className="ghost-button" href={`https://wa.me/?text=${salesInvoiceWhatsappText(snapshot, group)}`} target="_blank" rel="noreferrer">WhatsApp Share</a>
           </div>
@@ -11125,6 +11235,11 @@ function AccountsLedgerWorkspace({ snapshot }: { snapshot: AppSnapshot }) {
   const [searchText, setSearchText] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [openPartyKey, setOpenPartyKey] = useState("");
+  const [activeTab, setActiveTab] = useState<"ledger" | "probationary">("ledger");
+  const [probationaryRange, setProbationaryRange] = useState<"today" | "week" | "custom">("today");
+  const [probationaryFromDate, setProbationaryFromDate] = useState(indiaDateKey());
+  const [probationaryToDate, setProbationaryToDate] = useState(indiaDateKey());
+  const [probationaryStatusFilter, setProbationaryStatusFilter] = useState<"Pending" | "Cleared" | "All">("Pending");
   const normalizedSearch = searchText.trim().toLowerCase();
   const sourceEntries = (normalizedSearch ? snapshot.ledgerEntries : snapshot.ledgerEntries.filter((entry) => entry.pendingAmount > 0))
     .sort((left, right) => right.pendingAmount - left.pendingAmount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -11158,6 +11273,56 @@ function AccountsLedgerWorkspace({ snapshot }: { snapshot: AppSnapshot }) {
     ]);
   }
 
+  const todayDate = indiaDateKey();
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - 6);
+  const weekStartKey = indiaDateKey(weekStart);
+  const probationaryRangeValues = probationaryRange === "today"
+    ? normalizeDateRange(todayDate, todayDate)
+    : probationaryRange === "week"
+      ? normalizeDateRange(weekStartKey, todayDate)
+      : normalizeDateRange(probationaryFromDate, probationaryToDate);
+  const probationaryRows = snapshot.probationarySales
+    .filter((item) => {
+      const created = indiaDateKey(item.createdAt);
+      const matchesDate = created >= probationaryRangeValues.fromDate && created <= probationaryRangeValues.toDate;
+      const matchesStatus = probationaryStatusFilter === "All" || item.status === probationaryStatusFilter;
+      const matchesSearch = !normalizedSearch || [
+        item.salesCartId,
+        item.salesOrderId,
+        item.shopName,
+        item.salesmanName,
+        item.productSku,
+        item.warehouseId
+      ].filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch);
+      return matchesDate && matchesStatus && matchesSearch;
+    })
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const probationarySummary = {
+    totalShortage: probationaryRows.reduce((sum, item) => sum + item.pendingProbationaryQuantity, 0),
+    totalOriginal: probationaryRows.reduce((sum, item) => sum + item.originalProbationaryQuantity, 0),
+    totalValue: probationaryRows.reduce((sum, item) => sum + item.totalAmount, 0),
+    uniqueOrders: new Set(probationaryRows.map((item) => item.salesCartId || item.salesOrderId)).size
+  };
+  const probationaryCsvRows = probationaryRows.map((item) => [
+    formatShortDate(item.createdAt),
+    item.salesCartId || item.salesOrderId,
+    item.salesOrderId,
+    item.shopName,
+    item.salesmanName,
+    item.warehouseId,
+    item.productSku,
+    item.availableQuantityAtSale,
+    item.soldQuantity,
+    item.originalProbationaryQuantity,
+    item.pendingProbationaryQuantity,
+    item.rate,
+    item.totalAmount,
+    item.status,
+    item.clearedAt ? formatShortDate(item.clearedAt) : "",
+    item.note
+  ]);
+
   useEffect(() => {
     if (visibleGroups.length === 0) {
       if (openPartyKey) setOpenPartyKey("");
@@ -11169,6 +11334,49 @@ function AccountsLedgerWorkspace({ snapshot }: { snapshot: AppSnapshot }) {
   }, [visibleGroups, openPartyKey]);
 
   return <section className="collapse-stack">
+    <div className="payment-card-actions">
+      <button type="button" className={activeTab === "ledger" ? "primary-button" : "ghost-button"} onClick={() => setActiveTab("ledger")}>Open ledger</button>
+      <button type="button" className={activeTab === "probationary" ? "primary-button" : "ghost-button"} onClick={() => setActiveTab("probationary")}>Probationary sales</button>
+    </div>
+    {activeTab === "probationary" ? <Panel title="Probationary Sales" eyebrow="Extra sold quantity waiting for stock cover">
+      <div className="form-grid">
+        <label className="wide-field">Search
+          <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Order, customer, salesman, SKU, or warehouse" />
+        </label>
+        <label>Range
+          <select value={probationaryRange} onChange={(e) => setProbationaryRange(e.target.value as "today" | "week" | "custom")}>
+            <option value="today">Today</option>
+            <option value="week">Last 7 days</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label>Status
+          <select value={probationaryStatusFilter} onChange={(e) => setProbationaryStatusFilter(e.target.value as "Pending" | "Cleared" | "All")}>
+            <option value="Pending">Pending</option>
+            <option value="Cleared">Cleared</option>
+            <option value="All">All</option>
+          </select>
+        </label>
+        {probationaryRange === "custom" ? <label>From
+          <input type="date" value={probationaryFromDate} onChange={(e) => setProbationaryFromDate(e.target.value)} />
+        </label> : null}
+        {probationaryRange === "custom" ? <label>To
+          <input type="date" value={probationaryToDate} onChange={(e) => setProbationaryToDate(e.target.value)} />
+        </label> : null}
+      </div>
+      <div className="payment-meta-grid top-gap">
+        <div><span className="small-label">Records</span><strong>{probationaryRows.length}</strong></div>
+        <div><span className="small-label">Affected orders</span><strong>{probationarySummary.uniqueOrders}</strong></div>
+        <div><span className="small-label">Original qty</span><strong>{probationarySummary.totalOriginal}</strong></div>
+        <div><span className="small-label">Pending qty</span><strong>{probationarySummary.totalShortage}</strong></div>
+        <div><span className="small-label">Probationary value</span><strong>{formatCurrencyInr(probationarySummary.totalValue)}</strong></div>
+      </div>
+      <div className="payment-card-actions top-gap">
+        <button className="ghost-button" type="button" onClick={() => downloadCsvFile(`probationary-sales-${dateRangeFileToken(probationaryRangeValues.fromDate, probationaryRangeValues.toDate)}.csv`, ["Date", "Sales Cart", "Sales Order", "Customer", "Salesman", "Warehouse", "SKU", "Available At Sale", "Sold Qty", "Original Probationary Qty", "Pending Probationary Qty", "Rate", "Probationary Value", "Status", "Cleared At", "Note"], probationaryCsvRows)}>Download CSV</button>
+      </div>
+      {probationaryRows.length === 0 ? <div className="empty-card top-gap">No probationary sales matched this filter.</div> : <DataTable headers={["Date", "Sales Cart", "Customer", "Salesman", "Warehouse", "SKU", "Avail", "Sold", "Original", "Pending", "Status", "Cleared", "Value"]} rows={probationaryRows.map((item) => [formatShortDate(item.createdAt), item.salesCartId || item.salesOrderId, item.shopName, item.salesmanName, item.warehouseId, item.productSku, item.availableQuantityAtSale, item.soldQuantity, item.originalProbationaryQuantity, item.pendingProbationaryQuantity, item.status, item.clearedAt ? formatShortDate(item.clearedAt) : "-", item.totalAmount])} />}
+    </Panel> : null}
+    {activeTab === "ledger" ? <>
     <Panel title="Ledger" eyebrow={normalizedSearch ? "Full party ledger" : "Open party balances"}>
       <div className="form-grid">
         <label className="wide-field">Search party
@@ -11222,6 +11430,7 @@ function AccountsLedgerWorkspace({ snapshot }: { snapshot: AppSnapshot }) {
     <Panel title="Order Financial State" eyebrow="Pending vs settled">
       <DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} />
     </Panel>
+    </> : null}
   </section>;
 }
 
@@ -11745,7 +11954,7 @@ function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebro
 }
 function TwoCol({ left, right }: { left: React.ReactNode; right: React.ReactNode }) { return <section className="dashboard-grid">{left}{right}</section>; }
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) { return <div className="table-wrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={headers.length}>No records yet.</td></tr> : rows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((cell, i) => <td key={`${index}-${i}`}>{cell}</td>)}</tr>)}</tbody></table></div>; }
-type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
+type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; subCategory: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
 
 function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
   const [openId, setOpenId] = useState("");
@@ -11754,9 +11963,11 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
   const [workflowFilter, setWorkflowFilter] = useState("All");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const allGroups = groupPurchaseOrders(orders)
     .map((group) => {
       const first = group.lines[0];
+      const supplier = supplierById.get(first?.supplierId || "");
       const ledger = purchaseLedgerByOrder(snapshot, group.id);
       const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
       const pending = ledger?.pendingAmount ?? total;
@@ -11775,7 +11986,10 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
         settlement: pending > 0 ? (paid > 0 ? "Partial" : "Unsettled") : "Settled",
         status,
         warehouse: purchaseWarehouseStatus(group.lines),
-        delivery: purchaseDeliveryStatus(snapshot, group.id)
+        delivery: purchaseDeliveryStatus(snapshot, group.id),
+        contact: supplier?.contactPerson || "N/A",
+        phone: supplier?.mobileNumber || "N/A",
+        address: supplier?.deliveryAddress || supplier?.address || "N/A"
       };
     })
     .sort((left, right) => {
@@ -11865,8 +12079,11 @@ function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orde
               <div><span className="small-label">Taxable</span><strong>{formatCurrencyInr(item.taxable)}</strong></div>
               <div><span className="small-label">GST</span><strong>{formatCurrencyInr(item.gst)}</strong></div>
               <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(item.paid)}</strong></div>
+              <div><span className="small-label">Contact</span><strong>{item.contact}</strong></div>
+              <div><span className="small-label">Mobile</span><strong>{item.phone}</strong></div>
               <div><span className="small-label">Warehouse</span><strong>{item.warehouse}</strong></div>
               <div><span className="small-label">Delivery</span><strong>{item.delivery}</strong></div>
+              <div className="wide-field"><span className="small-label">Address</span><strong>{item.address}</strong></div>
             </div> : null}
           </article>;
         })}
@@ -11882,9 +12099,11 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
   const [workflowFilter, setWorkflowFilter] = useState("All");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const customerById = new Map((snapshot?.counterparties || []).filter((item) => item.type === "Shop").map((item) => [item.id, item]));
   const allGroups = groupSalesOrders(orders)
     .map((group) => {
       const first = group.lines[0];
+      const customer = customerById.get(first?.shopId || "");
       const ledger = snapshot?.ledgerEntries.find((item) => item.side === "Sales" && item.linkedOrderId === group.id);
       const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
       const pending = ledger?.pendingAmount ?? total;
@@ -11903,7 +12122,10 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
         settlement: pending > 0 ? (paid > 0 ? "Partial" : "Unsettled") : "Settled",
         status,
         delivery: snapshot ? salesDeliveryStatus(snapshot, group.id) : first?.deliveryMode || "N/A",
-        fulfillment: salesFulfillmentStatus(group.lines)
+        fulfillment: salesFulfillmentStatus(group.lines),
+        contact: customer?.contactPerson || "N/A",
+        phone: customer?.mobileNumber || "N/A",
+        address: customer?.deliveryAddress || customer?.address || "N/A"
       };
     })
     .sort((left, right) => {
@@ -11994,8 +12216,11 @@ function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders
               <div><span className="small-label">Taxable</span><strong>{formatCurrencyInr(item.taxable)}</strong></div>
               <div><span className="small-label">GST</span><strong>{formatCurrencyInr(item.gst)}</strong></div>
               <div><span className="small-label">Paid</span><strong>{formatCurrencyInr(item.paid)}</strong></div>
+              <div><span className="small-label">Contact</span><strong>{item.contact}</strong></div>
+              <div><span className="small-label">Mobile</span><strong>{item.phone}</strong></div>
               <div><span className="small-label">Fulfillment</span><strong>{item.fulfillment}</strong></div>
               <div><span className="small-label">Delivery</span><strong>{item.delivery}</strong></div>
+              <div className="wide-field"><span className="small-label">Address</span><strong>{item.address}</strong></div>
             </div> : null}
           </article>;
         })}
@@ -12113,7 +12338,7 @@ function ProductAdminView({
   onBulkImport: (rows: object[]) => void;
   onBulkUpload: () => Promise<void>;
 }) {
-  const emptyForm: ProductFormState = { sku: "", name: "", division: "", department: "", section: "", category: "", unit: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id)) };
+  const emptyForm: ProductFormState = { sku: "", name: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id)) };
   const [selectedSku, setSelectedSku] = useState("");
   const [skuSearch, setSkuSearch] = useState("");
   const filteredProductOptions = snapshot.products.filter((product) => `${product.sku} ${product.name} ${product.division} ${product.department} ${product.section}`.toLowerCase().includes(skuSearch.trim().toLowerCase()));
@@ -12121,6 +12346,7 @@ function ProductAdminView({
   const departmentOptions = uniqueProductFieldOptions(snapshot.products, "department");
   const sectionOptions = uniqueProductFieldOptions(snapshot.products, "section");
   const categoryOptions = uniqueProductFieldOptions(snapshot.products, "category");
+  const subCategoryOptions = uniqueProductFieldOptions(snapshot.products, "subCategory");
 
   function toPayload(form: ProductFormState) {
     return {
@@ -12145,6 +12371,7 @@ function ProductAdminView({
       department: product.department,
       section: product.section,
       category: product.category,
+      subCategory: product.subCategory,
       unit: product.unit,
       defaultGstRate: product.defaultGstRate === "NA" ? "NA" : String(product.defaultGstRate) as GstRateInput,
       defaultTaxMode: product.defaultTaxMode,
@@ -12167,10 +12394,12 @@ function ProductAdminView({
           <label>Department<input list="product-department-options" value={productForm.department} placeholder="Type or select saved department" onChange={(event) => setProductForm((current) => ({ ...current, department: event.target.value }))} /></label>
           <label>Section<input list="product-section-options" value={productForm.section} placeholder="Type or select saved section" onChange={(event) => setProductForm((current) => ({ ...current, section: event.target.value }))} /></label>
           <label>Category<input list="product-category-options" value={productForm.category} placeholder="Type or select saved category" onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))} /></label>
+          <label>Subcategory<input list="product-subcategory-options" value={productForm.subCategory} placeholder="Type or select saved subcategory" onChange={(event) => setProductForm((current) => ({ ...current, subCategory: event.target.value }))} /></label>
           <datalist id="product-division-options">{divisionOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-department-options">{departmentOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-section-options">{sectionOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-category-options">{categoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
+          <datalist id="product-subcategory-options">{subCategoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <label>Unit<input value={productForm.unit} onChange={(event) => setProductForm((current) => ({ ...current, unit: event.target.value }))} /></label>
           <label>Default GST<select value={productForm.defaultGstRate} onChange={(event) => setProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: event.target.value === "NA" ? "NA" : (current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode) }))}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
           <label>Default Tax<select value={productForm.defaultTaxMode} onChange={(event) => setProductForm((current) => ({ ...current, defaultTaxMode: event.target.value as TaxModeInput }))} disabled={productForm.defaultGstRate === "NA"}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
@@ -12196,7 +12425,7 @@ function ProductAdminView({
             <button className="primary-button" type="submit">Upload product file</button>
           </form>
         </Panel>
-        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section","Default GST","Per item/bundle weight"]} rows={snapshot.products.map((product) => [product.sku, product.name, product.division, product.department, product.section, product.defaultGstRate === "NA" ? "NA / Final" : `${product.defaultGstRate}% / ${product.defaultTaxMode}`, product.defaultWeightKg])} /></Panel>
+        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section","Category","Subcategory","Default GST","Per item/bundle weight"]} rows={snapshot.products.map((product) => [product.sku, product.name, product.division, product.department, product.section, product.category, product.subCategory, product.defaultGstRate === "NA" ? "NA / Final" : `${product.defaultGstRate}% / ${product.defaultTaxMode}`, product.defaultWeightKg])} /></Panel>
       </>}
     />
   );
@@ -12205,8 +12434,8 @@ function ProductAdminView({
 function renderOptions(items: Counterparty[]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)]; }
 function renderWarehouseOptions(items: AppSnapshot["warehouses"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)]; }
 function renderProductOptions(items: AppSnapshot["products"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.sku} value={item.sku}>{`${item.sku} - ${item.name} (${item.division} > ${item.department} > ${item.section})`}</option>)]; }
-function uniqueProductFieldOptions(items: AppSnapshot["products"], field: "division" | "department" | "section" | "category") { return Array.from(new Set(items.map((item) => item[field].trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right)); }
-function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
+function uniqueProductFieldOptions(items: AppSnapshot["products"], field: "division" | "department" | "section" | "category" | "subCategory") { return Array.from(new Set(items.map((item) => item[field].trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right)); }
+function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, subCategory: row.subCategory || "", defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
 
 function productCategoryLabel(product: AppSnapshot["products"][number]) {
   return product.division?.trim() || product.department?.trim() || product.section?.trim() || "All Products";

@@ -35,6 +35,7 @@ export type ProductMaster = {
   department: string;
   section: string;
   category: string;
+  subCategory: string;
   unit: string;
   defaultGstRate: GstRate;
   defaultTaxMode: TaxMode;
@@ -295,6 +296,32 @@ export type SalesReturn = {
   createdAt: string;
 };
 
+export type ProbationarySaleRecord = {
+  id: string;
+  salesOrderId: string;
+  salesCartId?: string;
+  shopId: string;
+  shopName: string;
+  salesmanId: number;
+  salesmanName: string;
+  warehouseId: string;
+  productSku: string;
+  availableQuantityAtSale: number;
+  soldQuantity: number;
+  originalProbationaryQuantity: number;
+  pendingProbationaryQuantity: number;
+  rate: number;
+  taxableAmount: number;
+  gstRate: GstRate;
+  gstAmount: number;
+  taxMode: TaxMode;
+  totalAmount: number;
+  note: string;
+  status: "Pending" | "Cleared";
+  createdAt: string;
+  clearedAt?: string;
+};
+
 export type InventoryLot = {
   lotId: string;
   sourceOrderId: string;
@@ -414,6 +441,7 @@ export type AppSnapshot = {
   salesOrders: SalesOrder[];
   purchaseReturns: PurchaseReturn[];
   salesReturns: SalesReturn[];
+  probationarySales: ProbationarySaleRecord[];
   payments: PaymentRecord[];
   receiptChecks: ReceiptCheck[];
   inventoryLots: InventoryLot[];

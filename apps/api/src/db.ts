@@ -19,6 +19,7 @@ import type {
   PaymentMethodSetting,
   PaymentMode,
   PaymentRecord,
+  ProbationarySaleRecord,
   ProductMaster,
   ProductSlab,
   PurchaseOrder,
@@ -99,6 +100,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS sub_category TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS location_label TEXT;
@@ -165,6 +167,33 @@ async function ensureCompatibilityColumns() {
       created_by TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS probationary_sales (
+      id TEXT PRIMARY KEY,
+      sales_order_id TEXT NOT NULL,
+      sales_cart_id TEXT,
+      shop_id TEXT NOT NULL,
+      salesman_id BIGINT NOT NULL,
+      warehouse_id TEXT NOT NULL,
+      product_sku TEXT NOT NULL,
+      available_quantity_at_sale DOUBLE PRECISION NOT NULL,
+      sold_quantity DOUBLE PRECISION NOT NULL,
+      original_probationary_quantity DOUBLE PRECISION NOT NULL,
+      pending_probationary_quantity DOUBLE PRECISION NOT NULL,
+      rate DOUBLE PRECISION NOT NULL,
+      taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+      gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+      gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+      tax_mode TEXT NOT NULL DEFAULT 'Exclusive',
+      total_amount DOUBLE PRECISION NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'Pending',
+      cleared_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS original_probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS pending_probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending';
+    ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMPTZ;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
     UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
@@ -328,7 +357,7 @@ async function mapWarehouses(client?: DbClient): Promise<Warehouse[]> {
 }
 
 async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
-  const rows = await query<Record<string, unknown>>("SELECT * FROM products ORDER BY category, name", [], client);
+  const rows = await query<Record<string, unknown>>("SELECT * FROM products ORDER BY category, sub_category, name", [], client);
   return rows.rows.map((row) => ({
     sku: stringValue(row.sku),
     name: stringValue(row.name),
@@ -336,6 +365,7 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
     department: stringValue(row.department),
     section: stringValue(row.section_name),
     category: stringValue(row.category),
+    subCategory: stringValue(row.sub_category),
     unit: stringValue(row.unit),
     defaultGstRate: stringValue(row.default_tax_mode) === "NA" ? "NA" : numberValue(row.default_gst_rate) as ProductMaster["defaultGstRate"],
     defaultTaxMode: stringValue(row.default_tax_mode) as ProductMaster["defaultTaxMode"],
@@ -524,6 +554,43 @@ async function mapSalesReturns(client?: DbClient): Promise<SalesReturn[]> {
     photoName: row.photo_name ? stringValue(row.photo_name) : undefined,
     createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)
+  }));
+}
+
+async function mapProbationarySales(client?: DbClient): Promise<ProbationarySaleRecord[]> {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT ps.*, c.name AS shop_name, u.full_name AS salesman_name
+     FROM probationary_sales ps
+     LEFT JOIN counterparties c ON c.id = ps.shop_id
+     LEFT JOIN users u ON u.id = ps.salesman_id
+     ORDER BY ps.created_at DESC`,
+    [],
+    client
+  );
+  return rows.rows.map((row) => ({
+    id: stringValue(row.id),
+    salesOrderId: stringValue(row.sales_order_id),
+    salesCartId: row.sales_cart_id ? stringValue(row.sales_cart_id) : undefined,
+    shopId: stringValue(row.shop_id),
+    shopName: stringValue(row.shop_name),
+    salesmanId: numberValue(row.salesman_id),
+    salesmanName: stringValue(row.salesman_name),
+    warehouseId: stringValue(row.warehouse_id),
+    productSku: stringValue(row.product_sku),
+    availableQuantityAtSale: numberValue(row.available_quantity_at_sale),
+    soldQuantity: numberValue(row.sold_quantity),
+    originalProbationaryQuantity: numberValue(row.original_probationary_quantity),
+    pendingProbationaryQuantity: numberValue(row.pending_probationary_quantity),
+    rate: numberValue(row.rate),
+    taxableAmount: numberValue(row.taxable_amount),
+    gstRate: stringValue(row.tax_mode) === "NA" ? "NA" : numberValue(row.gst_rate) as ProbationarySaleRecord["gstRate"],
+    gstAmount: numberValue(row.gst_amount),
+    taxMode: stringValue(row.tax_mode) as ProbationarySaleRecord["taxMode"],
+    totalAmount: numberValue(row.total_amount),
+    note: stringValue(row.note),
+    status: (stringValue(row.status) || "Pending") as ProbationarySaleRecord["status"],
+    createdAt: isoValue(row.created_at),
+    clearedAt: row.cleared_at ? isoValue(row.cleared_at) : undefined
   }));
 }
 
@@ -923,7 +990,7 @@ async function reconcileRetrospectiveDeliveryCashCollections(client?: DbClient) 
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
   await reconcileRetrospectiveDeliveryCashCollections();
-  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
+  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, probationarySales, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
     mapUsers(),
     mapWarehouses(),
     mapProducts(),
@@ -932,6 +999,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     mapSalesOrders(),
     mapPurchaseReturns(),
     mapSalesReturns(),
+    mapProbationarySales(),
     mapPayments(),
     mapReceiptChecks(),
     mapInventoryLots(),
@@ -953,6 +1021,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     salesOrders,
     purchaseReturns,
     salesReturns,
+    probationarySales,
     payments,
     receiptChecks,
     inventoryLots,
@@ -983,6 +1052,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
       salesOrders: snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       purchaseReturns: snapshotWithoutMetrics.purchaseReturns.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       salesReturns: snapshotWithoutMetrics.salesReturns.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      probationarySales: snapshotWithoutMetrics.probationarySales.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       payments: snapshotWithoutMetrics.payments.filter((item) => scopedPurchaseOrderIds.has(item.linkedOrderId) || scopedSalesOrderIds.has(item.linkedOrderId) || scopedCartIds.has(item.linkedOrderId)),
       receiptChecks: snapshotWithoutMetrics.receiptChecks.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       inventoryLots: snapshotWithoutMetrics.inventoryLots.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
@@ -1082,13 +1152,13 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
   const allowedWarehouseIds = payload.allowedWarehouseIds.length > 0 ? payload.allowedWarehouseIds : await getDefaultWarehouseIds();
   await query(
     `INSERT INTO products (
-      sku, name, division, department, section_name, category, unit, default_gst_rate, default_tax_mode, default_weight_kg, tolerance_kg, tolerance_percent,
+      sku, name, division, department, section_name, category, sub_category, unit, default_gst_rate, default_tax_mode, default_weight_kg, tolerance_kg, tolerance_percent,
       allowed_warehouse_ids_json, slabs_json, remarks, category_6, site_name, barcode, supplier_name, hsn_code,
       article_name, item_name, brand, short_name, size, rsp, mrp, created_by, created_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-      $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20,
-      $21, $22, $23, $24, $25, $26, $27, $28, $29
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+      $14::jsonb, $15::jsonb, $16, $17, $18, $19, $20, $21,
+      $22, $23, $24, $25, $26, $27, $28, $29, $30
     )
     ON CONFLICT (sku) DO UPDATE SET
       name = EXCLUDED.name,
@@ -1096,6 +1166,7 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       department = EXCLUDED.department,
       section_name = EXCLUDED.section_name,
       category = EXCLUDED.category,
+      sub_category = EXCLUDED.sub_category,
       unit = EXCLUDED.unit,
       default_gst_rate = EXCLUDED.default_gst_rate,
       default_tax_mode = EXCLUDED.default_tax_mode,
@@ -1125,6 +1196,7 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       payload.department.trim(),
       payload.section.trim(),
       payload.category.trim(),
+      payload.subCategory.trim(),
       payload.unit.trim(),
       payload.defaultGstRate === "NA" ? 0 : payload.defaultGstRate,
       payload.defaultTaxMode,
@@ -1444,6 +1516,7 @@ export async function createSalesOrder(payload: {
   cartId?: string;
   skipFinancials?: boolean;
   applyDeliveryCharge?: boolean;
+  allowProbationarySale?: boolean;
   shopId: string;
   productSku: string;
   warehouseId: string;
@@ -1481,24 +1554,68 @@ export async function createSalesOrder(payload: {
     const deliveryCharge = payload.deliveryMode === "Delivery" && payload.applyDeliveryCharge !== false ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
-  const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
-  const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
-  const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
-  const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
+    const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
+    const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
+    const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
+    const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
     const totalAmount = taxableAmount + gstAmount;
+    const availableStock = stock?.availableQuantity ?? 0;
+    const probationaryQuantity = Math.max(0, payload.quantity - availableStock);
+    const probationaryNote = probationaryQuantity > 0
+      ? `Probationary shortage recorded: sold ${payload.quantity} against available ${availableStock}. Excess ${probationaryQuantity} kept for accounts review.`
+      : "";
+    const combinedNote = [payload.note.trim(), probationaryNote].filter(Boolean).join(" | ");
+    if (probationaryQuantity > 0 && !payload.allowProbationarySale) {
+      throw new Error(`Requested quantity ${payload.quantity} exceeds available stock ${availableStock} for ${payload.productSku} at ${payload.warehouseId}. Confirm probationary sale to continue.`);
+    }
     await query(
       `INSERT INTO sales_orders (
         id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
-      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
+      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, combinedNote, payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
       client
     );
+    if (probationaryQuantity > 0) {
+      const probationaryTaxableAmount = taxableAmount * (probationaryQuantity / payload.quantity);
+      const probationaryGstAmount = gstAmount * (probationaryQuantity / payload.quantity);
+      const probationaryTotalAmount = totalAmount * (probationaryQuantity / payload.quantity);
+      await query(
+        `INSERT INTO probationary_sales (
+          id, sales_order_id, sales_cart_id, shop_id, salesman_id, warehouse_id, product_sku,
+          available_quantity_at_sale, sold_quantity, original_probationary_quantity, pending_probationary_quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, note, status, created_at, cleared_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15, $16, $17, 'Pending', $18, NULL)`,
+        [
+          makeId("PRB"),
+          id,
+          payload.cartId || null,
+          payload.shopId,
+          currentUser.id,
+          payload.warehouseId,
+          payload.productSku,
+          availableStock,
+          payload.quantity,
+          probationaryQuantity,
+          payload.rate,
+          probationaryTaxableAmount,
+          gstRate,
+          probationaryGstAmount,
+          taxMode,
+          probationaryTotalAmount,
+          probationaryNote,
+          createdAt
+        ],
+        client
+      );
+      await query(
+        `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [makeId("NOTE"), "Sales Order", payload.cartId || id, probationaryNote, currentUser.fullName, "Operational", createdAt],
+        client
+      );
+    }
     if (!payload.skipFinancials) {
       await insertAdvancePayment("Sales", id, payload.advancePayment, currentUser, createdAt, client);
-    }
-    if ((stock?.availableQuantity ?? 0) < payload.quantity) {
-      throw new Error(`Requested quantity ${payload.quantity} exceeds available stock ${stock?.availableQuantity ?? 0} for ${payload.productSku} at ${payload.warehouseId}.`);
     }
     if (!payload.skipFinancials) {
       await recalculateLedger("Sales", id, client);
@@ -1789,6 +1906,7 @@ export async function clearSalesOperationalData() {
     await query("DELETE FROM delivery_dockets", [], client);
     await query("DELETE FROM payments WHERE side = 'Sales'", [], client);
     await query("DELETE FROM ledger_entries WHERE side = 'Sales'", [], client);
+    await query("DELETE FROM probationary_sales", [], client);
     await query("DELETE FROM sales_orders", [], client);
     await query(
       `UPDATE inventory_lots
@@ -1852,6 +1970,35 @@ async function consumeInventory(warehouseId: string, productSku: string, quantit
   }
   if (remaining > 0) {
     throw new Error(`Insufficient inventory for ${productSku} at ${warehouseId}.`);
+  }
+}
+
+async function reconcileProbationarySales(warehouseId: string, productSku: string, quantity: number, client: DbClient, clearedAt: string) {
+  if (quantity <= 0) return;
+  const records = await query<Record<string, unknown>>(
+    `SELECT id, pending_probationary_quantity
+     FROM probationary_sales
+     WHERE warehouse_id = $1 AND product_sku = $2 AND pending_probationary_quantity > 0
+     ORDER BY created_at ASC, id ASC`,
+    [warehouseId, productSku],
+    client
+  );
+  let remaining = quantity;
+  for (const record of records.rows) {
+    if (remaining <= 0) break;
+    const pending = numberValue(record.pending_probationary_quantity);
+    const adjusted = Math.min(pending, remaining);
+    const nextPending = pending - adjusted;
+    await query(
+      `UPDATE probationary_sales
+       SET pending_probationary_quantity = $1,
+           status = $2,
+           cleared_at = $3
+       WHERE id = $4`,
+      [nextPending, nextPending <= 0 ? "Cleared" : "Pending", nextPending <= 0 ? clearedAt : null, stringValue(record.id)],
+      client
+    );
+    remaining -= adjusted;
   }
 }
 
@@ -2118,6 +2265,9 @@ export async function createReceiptCheck(payload: {
       [makeId("LOT"), payload.purchaseOrderId, payload.warehouseId, stringValue(order.product_sku), flagged ? 0 : payload.receivedQuantity, flagged ? payload.receivedQuantity : 0, flagged ? "Blocked" : "Available", createdAt],
       client
     );
+    if (!flagged) {
+      await reconcileProbationarySales(payload.warehouseId, stringValue(order.product_sku), payload.receivedQuantity, client, createdAt);
+    }
     const linkedOrderId = stringValue(order.cart_id) || payload.purchaseOrderId;
     const linkedTasks = await query<Record<string, unknown>>(
       `SELECT *

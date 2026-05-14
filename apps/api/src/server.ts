@@ -191,6 +191,7 @@ app.post("/products", async (req, res) => wrap(res, async () => {
       department: requiredString(req.body?.department, "Department"),
       section: requiredString(req.body?.section, "Section"),
       category: requiredString(req.body?.category, "Category"),
+      subCategory: requiredString(req.body?.subCategory, "Sub category"),
       unit: requiredString(req.body?.unit, "Unit"),
       defaultGstRate: parseOptionalGstRate(req.body?.defaultGstRate) ?? 0,
       defaultTaxMode: (optionalString(req.body?.defaultTaxMode) || (String(req.body?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
@@ -214,6 +215,7 @@ app.patch("/products/:sku", async (req, res) => wrap(res, async () => {
       department: requiredString(req.body?.department, "Department"),
       section: requiredString(req.body?.section, "Section"),
       category: requiredString(req.body?.category, "Category"),
+      subCategory: requiredString(req.body?.subCategory, "Sub category"),
       unit: requiredString(req.body?.unit, "Unit"),
       defaultGstRate: parseOptionalGstRate(req.body?.defaultGstRate) ?? 0,
       defaultTaxMode: (optionalString(req.body?.defaultTaxMode) || (String(req.body?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
@@ -248,6 +250,7 @@ app.post("/products/bulk", async (req, res) => wrap(res, async () => {
       department: requiredString(row?.department, "Department"),
       section: requiredString(row?.section, "Section"),
       category: requiredString(row?.category, "Category"),
+      subCategory: requiredString(row?.subCategory, "Sub category"),
       unit: requiredString(row?.unit, "Unit"),
       defaultGstRate: parseOptionalGstRate(row?.defaultGstRate) ?? 0,
       defaultTaxMode: (optionalString(row?.defaultTaxMode) || (String(row?.defaultGstRate || "").trim().toUpperCase() === "NA" ? "NA" : "Exclusive")) as ProductMaster["defaultTaxMode"],
@@ -409,6 +412,7 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Sales"]);
   return createSalesOrder(
     {
+      allowProbationarySale: Boolean(req.body?.allowProbationarySale),
       shopId: requiredString(req.body?.shopId, "Shop"),
       productSku: requiredString(req.body?.productSku, "Product"),
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
@@ -451,6 +455,7 @@ app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
     note: optionalString(line?.note) || ""
   }));
   return createSalesCart({
+    allowProbationarySale: Boolean(req.body?.allowProbationarySale),
     shopId: requiredString(req.body?.shopId, "Shop"),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
