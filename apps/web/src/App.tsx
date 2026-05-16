@@ -4482,6 +4482,7 @@ function App() {
                 snapshot={snapshot}
                 onUploadProof={async (file) => uploadFile("/payments/upload-proof", "proof", file, "Payment proof uploaded.")}
                 onCreatePayment={(body) => post("/payments", body, "Payment recorded.")}
+                onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Cash handover task created.")}
                 onVerify={(paymentId, verificationStatus, verificationNote) => post("/payments/verify", { paymentId, verificationStatus, verificationNote }, `Payment ${verificationStatus.toLowerCase()}.`)}
               />
@@ -7811,6 +7812,7 @@ function AccountsPaymentsView({
   snapshot,
   onUploadProof,
   onCreatePayment,
+  onCreatePurchaseAdvance,
   onCreateDeliveryTask,
   onVerify
 }: {
@@ -7830,10 +7832,24 @@ function AccountsPaymentsView({
     verificationNote: string;
     operationDate?: string;
   }) => Promise<boolean | void>;
+  onCreatePurchaseAdvance: (body: {
+    supplierId: string;
+    amount: number;
+    mode: PaymentMode;
+    cashTiming?: string;
+    referenceNumber: string;
+    voucherNumber?: string;
+    utrNumber?: string;
+    proofName?: string;
+    verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
+    verificationNote: string;
+    operationDate?: string;
+  }) => Promise<boolean | void>;
   onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; transportType?: DeliveryTask["transportType"]; vehicleNumber?: string; freightAmount?: number; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onVerify: (paymentId: string, verificationStatus: "Verified" | "Rejected" | "Resolved", verificationNote: string) => Promise<boolean | void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
+  const suppliers = snapshot.counterparties.filter((item) => item.type === "Supplier").sort((left, right) => left.name.localeCompare(right.name));
   const purchaseAdvancePayments = snapshot.payments
     .filter((item) => item.side === "Purchase" && item.paymentKind === "Advance")
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -7945,10 +7961,30 @@ function AccountsPaymentsView({
     referenceNumber: "",
     operationDate: today
   });
+  const [advanceCreateForm, setAdvanceCreateForm] = useState({
+    supplierId: suppliers[0]?.id || "",
+    amount: "",
+    mode: "NEFT" as PaymentMode,
+    cashTiming: "In Hand",
+    referenceNumber: "",
+    voucherNumber: "",
+    utrNumber: "",
+    proofName: "",
+    verificationStatus: "Verified" as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved",
+    verificationNote: "Advance paid by accounts for purchase",
+    operationDate: today
+  });
 
   useEffect(() => {
     writeStoredJson(accountsPaymentConfigKey, paymentExportConfig);
   }, [accountsPaymentConfigKey, paymentExportConfig]);
+
+  useEffect(() => {
+    if (suppliers.length === 0) return;
+    if (!advanceCreateForm.supplierId || !suppliers.some((item) => item.id === advanceCreateForm.supplierId)) {
+      setAdvanceCreateForm((current) => ({ ...current, supplierId: suppliers[0].id }));
+    }
+  }, [suppliers, advanceCreateForm.supplierId]);
 
   const filteredAdvancePayments = purchaseAdvancePayments.filter((payment) => {
     const haystack = [
@@ -7968,6 +8004,33 @@ function AccountsPaymentsView({
     setOpenAccountsSections((current) => ({
       ...current,
       [section]: !current[section]
+    }));
+  }
+
+  async function submitAdvanceCreateForm(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onCreatePurchaseAdvance({
+      supplierId: advanceCreateForm.supplierId,
+      amount: Number(advanceCreateForm.amount || 0),
+      mode: advanceCreateForm.mode,
+      cashTiming: advanceCreateForm.mode === "Cash" ? advanceCreateForm.cashTiming : undefined,
+      referenceNumber: advanceCreateForm.referenceNumber,
+      voucherNumber: advanceCreateForm.voucherNumber || undefined,
+      utrNumber: advanceCreateForm.utrNumber || undefined,
+      proofName: advanceCreateForm.proofName || undefined,
+      verificationStatus: advanceCreateForm.verificationStatus,
+      verificationNote: advanceCreateForm.verificationNote,
+      operationDate: advanceCreateForm.operationDate || undefined
+    });
+    setAdvanceCreateForm((current) => ({
+      ...current,
+      supplierId: suppliers[0]?.id || "",
+      amount: "",
+      referenceNumber: "",
+      voucherNumber: "",
+      utrNumber: "",
+      proofName: "",
+      operationDate: current.operationDate || today
     }));
   }
 
@@ -8212,7 +8275,27 @@ function AccountsPaymentsView({
           </Panel>}
         /> : <div className="empty-card">Use the full form below for proof upload, cheque/export flow, or custom verification states.</div>}
       </CollapsiblePanel>
-      <CollapsiblePanel title="Advance List" eyebrow="Search by party, amount, ref, UTR" open={openAccountsSections.advances} onToggle={() => toggleAccountsSection("advances")}>
+      <CollapsiblePanel title="Advance Payments" eyebrow="Create and review supplier advances" open={openAccountsSections.advances} onToggle={() => toggleAccountsSection("advances")}>
+        <Panel title="Create Advance" eyebrow="Accounts posting">
+          <form className="form-grid" onSubmit={submitAdvanceCreateForm}>
+            <label>Supplier<select value={advanceCreateForm.supplierId} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, supplierId: e.target.value }))}>{suppliers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>Amount<input type="number" step="any" value={advanceCreateForm.amount} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
+            <label>Mode<select value={advanceCreateForm.mode} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
+            {advanceCreateForm.mode === "Cash" ? <label>Cash timing<select value={advanceCreateForm.cashTiming} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option>In Hand</option><option>At Delivery</option></select></label> : null}
+            <label>Reference<input value={advanceCreateForm.referenceNumber} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, referenceNumber: e.target.value }))} /></label>
+            <label>Voucher<input value={advanceCreateForm.voucherNumber} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, voucherNumber: e.target.value }))} /></label>
+            <label>UTR<input value={advanceCreateForm.utrNumber} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, utrNumber: e.target.value }))} /></label>
+            <label>Date<input type="date" value={advanceCreateForm.operationDate} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
+            <label>Status<select value={advanceCreateForm.verificationStatus} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, verificationStatus: e.target.value as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved" }))}><option>Verified</option><option>Submitted</option><option>Pending</option></select></label>
+            <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setAdvanceCreateForm((current) => ({ ...current, proofName: String((uploaded as { fileName: string }).fileName) })); }} /></label>
+            <label>Proof name<input value={advanceCreateForm.proofName} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
+            <label className="wide-field">Note<input value={advanceCreateForm.verificationNote} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
+            <div className="payment-card-actions wide-field">
+              <button className="primary-button" type="submit" disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0) || !advanceCreateForm.referenceNumber.trim()}>Create advance</button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Advance List" eyebrow="Search by party, amount, ref, UTR">
         <div className="form-grid">
           <label className="wide-field">Search advance<input value={advanceSearch} onChange={(e) => setAdvanceSearch(e.target.value)} placeholder="Supplier, amount, reference, UTR" /></label>
         </div>
@@ -8245,6 +8328,7 @@ function AccountsPaymentsView({
             </article>;
           })}
         </div>
+        </Panel>
       </CollapsiblePanel>
       <CollapsiblePanel title="Order Visibility" eyebrow="Purchase and sales status" open={openAccountsSections.orders} onToggle={() => toggleAccountsSection("orders")}>
         <TwoCol
