@@ -277,7 +277,7 @@ app.post("/products/bulk-upload", upload.single("csv"), async (req, res) => wrap
 }));
 
 app.post("/counterparties", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   return createCounterparty(
     {
       type: requiredString(req.body?.type, "Type") as CounterpartyType,
@@ -299,7 +299,7 @@ app.post("/counterparties", async (req, res) => wrap(res, async () => {
 }));
 
 app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Purchaser", "Sales"]);
+  await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
   return updateCounterparty(req.params.id, {
     name: requiredString(req.body?.name, "Name"),
     gstNumber: requiredString(req.body?.gstNumber, "GST number"),
