@@ -6107,7 +6107,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, o
   }
   const groups = allGroups.filter((group) => {
     const inDateRange = dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate);
-    return inDateRange || purchaseGroupPendingAmount(group) > 0 || purchaseGroupNotReceived(group);
+    return inDateRange || purchaseGroupNotReceived(group);
   });
   const pickupPendingCount = groups.filter((group) => !purchaseDeliveryTask(snapshot, group.id) && purchaseNeedsInternalPickup(group.lines) && purchaseWarehouseStatus(group.lines) !== "Received").length;
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
@@ -6626,7 +6626,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   }
   const groups = allGroups.filter((group) => {
     const inDateRange = dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate);
-    return inDateRange || salesGroupPendingAmount(group) > 0 || salesGroupNotDelivered(group);
+    return inDateRange || salesGroupNotDelivered(group);
   });
   const dispatchPendingCount = groups.filter((group) => {
     const status = salesFulfillmentStatus(group.lines);
