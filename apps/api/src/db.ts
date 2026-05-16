@@ -308,6 +308,7 @@ async function seedDatabase() {
     );
   }
   const seededUsers = [
+    { username: "admin", fullName: "Administrator", role: "Admin" as UserRole, password: "1234" },
     { username: "dm", fullName: "Delivery Manager", role: "Delivery Manager" as UserRole, password: "dm" },
     { username: "da", fullName: "Data Analyst", role: "Data Analyst" as UserRole, password: "da" },
     { username: "c", fullName: "Collection Agent", role: "Collection Agent" as UserRole, password: "c" },
@@ -1841,6 +1842,7 @@ export async function createSalesDockets(payload: {
   if (linkedOrderIds.length === 0) throw new Error("Select at least one sales order or cart.");
   const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
+    await assertSalesOrdersOperational(linkedOrderIds, client);
     const orders = await query<Record<string, unknown>>(
       `SELECT so.*, p.default_weight_kg
        FROM sales_orders so
@@ -1855,7 +1857,7 @@ export async function createSalesDockets(payload: {
       const deliveryMode = stringValue(order.delivery_mode) as SalesOrder["deliveryMode"];
       if (deliveryMode !== "Delivery") continue;
       const status = stringValue(order.status) as SalesOrder["status"];
-      if (status === "Delivered" || status === "Closed") continue;
+      if (status === "Delivered" || status === "Closed" || status === "Cancelled") continue;
       await query(
         `INSERT INTO delivery_dockets (
           id, sales_order_id, shop_id, product_sku, warehouse_id, quantity, weight_kg, consignment_id, status, created_at
@@ -2032,6 +2034,183 @@ async function releaseInventory(warehouseId: string, productSku: string, quantit
   if (remaining > 0) {
     throw new Error(`Unable to release reserved inventory for ${productSku} at ${warehouseId}.`);
   }
+}
+
+async function removeSalesOrderFromOperationalFlow(publicOrderId: string, salesOrderIds: string[], client: DbClient) {
+  const normalizedPublicOrderId = publicOrderId.trim();
+  const normalizedSalesOrderIds = Array.from(new Set(salesOrderIds.map((item) => item.trim()).filter(Boolean)));
+  if (!normalizedPublicOrderId && normalizedSalesOrderIds.length === 0) return;
+
+  const dockets = normalizedSalesOrderIds.length > 0
+    ? await query<Record<string, unknown>>(
+      `SELECT id, consignment_id
+       FROM delivery_dockets
+       WHERE sales_order_id = ANY($1::text[])`,
+      [normalizedSalesOrderIds],
+      client
+    )
+    : { rows: [] as Record<string, unknown>[] };
+  const affectedConsignmentIds = Array.from(
+    new Set(
+      dockets.rows
+        .map((row) => stringValue(row.consignment_id))
+        .filter(Boolean)
+    )
+  );
+
+  if (normalizedSalesOrderIds.length > 0) {
+    await query(
+      `DELETE FROM delivery_dockets
+       WHERE sales_order_id = ANY($1::text[])`,
+      [normalizedSalesOrderIds],
+      client
+    );
+  }
+
+  for (const consignmentId of affectedConsignmentIds) {
+    const remainingDockets = await query<Record<string, unknown>>(
+      `SELECT id, weight_kg
+       FROM delivery_dockets
+       WHERE consignment_id = $1
+       ORDER BY created_at ASC, id ASC`,
+      [consignmentId],
+      client
+    );
+    if (remainingDockets.rows.length === 0) {
+      await query("DELETE FROM delivery_consignments WHERE id = $1", [consignmentId], client);
+      continue;
+    }
+    await query(
+      `UPDATE delivery_consignments
+       SET docket_ids_json = $1::jsonb,
+           total_weight_kg = $2
+       WHERE id = $3`,
+      [
+        JSON.stringify(remainingDockets.rows.map((row) => stringValue(row.id))),
+        remainingDockets.rows.reduce((sum, row) => sum + numberValue(row.weight_kg), 0),
+        consignmentId
+      ],
+      client
+    );
+  }
+
+  const tasks = await query<Record<string, unknown>>(
+    `SELECT id, linked_order_id, linked_order_ids_json, consignment_id
+     FROM delivery_tasks
+     WHERE side = 'Sales'
+       AND (
+         linked_order_id = $1
+         OR linked_order_ids_json ? $1
+         OR consignment_id = ANY($2::text[])
+       )`,
+    [normalizedPublicOrderId, affectedConsignmentIds.length > 0 ? affectedConsignmentIds : [""]],
+    client
+  );
+
+  for (const task of tasks.rows) {
+    const currentLinkedOrderIds = Array.isArray(task.linked_order_ids_json)
+      ? (task.linked_order_ids_json as string[]).map((item) => String(item).trim()).filter(Boolean)
+      : [stringValue(task.linked_order_id)].filter(Boolean);
+    const nextLinkedOrderIds = currentLinkedOrderIds.filter((item) => item !== normalizedPublicOrderId);
+    const currentConsignmentId = stringValue(task.consignment_id);
+    const consignmentStillExists = currentConsignmentId
+      ? await one<{ id: string }>("SELECT id FROM delivery_consignments WHERE id = $1", [currentConsignmentId], client)
+      : null;
+    if (nextLinkedOrderIds.length === 0 || (currentConsignmentId && !consignmentStillExists)) {
+      await query("DELETE FROM delivery_tasks WHERE id = $1", [stringValue(task.id)], client);
+      continue;
+    }
+    await query(
+      `UPDATE delivery_tasks
+       SET linked_order_id = $1,
+           linked_order_ids_json = $2::jsonb,
+           consignment_id = $3
+       WHERE id = $4`,
+      [
+        nextLinkedOrderIds[0],
+        JSON.stringify(nextLinkedOrderIds),
+        consignmentStillExists ? currentConsignmentId : null,
+        stringValue(task.id)
+      ],
+      client
+    );
+  }
+}
+
+async function removePurchaseOrderFromOperationalFlow(publicOrderId: string, client: DbClient) {
+  const normalizedPublicOrderId = publicOrderId.trim();
+  if (!normalizedPublicOrderId) return;
+  const tasks = await query<Record<string, unknown>>(
+    `SELECT id, linked_order_id, linked_order_ids_json
+     FROM delivery_tasks
+     WHERE side = 'Purchase'
+       AND (
+         linked_order_id = $1
+         OR linked_order_ids_json ? $1
+       )`,
+    [normalizedPublicOrderId],
+    client
+  );
+  for (const task of tasks.rows) {
+    const currentLinkedOrderIds = Array.isArray(task.linked_order_ids_json)
+      ? (task.linked_order_ids_json as string[]).map((item) => String(item).trim()).filter(Boolean)
+      : [stringValue(task.linked_order_id)].filter(Boolean);
+    const nextLinkedOrderIds = currentLinkedOrderIds.filter((item) => item !== normalizedPublicOrderId);
+    if (nextLinkedOrderIds.length === 0) {
+      await query("DELETE FROM delivery_tasks WHERE id = $1", [stringValue(task.id)], client);
+      continue;
+    }
+    await query(
+      `UPDATE delivery_tasks
+       SET linked_order_id = $1,
+           linked_order_ids_json = $2::jsonb
+       WHERE id = $3`,
+      [nextLinkedOrderIds[0], JSON.stringify(nextLinkedOrderIds), stringValue(task.id)],
+      client
+    );
+  }
+}
+
+async function assertPurchaseOrdersOperational(orderIds: string[], client: DbClient) {
+  const normalizedOrderIds = Array.from(new Set(orderIds.map((item) => item.trim()).filter(Boolean)));
+  if (normalizedOrderIds.length === 0) throw new Error("Select at least one purchase order.");
+  const orders = await query<Record<string, unknown>>(
+    `SELECT id, cart_id, status, delivery_mode
+     FROM purchase_orders
+     WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+    [normalizedOrderIds],
+    client
+  );
+  if (orders.rows.length === 0) throw new Error("Purchase order not found.");
+  const blocked = orders.rows.find((row) => {
+    const status = stringValue(row.status);
+    return status === "Cancelled" || status === "Closed" || status === "Received";
+  });
+  if (blocked) {
+    throw new Error(`Purchase order ${stringValue(blocked.cart_id) || stringValue(blocked.id)} is cancelled or closed and cannot enter delivery flow.`);
+  }
+  return orders.rows;
+}
+
+async function assertSalesOrdersOperational(orderIds: string[], client: DbClient) {
+  const normalizedOrderIds = Array.from(new Set(orderIds.map((item) => item.trim()).filter(Boolean)));
+  if (normalizedOrderIds.length === 0) throw new Error("Select at least one sales order.");
+  const orders = await query<Record<string, unknown>>(
+    `SELECT id, cart_id, status, delivery_mode
+     FROM sales_orders
+     WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+    [normalizedOrderIds],
+    client
+  );
+  if (orders.rows.length === 0) throw new Error("Sales order not found.");
+  const blocked = orders.rows.find((row) => {
+    const status = stringValue(row.status);
+    return status === "Cancelled" || status === "Closed" || status === "Delivered";
+  });
+  if (blocked) {
+    throw new Error(`Sales order ${stringValue(blocked.cart_id) || stringValue(blocked.id)} is cancelled or closed and cannot enter dispatch flow.`);
+  }
+  return orders.rows;
 }
 
 type AdvancePaymentPayload = {
@@ -2417,27 +2596,14 @@ export async function createDeliveryTask(payload: {
       if (freightAmount <= 0) throw new Error("Freight amount is required for external delivery.");
     }
     if (payload.side === "Purchase") {
-      const purchaseModes = await query<Record<string, unknown>>(
-        `SELECT DISTINCT delivery_mode
-         FROM purchase_orders
-         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
-        [linkedOrderIds],
-        client
-      );
-      const modes = new Set(purchaseModes.rows.map((row) => stringValue(row.delivery_mode)));
+      const purchaseOrders = await assertPurchaseOrdersOperational(linkedOrderIds, client);
+      const modes = new Set(purchaseOrders.map((row) => stringValue(row.delivery_mode)));
       if (modes.has("Self Collection")) taskMode = "Self Collection";
       else if (modes.has("Dealer Delivery")) taskMode = "Dealer Delivery";
     }
     if (payload.side === "Sales") {
-      const salesModes = await query<Record<string, unknown>>(
-        `SELECT DISTINCT delivery_mode
-         FROM sales_orders
-         WHERE cart_id = ANY($1::text[]) OR id = ANY($1::text[])`,
-        [linkedOrderIds],
-        client
-      );
-      const modes = new Set(salesModes.rows.map((row) => stringValue(row.delivery_mode)));
-      if (modes.size === 0) throw new Error("Sales order not found.");
+      const salesOrders = await assertSalesOrdersOperational(linkedOrderIds, client);
+      const modes = new Set(salesOrders.map((row) => stringValue(row.delivery_mode)));
       if (modes.has("Self Collection")) {
         throw new Error("Customer self-collection stays with warehouse. Do not create outbound delivery tasks for it.");
       }
@@ -2549,12 +2715,19 @@ export async function createDeliveryConsignment(payload: {
   const mismatchedWarehouse = dockets.rows.some((row) => stringValue(row.warehouse_id) !== payload.warehouseId);
   if (mismatchedWarehouse) throw new Error("All dockets must belong to the selected warehouse.");
   const salesModes = await query<Record<string, unknown>>(
-    `SELECT DISTINCT so.delivery_mode
+    `SELECT DISTINCT so.delivery_mode, so.status
      FROM delivery_dockets dd
      INNER JOIN sales_orders so ON so.id = dd.sales_order_id
      WHERE dd.id = ANY($1::text[])`,
     [docketIds]
   );
+  const blockedOrder = salesModes.rows.find((row) => {
+    const status = stringValue(row.status);
+    return status === "Cancelled" || status === "Closed" || status === "Delivered";
+  });
+  if (blockedOrder) {
+    throw new Error("Cancelled or closed sales orders cannot be bundled into a consignment.");
+  }
   const modes = new Set(salesModes.rows.map((row) => stringValue(row.delivery_mode)));
   if (modes.has("Self Collection")) {
     throw new Error("Customer self-collection cannot be bundled into a consignment.");
@@ -2877,6 +3050,9 @@ export async function updatePurchaseOrder(orderId: string, payload: {
       }
     }
     await recalculateLedger("Purchase", publicOrderId, client);
+    if (payload.status === "Cancelled") {
+      await removePurchaseOrderFromOperationalFlow(publicOrderId, client);
+    }
   });
   return getSnapshot();
 }
@@ -2958,6 +3134,9 @@ export async function updateSalesOrder(orderId: string, payload: {
       [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId],
       client
     );
+    if (payload.status === "Cancelled") {
+      await removeSalesOrderFromOperationalFlow(stringValue(order.cart_id) || orderId, [orderId], client);
+    }
     if (payload.containerWeightKg !== undefined || payload.weighingProofName) {
       await query(
         `UPDATE delivery_dockets
@@ -3113,6 +3292,13 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
           client
         );
       }
+    }
+    if (payload.status === "Cancelled") {
+      await removeSalesOrderFromOperationalFlow(
+        editable.publicOrderId,
+        editable.lines.map((line) => stringValue(line.id)).filter(Boolean),
+        client
+      );
     }
     await recalculateLedger("Sales", editable.publicOrderId, client);
   });
