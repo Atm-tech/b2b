@@ -3,6 +3,7 @@ import XLSX from "xlsx";
 import type { ProductMaster, ProductSlab } from "@aapoorti-b2b/domain";
 
 type ImportRow = Record<string, string>;
+type ProductTaxonomy = Pick<ProductMaster, "division" | "department" | "section" | "category" | "subCategory">;
 
 export function parseCsvRows(csv: string, defaultWarehouseIds: string[]) {
   const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean);
@@ -44,14 +45,11 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
     const normalizedName = normalizeProductName(name);
     if (seen.has(normalizedName)) continue;
     seen.add(normalizedName);
-    const division = readMapped(row, ["division", "DIVISION"], "General");
-    const department = readMapped(row, ["department", "DEPARTMENT"], "General");
-    const section = readMapped(row, ["section", "SECTION"], "General");
+    const taxonomy = deriveRetailTaxonomy(row);
     const sizeText = readMapped(row, ["size", "SIZE"]) || extractSizeText(name);
     const unit = inferUnit(readMapped(row, ["unit", "UNIT", "size", "SIZE"]) || name);
     const rspText = readMapped(row, ["rsp", "RSP"], "0");
     const mrpText = readMapped(row, ["mrp", "MRP"], "0");
-    const category = deriveRetailCategory(row);
     const allowedWarehouseIds = readMapped(row, ["allowedWarehouseIds", "ALLOWED_WAREHOUSE_IDS"])
       .split("|")
       .map((item) => item.trim())
@@ -61,10 +59,11 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
     products.push({
       sku: requiredString(barcode || makeSkuFromName(name), "SKU"),
       name: requiredString(name, "Product name"),
-      division: requiredString(division, "Division"),
-      department: requiredString(department, "Department"),
-      section: requiredString(section, "Section"),
-      category,
+      division: requiredString(taxonomy.division, "Division"),
+      department: requiredString(taxonomy.department, "Department"),
+      section: requiredString(taxonomy.section, "Section"),
+      category: taxonomy.category,
+      subCategory: taxonomy.subCategory,
       unit: requiredString(unit, "Unit"),
       defaultGstRate: 0,
       defaultTaxMode: "Exclusive",
@@ -160,52 +159,130 @@ function makeFutureBaseSlab(rspText: string): ProductSlab {
 }
 
 export function deriveRetailCategory(row: ImportRow) {
+  return deriveRetailTaxonomy(row).category;
+}
+
+export function deriveRetailSubcategory(row: ImportRow) {
+  return deriveRetailTaxonomy(row).subCategory;
+}
+
+export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
   const category6 = readMapped(row, ["category6", "CATEGORY 6", "CAT-6"]).toUpperCase();
   const division = readMapped(row, ["division", "DIVISION"]).toUpperCase();
   const section = readMapped(row, ["section", "SECTION"]).toUpperCase();
   const department = readMapped(row, ["department", "DEPARTMENT"]).toUpperCase();
-  const raw = [
+  const currentCategory = readMapped(row, ["category", "CATEGORY"]).toUpperCase();
+  const currentSubCategory = readMapped(row, ["subCategory", "subcategory", "SUB_CATEGORY", "SUBCATEGORY"]).toUpperCase();
+  const raw = normalizeProductName([
     category6,
     division,
     section,
     department,
+    currentCategory,
+    currentSubCategory,
     readMapped(row, ["articleName", "ARTICLE_NAME"]),
     readMapped(row, ["itemName", "ITEM NAME"]),
     readMapped(row, ["name", "NAME"]),
     readMapped(row, ["brand", "BRAND"]),
     readMapped(row, ["remarks", "REMARKS"])
-  ].join(" ").toUpperCase();
+  ].join(" "));
 
-  if (matchesAny(division, ["MENS", "LADIES", "GIRLS", "KIDS"])) {
-    if (matchesAny(raw, ["FOOTMART", "SHOE", "CHAPPAL", "SANDLE", "SANDAL", "CROCS"])) return "Footwear";
-    if (matchesAny(raw, ["BELT", "CAP", "ACCESSORIES"])) return "Fashion Accessories";
-    if (matchesAny(raw, ["LOWER", "JEANS", "CAPRI", "CARGO", "BARMUDA", "BERMUDA"])) return "Bottomwear";
-    if (matchesAny(raw, ["UPPER", "PULLOVER", "T-SHIRT", "SPORTS WEAR", "BASIC", "BRIEF", "U-GARMENTS"])) return "Topwear & Innerwear";
-    if (matchesAny(raw, ["KURTI", "ETHNIC WEAR"])) return "Ethnic Wear";
-    if (matchesAny(raw, ["SET", "FROCK", "CASUAL SET"])) return "Sets & Dresses";
-    if (matchesAny(raw, ["BAG", "LUGGAGE", "TRAVELLING"])) return "Bags & Luggage";
+  const exact = (divisionText: string, departmentText: string, sectionText: string, categoryText: string, subCategoryText: string): ProductTaxonomy => ({
+    division: divisionText,
+    department: departmentText,
+    section: sectionText,
+    category: categoryText,
+    subCategory: subCategoryText
+  });
+
+  if (matchesAny(raw, ["ALL OUT", "ALLOUT", "MOSQUITO", "REPELLENT", "VAPORIZER", "REFILL"])) {
+    return exact("Home Care", "Pest Control", "Insect Repellent", "Pest Control", "Liquid Vaporizer Refill");
+  }
+  if (matchesAny(raw, ["FIAMA", "BATH SOAP", "SOAP", "BATHING BAR"])) {
+    return exact("Personal Care", "Bath & Body", "Bath Soap", "Bath & Body", "Bathing Bar");
+  }
+  if (matchesAny(raw, ["SURF EXCEL", "GHADI", "RIN", "DETERGENT", "WASHING POWDER", "LAUNDRY"])) {
+    const isBar = matchesAny(raw, ["BAR", "SOAP"]);
+    return exact("Home Care", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder");
+  }
+  if (matchesAny(raw, ["AASHIRWAD", "ATTA", "FLOUR"])) {
+    return exact("Staples & Cooking", "Flour & Atta", "Wheat Flour", "Flour & Atta", "Packaged Atta");
+  }
+  if (matchesAny(raw, ["BESAN", "GRAM FLOUR", "CHANA FLOUR"])) {
+    return exact("Staples & Cooking", "Flour & Atta", "Gram Flour", "Flour & Atta", "Gram Flour");
+  }
+  if (matchesAny(raw, ["SUGAR"])) {
+    return exact("Staples & Cooking", "Sugar & Sweeteners", "Sugar", "Sugar & Sweeteners", "White Sugar");
+  }
+  if (matchesAny(raw, ["GHEE"])) {
+    return exact("Staples & Cooking", "Ghee & Cooking Fats", "Ghee", "Ghee & Cooking Fats", "Cow Ghee");
+  }
+  if (matchesAny(raw, ["SOYA OIL", "SOYABEAN OIL", "REFINED OIL", "MUSTARD OIL", "SUNFLOWER OIL", "EDIBLE OIL"])) {
+    return exact("Staples & Cooking", "Edible Oils", "Cooking Oil", "Edible Oils", matchesAny(raw, ["SOYA", "SOYABEAN"]) ? "Soyabean Oil" : "Refined Oil");
+  }
+  if (matchesAny(raw, ["TATA TEA", "RED LABEL", "TEA", "CHAI"])) {
+    return exact("Beverages", "Tea & Infusions", "Leaf Tea", "Tea & Infusions", "Black Tea");
+  }
+  if (matchesAny(raw, ["HEALTH PLUS", "PACKAGED WATER", "DRINKING WATER", "WATER BOTTLE"])) {
+    return exact("Beverages", "Water", "Packaged Drinking Water", "Water", "Packaged Drinking Water");
+  }
+  if (matchesAny(raw, ["STING"])) {
+    return exact("Beverages", "Energy Drinks", "Energy Drinks", "Energy Drinks", "Energy Drink");
+  }
+  if (matchesAny(raw, ["AMUL LASSI"])) {
+    return exact("Dairy & Breakfast", "Dairy Drinks", "Lassi", "Dairy Drinks", "Lassi");
+  }
+  if (matchesAny(raw, ["CHACH", "BUTTERMILK"])) {
+    return exact("Dairy & Breakfast", "Dairy Drinks", "Buttermilk", "Dairy Drinks", "Buttermilk");
+  }
+  if (matchesAny(raw, ["APPY FIZZ"])) {
+    return exact("Beverages", "Soft Drinks", "Sparkling Juice Drinks", "Soft Drinks", "Fruit Plus Fizz");
+  }
+  if (matchesAny(raw, ["COCA COLA", "THUMS UP", "THUMP UP"])) {
+    return exact("Beverages", "Soft Drinks", "Carbonated Soft Drinks", "Soft Drinks", "Cola");
+  }
+  if (matchesAny(raw, ["SPRITE", "LIMCA"])) {
+    return exact("Beverages", "Soft Drinks", "Carbonated Soft Drinks", "Soft Drinks", "Lemon-Lime");
+  }
+  if (matchesAny(raw, ["FANTA", "FENTA"])) {
+    return exact("Beverages", "Soft Drinks", "Carbonated Soft Drinks", "Soft Drinks", "Orange");
+  }
+  if (matchesAny(raw, ["MAAZA", "MANGO DRINK", "PAPER BOAT MANGO", "PAPAR BOAT MANGO"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Mango Drinks", "Juices & Fruit Drinks", "Mango Drink");
+  }
+  if (matchesAny(raw, ["LITCHI", "LYCHEE", "LUCHEE"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Lychee Drinks", "Juices & Fruit Drinks", "Lychee Drink");
+  }
+  if (matchesAny(raw, ["GUAVA"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Guava Drinks", "Juices & Fruit Drinks", "Guava Drink");
+  }
+  if (matchesAny(raw, ["POMEGRANATE"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Pomegranate Drinks", "Juices & Fruit Drinks", "Pomegranate Drink");
+  }
+  if (matchesAny(raw, ["COCONUT WATER", "COCONAT WATER"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Coconut Water", "Juices & Fruit Drinks", "Coconut Water");
+  }
+  if (matchesAny(raw, ["PAPER BOAT", "PAPAR BOAT", "MIXED FRUIT", "FRUIT DRINK", "JUICE"])) {
+    return exact("Beverages", "Juices & Fruit Drinks", "Mixed Fruit Drinks", "Juices & Fruit Drinks", "Mixed Fruit Drink");
+  }
+  if (matchesAny(raw, ["GOODAY", "GOOD DAY", "BISCUIT", "COOKIE", "MONACO"])) {
+    const isCracker = matchesAny(raw, ["MONACO", "CRACKER"]);
+    return exact("Snacks & Confectionery", "Biscuits & Cookies", isCracker ? "Crackers" : "Cookies", "Biscuits & Cookies", isCracker ? "Salted Crackers" : "Cookies");
+  }
+  if (matchesAny(raw, ["DAIRY MILK"])) {
+    return exact("Snacks & Confectionery", "Chocolates & Candy", "Chocolate Bars", "Chocolates", "Chocolate Bar");
+  }
+  if (matchesAny(raw, ["PULSE TOFFEE", "TOFFEE", "CANDY"])) {
+    return exact("Snacks & Confectionery", "Chocolates & Candy", "Candy & Toffee", "Confectionery", "Candy & Toffee");
   }
 
-  if (matchesAny(raw, ["SWEET", "PAPADI", "NAMKEEN", "BISCUIT", "COOKIE", "SNACK"])) return "Snacks & Sweets";
-  if (matchesAny(raw, ["WATER BOTTLE", "PACKAGED WATER", "DRINKING WATER"])) return "Packaged Water";
-  if (matchesAny(raw, ["COCA COLA", "COCA-COLA", "FANTA", "FENTA", "SPRITE", "THUMS UP", "THUMP UP", "LIMCA", "APPY FIZZ", "COLD DRINK", "SOFT DRINK"])) return "Cold Beverages";
-  if (matchesAny(raw, ["MAAZA", "MANGO DRINK", "LITCHI DRINK", "JUICE"])) return "Juices & Fruit Drinks";
-  if (matchesAny(raw, ["DRINK", "BEVRAGE", "BEVERAGE", "TEA", "COFFEE"])) return "Tea, Coffee & Beverages";
-  if (matchesAny(raw, ["DRY FRUIT", "CASHEW", "ALMOND", "PISTA", "ELAICHEE"])) return "Dry Fruits & Nuts";
-  if (matchesAny(raw, ["SUGAR", "ATTA", "FLOUR", "RICE", "PULSE", "DAL", "POHA", "BASMATI", "DUBRAJ", "CHINNOR"])) return "Staples & Grains";
-  if (matchesAny(raw, ["GHEE", "SOYA", "MUSTURED", "MUSTARD", "REFINED", "OIL", "COOKING MEDIUM"])) return "Oils & Ghee";
-  if (matchesAny(raw, ["FIAMA", "SOAP", "BATHING BAR"])) return "Bathing Bars & Soaps";
-  if (matchesAny(raw, ["RIN", "SURF EXCEL", "GHADI", "DETERGENT", "LAUNDRY", "WASHING POWDER"])) return "Laundry & Detergents";
-  if (division.includes("HOUSEHOLD") || division.includes("ELECTRONICS") || division.includes("FMCG-NON FOOD")) {
-    if (matchesAny(raw, ["TOY", "SOFT TOY", "KIDS"])) return "Toys & Kids Essentials";
-    if (matchesAny(raw, ["CROCKERY", "CUP SET", "BOTTLE SET", "KITCHEN", "INDUCTION", "APPLIANCES"])) return "Kitchen & Appliances";
-    if (matchesAny(raw, ["BED SHEET", "PARDA", "CARPET", "TOWEL", "HOME FURNISHING"])) return "Home Furnishing";
-    if (matchesAny(raw, ["TOOLS", "PLASTIC GOODS", "HOME CARE", "BULB", "HOUSEHOLD"])) return "Household Essentials";
-  }
-  if (matchesAny(raw, ["ELECTRONICS"])) return "Electronics";
-  if (matchesAny(raw, ["FMCG", "PACKING"])) return "Grocery & Staples";
-  if (matchesAny(raw, ["MENS", "LADIES", "GIRLS", "KIDS"])) return "Apparel";
-  return "General Merchandise";
+  return exact(
+    readMapped(row, ["division", "DIVISION"], "General Merchandise"),
+    readMapped(row, ["department", "DEPARTMENT"], "General"),
+    readMapped(row, ["section", "SECTION"], "General"),
+    readMapped(row, ["category", "CATEGORY"], "General Merchandise"),
+    readMapped(row, ["subCategory", "subcategory", "SUB_CATEGORY", "SUBCATEGORY"], readMapped(row, ["section", "SECTION"], "General"))
+  );
 }
 
 function matchesAny(haystack: string, needles: string[]) {
