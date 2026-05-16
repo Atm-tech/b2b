@@ -37,6 +37,7 @@ const TOKEN_KEY = "aapoorti-b2b-token";
 const ACTIVE_VIEW_KEY = "aapoorti-b2b-active-view";
 const DELIVERY_MANAGER_WAREHOUSE_KEY = "aapoorti-b2b-dm-warehouse";
 const WORKSPACE_DRAFT_KEY = "aapoorti-b2b-workspace";
+const SIDEBAR_COLLAPSED_KEY = "aapoorti-b2b-sidebar-collapsed";
 const api = axios.create({
   baseURL: API_BASE
 });
@@ -3416,7 +3417,7 @@ function App() {
   const [receiptEditForm, setReceiptEditForm] = useState({ grcNumber: "", note: "", flagged: false });
   const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
   const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
-  const [partyEditForm, setPartyEditForm] = useState({ id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
+  const [partyEditForm, setPartyEditForm] = useState({ id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const [accountsPartySearch, setAccountsPartySearch] = useState("");
@@ -3441,8 +3442,12 @@ function App() {
   const [scanOverlayOpen, setScanOverlayOpen] = useState(false);
   const [orderStatusTarget, setOrderStatusTarget] = useState<OrderQrTarget | null>(null);
   const [pendingQrTarget, setPendingQrTarget] = useState<OrderQrTarget | null>(() => readOrderQrTargetFromLocation());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  });
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
-  const emptyPartyEditForm = { id: "", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
+  const emptyPartyEditForm = { id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SESSION_KEY);
@@ -3484,6 +3489,11 @@ function App() {
   useEffect(() => {
     if (currentUser) window.localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
   }, [activeView, currentUser]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -3956,7 +3966,7 @@ function App() {
   async function saveStandaloneParty(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentUser) return;
-    const forcedType = currentUser.role === "Sales" ? "Shop" : "Supplier";
+    const forcedType = isAccountsUser ? partyForm.type : currentUser.role === "Sales" ? "Shop" : "Supplier";
     const nextErrors = getPartyIdentityErrors({ ...partyForm, type: forcedType });
     setPartyFormErrors(nextErrors);
     if (nextErrors.name || nextErrors.gstNumber || nextErrors.bankAccountNumber || nextErrors.ifscCode) {
@@ -3981,6 +3991,7 @@ function App() {
   function buildPartyEditDraft(item: Counterparty) {
     return {
       id: item.id,
+      type: item.type,
       name: item.name,
       gstNumber: item.gstNumber,
       bankName: item.bankName,
@@ -4019,20 +4030,20 @@ function App() {
   async function saveAccountsPartyUpdate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const sourceParties = counterparties.filter((item) => item.id !== partyEditForm.id);
-    const nextErrors = getPartyIdentityErrors({ ...partyEditForm, type: "Supplier" }, sourceParties);
+    const nextErrors = getPartyIdentityErrors({ ...partyEditForm, type: partyEditForm.type }, sourceParties);
     if (nextErrors.name || nextErrors.gstNumber || nextErrors.bankAccountNumber || nextErrors.ifscCode) {
       setError(
         nextErrors.name
-          ? "Supplier name is required and must be unique."
+          ? `${partyEditForm.type === "Shop" ? "Customer" : "Supplier"} name is required and must be unique.`
           : nextErrors.gstNumber
-            ? "GST number is required and must be unique. Use N/A for non-GST suppliers."
+            ? `GST number is required and must be unique. Use N/A for non-GST ${partyEditForm.type === "Shop" ? "customers" : "suppliers"}.`
             : nextErrors.bankAccountNumber
               ? "Bank account number is required and must be unique. Use N/A when not available."
               : "IFSC code is required and must be unique. Use N/A when not available."
       );
       return;
     }
-    await patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Supplier updated.", () => {
+    await patch(`/counterparties/${partyEditForm.id}`, partyEditForm, `${partyEditForm.type === "Shop" ? "Customer" : "Supplier"} updated.`, () => {
       setAccountsPartyUpdateId("");
       setPartyEditForm(emptyPartyEditForm);
     });
@@ -4108,10 +4119,11 @@ function App() {
     }))
     .filter((item) => item.pendingAmount > 0)
     .sort((left, right) => right.pendingAmount - left.pendingAmount);
-  const filteredAccountsSuppliers = suppliers.filter((item) => {
+  const filteredAccountsParties = counterparties.filter((item) => {
     const query = accountsPartySearch.trim().toLowerCase();
     if (!query) return true;
     const haystack = [
+      item.type,
       item.name,
       item.contactPerson,
       item.mobileNumber,
@@ -4135,9 +4147,9 @@ function App() {
     </section>
   ) : isAccountsUser ? (
     <section className="collapse-stack">
-      <CollapsiblePanel title="Create Supplier" eyebrow="Accounts" open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
+      <CollapsiblePanel title="Create Party" eyebrow="Accounts" open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
         <form className="form-grid" onSubmit={saveStandaloneParty}>
-          <label>Type<input value="Supplier / Vendor" readOnly /></label>
+          <label>Type<select value={partyForm.type} onChange={(e) => setPartyForm((c) => ({ ...c, type: e.target.value as "Supplier" | "Shop" }))}><option value="Supplier">Supplier / Vendor</option><option value="Shop">Customer / Shop</option></select></label>
           <label className={partyFormErrors.name ? "field-error" : ""}>Name<input value={partyForm.name} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, name: false })); setPartyForm((c) => ({ ...c, name: e.target.value })); }} /></label>
           <label className={partyFormErrors.gstNumber ? "field-error" : ""}>GST<input value={partyForm.gstNumber} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.value })); }} placeholder="GST number or N/A" /></label>
           <label className="checkbox-line"><input type="checkbox" checked={partyFormGstNa} onChange={(e) => { setPartyFormErrors((c) => ({ ...c, gstNumber: false })); setPartyForm((c) => ({ ...c, gstNumber: e.target.checked ? "N/A" : "" })); }} />GST N/A</label>
@@ -4149,17 +4161,17 @@ function App() {
           <label>Contact<input value={partyForm.contactPerson} onChange={(e) => setPartyForm((c) => ({ ...c, contactPerson: e.target.value }))} /></label>
           <label>City<input value={partyForm.city} onChange={(e) => setPartyForm((c) => ({ ...c, city: e.target.value }))} /></label>
           <label className="wide-field">Address<input value={partyForm.address} onChange={(e) => setPartyForm((c) => ({ ...c, address: e.target.value }))} /></label>
-          <button className="primary-button" type="submit">Save supplier</button>
+          <button className="primary-button" type="submit">{partyForm.type === "Shop" ? "Save customer" : "Save supplier"}</button>
         </form>
       </CollapsiblePanel>
 
-      <Panel title="Supplier List" eyebrow="Search, update, pay">
+      <Panel title="Party List" eyebrow="Search, update, pay">
         <div className="form-grid">
-          <label className="wide-field">Search supplier<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Name, GST, mobile, bank, city" /></label>
+          <label className="wide-field">Search party<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Type, name, GST, mobile, bank, city" /></label>
         </div>
         <div className="stack-list payment-update-list top-gap">
-          {filteredAccountsSuppliers.length === 0 ? <div className="empty-card">No suppliers match this search.</div> : filteredAccountsSuppliers.map((item) => {
-            const pendingOrders = accountsSupplierOrders.filter((order) => order.supplierId === item.id);
+          {filteredAccountsParties.length === 0 ? <div className="empty-card">No parties match this search.</div> : filteredAccountsParties.map((item) => {
+            const pendingOrders = item.type === "Supplier" ? accountsSupplierOrders.filter((order) => order.supplierId === item.id) : [];
             const totalPending = pendingOrders.reduce((sum, order) => sum + order.pendingAmount, 0);
             const totalPaid = pendingOrders.reduce((sum, order) => sum + order.paidAmount, 0);
             const isUpdating = accountsPartyUpdateId === item.id;
@@ -4170,25 +4182,26 @@ function App() {
                   <strong>{item.name}</strong>
                   <p>{item.id} | {item.city || "No city"}{item.mobileNumber ? ` | ${item.mobileNumber}` : ""}</p>
                 </div>
-                <span className={`status-pill ${totalPending > 0 ? "status-pending" : "status-completed"}`}>{totalPending > 0 ? "Payment pending" : "Settled"}</span>
+                <span className={`status-pill ${item.type === "Supplier" && totalPending > 0 ? "status-pending" : "status-completed"}`}>{item.type === "Shop" ? "Customer" : totalPending > 0 ? "Payment pending" : "Settled"}</span>
               </div>
               <div className="payment-meta-grid">
+                <div><span className="small-label">Type</span><strong>{item.type === "Shop" ? "Customer / Shop" : "Supplier / Vendor"}</strong></div>
                 <div><span className="small-label">GST</span><strong>{item.gstNumber || "N/A"}</strong></div>
                 <div><span className="small-label">Bank</span><strong>{item.bankName || "N/A"}</strong></div>
                 <div><span className="small-label">Account</span><strong>{item.bankAccountNumber || "N/A"}</strong></div>
                 <div><span className="small-label">IFSC</span><strong>{item.ifscCode || "N/A"}</strong></div>
                 <div><span className="small-label">Contact</span><strong>{item.contactPerson || "N/A"}</strong></div>
                 <div><span className="small-label">Address</span><strong>{item.address || "N/A"}</strong></div>
-                <div><span className="small-label">Pending dues</span><strong>{formatCurrencyInr(totalPending)}</strong></div>
-                <div><span className="small-label">Open PO</span><strong>{String(pendingOrders.length)}</strong></div>
-                <div><span className="small-label">Already paid</span><strong>{formatCurrencyInr(totalPaid)}</strong></div>
+                {item.type === "Supplier" ? <div><span className="small-label">Pending dues</span><strong>{formatCurrencyInr(totalPending)}</strong></div> : null}
+                {item.type === "Supplier" ? <div><span className="small-label">Open PO</span><strong>{String(pendingOrders.length)}</strong></div> : null}
+                {item.type === "Supplier" ? <div><span className="small-label">Already paid</span><strong>{formatCurrencyInr(totalPaid)}</strong></div> : null}
               </div>
               <div className="payment-card-actions">
-                <button className={isUpdating ? "primary-button" : "ghost-button"} type="button" onClick={() => isUpdating ? setAccountsPartyUpdateId("") : startAccountsPartyUpdate(item)}>{isUpdating ? "Close update" : "Update supplier"}</button>
-                <button className={isPaying ? "primary-button" : "ghost-button"} type="button" onClick={() => isPaying ? setAccountsPartyPaymentId("") : startAccountsPartyPayment(item, pendingOrders[0]?.orderId || "", pendingOrders[0]?.pendingAmount || 0, pendingOrders[0]?.paymentMode || "NEFT")}>{isPaying ? "Close payment" : "Create payment"}</button>
+                <button className={isUpdating ? "primary-button" : "ghost-button"} type="button" onClick={() => isUpdating ? setAccountsPartyUpdateId("") : startAccountsPartyUpdate(item)}>{isUpdating ? "Close update" : `Update ${item.type === "Shop" ? "customer" : "supplier"}`}</button>
+                {item.type === "Supplier" ? <button className={isPaying ? "primary-button" : "ghost-button"} type="button" onClick={() => isPaying ? setAccountsPartyPaymentId("") : startAccountsPartyPayment(item, pendingOrders[0]?.orderId || "", pendingOrders[0]?.pendingAmount || 0, pendingOrders[0]?.paymentMode || "NEFT")}>{isPaying ? "Close payment" : "Create payment"}</button> : null}
               </div>
 
-              {pendingOrders.length > 0 ? <div className="stack-list top-gap">
+              {item.type === "Supplier" && pendingOrders.length > 0 ? <div className="stack-list top-gap">
                 {pendingOrders.slice(0, 4).map((order) => (
                   <div className="list-card" key={order.orderId}>
                     <div className="payment-update-head">
@@ -4209,6 +4222,7 @@ function App() {
               </div> : null}
 
               {isUpdating ? <form className="form-grid top-gap" onSubmit={saveAccountsPartyUpdate}>
+                <label>Type<select value={partyEditForm.type} onChange={(e) => setPartyEditForm((current) => ({ ...current, type: e.target.value as "Supplier" | "Shop" }))}><option value="Supplier">Supplier / Vendor</option><option value="Shop">Customer / Shop</option></select></label>
                 <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((current) => ({ ...current, name: e.target.value }))} /></label>
                 <label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((current) => ({ ...current, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label>
                 <label className="checkbox-line"><input type="checkbox" checked={partyEditFormGstNa} onChange={(e) => setPartyEditForm((current) => ({ ...current, gstNumber: e.target.checked ? "N/A" : "" }))} />GST N/A</label>
@@ -4221,12 +4235,12 @@ function App() {
                 <label>City<input value={partyEditForm.city} onChange={(e) => setPartyEditForm((current) => ({ ...current, city: e.target.value }))} /></label>
                 <label className="wide-field">Address<input value={partyEditForm.address} onChange={(e) => setPartyEditForm((current) => ({ ...current, address: e.target.value }))} /></label>
                 <div className="payment-card-actions wide-field">
-                  <button className="primary-button" type="submit">Update supplier</button>
+                  <button className="primary-button" type="submit">{partyEditForm.type === "Shop" ? "Update customer" : "Update supplier"}</button>
                   <button className="ghost-button" type="button" onClick={() => setAccountsPartyUpdateId("")}>Cancel</button>
                 </div>
               </form> : null}
 
-              {isPaying ? <form className="form-grid top-gap" onSubmit={saveAccountsPartyPayment}>
+              {item.type === "Supplier" && isPaying ? <form className="form-grid top-gap" onSubmit={saveAccountsPartyPayment}>
                 <label>Pending PO<select value={accountsPartyPaymentForm.linkedOrderId} onChange={(e) => {
                   const selectedOrder = pendingOrders.find((order) => order.orderId === e.target.value);
                   setAccountsPartyPaymentForm((current) => ({
@@ -4275,7 +4289,7 @@ function App() {
       </CollapsiblePanel>
       <CollapsiblePanel title={`Update ${partyRoleLabel}`} eyebrow="Edit details" open={openPartyPanel === "update"} onToggle={() => setOpenPartyPanel((current) => current === "update" ? "" : "update")}>
         <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}>
-          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(partyItems)}</select></label>
+          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, type: item.type, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(partyItems)}</select></label>
           <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
           <label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label>
           <label className="checkbox-line"><input type="checkbox" checked={partyEditFormGstNa} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.checked ? "N/A" : "" }))} />GST N/A</label>
@@ -4305,6 +4319,9 @@ function App() {
           <p>{effectiveSimpleMode ? "Quick operations mode." : "Detailed operations mode."}</p>
         </div>
         <div className="hero-side hero-top-actions">
+          {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
+            {sidebarCollapsed ? "Expand Menu" : "Collapse Menu"}
+          </button> : null}
           <div className="profile-menu">
             <button className="profile-button" type="button" onClick={() => setProfileOpen((current) => !current)} aria-label="Open profile">
               <span className="profile-avatar">{(currentUser.fullName || currentUser.username).slice(0, 1).toUpperCase()}</span>
@@ -4339,13 +4356,13 @@ function App() {
       {message ? <div className="app-toast success">{message}</div> : null}
       {error ? <p className="message error">{error}</p> : null}
 
-      <section className={effectiveSimpleMode ? "workspace-shell simple-workspace" : "workspace-shell"}>
-        {!effectiveSimpleMode ? <aside className="sidebar panel">
+      <section className={effectiveSimpleMode ? "workspace-shell simple-workspace" : `workspace-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+        {!effectiveSimpleMode ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
             {safeVisibleViews.map((view) => (
-              <button key={view} type="button" className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => navigateToView(view)}>
-                <span>{displayLabel(view, currentUser)}</span><small>{view}</small>
+              <button key={view} type="button" title={displayLabel(view, currentUser)} className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => navigateToView(view)}>
+                <span>{sidebarCollapsed ? displayLabel(view, currentUser).slice(0, 1).toUpperCase() : displayLabel(view, currentUser)}</span><small>{view}</small>
               </button>
             ))}
           </nav>
@@ -7889,6 +7906,15 @@ function AccountsPaymentsView({
   }));
   const [paymentMakerError, setPaymentMakerError] = useState("");
   const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
+  const [accountsEntryMode, setAccountsEntryMode] = useState<"quick" | "full">("quick");
+  const [openAccountsSections, setOpenAccountsSections] = useState<Record<string, boolean>>({
+    queue: true,
+    posting: true,
+    advances: false,
+    orders: false,
+    record: false,
+    pending: true
+  });
   const [paymentPreview, setPaymentPreview] = useState<null | {
     outputMode: "Cheque" | "Excel";
     dbMode: PaymentMode;
@@ -7905,6 +7931,20 @@ function AccountsPaymentsView({
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
+  const [quickPurchaseForm, setQuickPurchaseForm] = useState({
+    linkedOrderId: purchaseOrderPendingOptions[0]?.id || "",
+    mode: "NEFT" as PaymentMode,
+    utrNumber: "",
+    referenceNumber: "",
+    operationDate: today
+  });
+  const [quickSalesForm, setQuickSalesForm] = useState({
+    linkedOrderId: salesOrderPendingOptions[0]?.id || "",
+    mode: "Cash" as PaymentMode,
+    amount: String(salesOrderPendingOptions[0]?.pendingAmount || 0),
+    referenceNumber: "",
+    operationDate: today
+  });
 
   useEffect(() => {
     writeStoredJson(accountsPaymentConfigKey, paymentExportConfig);
@@ -7924,6 +7964,13 @@ function AccountsPaymentsView({
     return haystack.includes(advanceSearch.trim().toLowerCase());
   });
 
+  function toggleAccountsSection(section: string) {
+    setOpenAccountsSections((current) => ({
+      ...current,
+      [section]: !current[section]
+    }));
+  }
+
   function loadOrderIntoForm(side: "Purchase" | "Sales", linkedOrderId: string) {
     const order = accountOrderOptions.find((item) => item.side === side && item.id === linkedOrderId);
     setCreateForm((current) => ({
@@ -7939,6 +7986,61 @@ function AccountsPaymentsView({
       proofName: "",
       verificationStatus: "Verified",
       verificationNote: side === "Purchase" ? "Purchase payment recorded by accounts" : "Customer payment recorded by accounts",
+      operationDate: current.operationDate || today
+    }));
+  }
+
+  async function submitQuickPurchasePayment() {
+    const order = purchaseOrderPendingOptions.find((item) => item.id === quickPurchaseForm.linkedOrderId);
+    if (!order) return;
+    const referenceNumber = quickPurchaseForm.referenceNumber.trim() || quickPurchaseForm.utrNumber.trim();
+    if (!referenceNumber) return;
+    await onCreatePayment({
+      side: "Purchase",
+      linkedOrderId: order.id,
+      amount: order.pendingAmount,
+      mode: quickPurchaseForm.mode,
+      referenceNumber,
+      utrNumber: quickPurchaseForm.utrNumber.trim() || undefined,
+      verificationStatus: "Verified",
+      verificationNote: "Outgoing supplier payment completed by accounts",
+      operationDate: quickPurchaseForm.operationDate || undefined
+    });
+    setQuickPurchaseForm((current) => ({
+      ...current,
+      linkedOrderId: purchaseOrderPendingOptions[0]?.id || "",
+      utrNumber: "",
+      referenceNumber: "",
+      operationDate: current.operationDate || today
+    }));
+  }
+
+  async function submitQuickSalesPayment() {
+    const order = salesOrderPendingOptions.find((item) => item.id === quickSalesForm.linkedOrderId);
+    if (!order) return;
+    const amount = Number(quickSalesForm.amount || 0);
+    if (!(amount > 0)) return;
+    const referenceNumber = quickSalesForm.mode === "Cash"
+      ? `CASH-${order.id}`
+      : quickSalesForm.referenceNumber.trim();
+    if (!referenceNumber) return;
+    await onCreatePayment({
+      side: "Sales",
+      linkedOrderId: order.id,
+      amount,
+      mode: quickSalesForm.mode,
+      cashTiming: quickSalesForm.mode === "Cash" ? "Later" : undefined,
+      referenceNumber,
+      verificationStatus: "Verified",
+      verificationNote: quickSalesForm.mode === "Cash" ? "Incoming cash recorded by accounts" : "Incoming bank payment recorded by accounts",
+      operationDate: quickSalesForm.operationDate || undefined
+    });
+    const next = salesOrderPendingOptions.find((item) => item.id !== order.id) || salesOrderPendingOptions[0];
+    setQuickSalesForm((current) => ({
+      ...current,
+      linkedOrderId: next?.id || "",
+      amount: String(next?.pendingAmount || 0),
+      referenceNumber: "",
       operationDate: current.operationDate || today
     }));
   }
@@ -8058,8 +8160,8 @@ function AccountsPaymentsView({
   }
 
   return (
-    <section className="dashboard-grid">
-      <Panel title="Accounts Queue" eyebrow="Pending vs completed">
+    <section className="collapse-stack">
+      <CollapsiblePanel title="Accounts Queue" eyebrow="Pending vs completed" open={openAccountsSections.queue} onToggle={() => toggleAccountsSection("queue")}>
         <div className="simple-summary payment-summary-grid">
           <div className="list-card"><div><strong>{purchaseOrderRows.filter((item) => item.pendingAmount > 0).length}</strong><p>Purchase pending</p></div></div>
           <div className="list-card"><div><strong>{salesOrderRows.filter((item) => item.pendingAmount > 0).length}</strong><p>Sales pending</p></div></div>
@@ -8068,8 +8170,49 @@ function AccountsPaymentsView({
           <div className="list-card"><div><strong>{dayCash.toFixed(2)}</strong><p>Cash entered today</p></div></div>
           <div className="list-card"><div><strong>{purchaseAdvancePayments.length}</strong><p>Purchase advances</p></div></div>
         </div>
-      </Panel>
-      <Panel title="Advance List" eyebrow="Search by party, amount, ref, UTR">
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Temporary Posting" eyebrow="Outgoing purchase and incoming sales" open={openAccountsSections.posting} onToggle={() => toggleAccountsSection("posting")}>
+        <div className="summary-switch-bar">
+          <button className={accountsEntryMode === "quick" ? "tab-button active" : "tab-button"} type="button" onClick={() => setAccountsEntryMode("quick")}>Quick Post</button>
+          <button className={accountsEntryMode === "full" ? "tab-button active" : "tab-button"} type="button" onClick={() => setAccountsEntryMode("full")}>Full Form</button>
+        </div>
+        {accountsEntryMode === "quick" ? <TwoCol
+          left={<Panel title="Outgoing Purchase" eyebrow="Select PO, enter UTR, complete">
+            <form className="form-grid" onSubmit={async (event) => {
+              event.preventDefault();
+              await submitQuickPurchasePayment();
+            }}>
+              <label>PO<select value={quickPurchaseForm.linkedOrderId} onChange={(e) => setQuickPurchaseForm((current) => ({ ...current, linkedOrderId: e.target.value }))}>{purchaseOrderPendingOptions.map((item) => <option key={item.id} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
+              <label>Mode<select value={quickPurchaseForm.mode} onChange={(e) => setQuickPurchaseForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>NEFT</option><option>RTGS</option><option>UPI</option><option>Cheque</option><option>Card</option><option>Cash</option></select></label>
+              <label>Date<input type="date" value={quickPurchaseForm.operationDate} onChange={(e) => setQuickPurchaseForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
+              <label>UTR<input value={quickPurchaseForm.utrNumber} onChange={(e) => setQuickPurchaseForm((current) => ({ ...current, utrNumber: e.target.value }))} placeholder="Required for bank transfer" /></label>
+              <label>Reference<input value={quickPurchaseForm.referenceNumber} onChange={(e) => setQuickPurchaseForm((current) => ({ ...current, referenceNumber: e.target.value }))} placeholder="Optional if same as UTR" /></label>
+              <div className="payment-card-actions wide-field">
+                <button className="primary-button" type="submit" disabled={!quickPurchaseForm.linkedOrderId || !(quickPurchaseForm.referenceNumber.trim() || quickPurchaseForm.utrNumber.trim())}>Mark PO complete</button>
+              </div>
+            </form>
+          </Panel>}
+          right={<Panel title="Incoming Sales" eyebrow="Select SO, enter amount or ref, complete">
+            <form className="form-grid" onSubmit={async (event) => {
+              event.preventDefault();
+              await submitQuickSalesPayment();
+            }}>
+              <label>SO<select value={quickSalesForm.linkedOrderId} onChange={(e) => {
+                const next = salesOrderPendingOptions.find((item) => item.id === e.target.value);
+                setQuickSalesForm((current) => ({ ...current, linkedOrderId: e.target.value, amount: String(next?.pendingAmount || current.amount) }));
+              }}>{salesOrderPendingOptions.map((item) => <option key={item.id} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
+              <label>Mode<select value={quickSalesForm.mode} onChange={(e) => setQuickSalesForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
+              <label>Date<input type="date" value={quickSalesForm.operationDate} onChange={(e) => setQuickSalesForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
+              <label>Amount<input type="number" step="any" value={quickSalesForm.amount} onChange={(e) => setQuickSalesForm((current) => ({ ...current, amount: e.target.value }))} /></label>
+              <label>{quickSalesForm.mode === "Cash" ? "Ref" : "Ref Number"}<input value={quickSalesForm.referenceNumber} onChange={(e) => setQuickSalesForm((current) => ({ ...current, referenceNumber: e.target.value }))} placeholder={quickSalesForm.mode === "Cash" ? "Optional for cash" : "Required for UPI/bank"} /></label>
+              <div className="payment-card-actions wide-field">
+                <button className="primary-button" type="submit" disabled={!quickSalesForm.linkedOrderId || !(Number(quickSalesForm.amount || 0) > 0) || (quickSalesForm.mode !== "Cash" && !quickSalesForm.referenceNumber.trim())}>Mark SO complete</button>
+              </div>
+            </form>
+          </Panel>}
+        /> : <div className="empty-card">Use the full form below for proof upload, cheque/export flow, or custom verification states.</div>}
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Advance List" eyebrow="Search by party, amount, ref, UTR" open={openAccountsSections.advances} onToggle={() => toggleAccountsSection("advances")}>
         <div className="form-grid">
           <label className="wide-field">Search advance<input value={advanceSearch} onChange={(e) => setAdvanceSearch(e.target.value)} placeholder="Supplier, amount, reference, UTR" /></label>
         </div>
@@ -8102,9 +8245,10 @@ function AccountsPaymentsView({
             </article>;
           })}
         </div>
-      </Panel>
-      <TwoCol
-        left={<Panel title="Purchase Orders" eyebrow="Accounts visibility">
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Order Visibility" eyebrow="Purchase and sales status" open={openAccountsSections.orders} onToggle={() => toggleAccountsSection("orders")}>
+        <TwoCol
+          left={<Panel title="Purchase Orders" eyebrow="Accounts visibility">
           <div className="stack-list payment-update-list">
             {purchaseOrderRows.length === 0 ? <div className="empty-card">No purchase orders yet.</div> : purchaseOrderRows.map((item) => (
               <article className="list-card payment-update-card" key={`purchase-${item.id}`}>
@@ -8136,8 +8280,8 @@ function AccountsPaymentsView({
               </article>
             ))}
           </div>
-        </Panel>}
-        right={<Panel title="Sales Orders" eyebrow="Accounts visibility">
+          </Panel>}
+          right={<Panel title="Sales Orders" eyebrow="Accounts visibility">
           <div className="stack-list payment-update-list">
             {salesOrderRows.length === 0 ? <div className="empty-card">No sales orders yet.</div> : salesOrderRows.map((item) => (
               <article className="list-card payment-update-card" key={`sales-${item.id}`}>
@@ -8169,9 +8313,10 @@ function AccountsPaymentsView({
               </article>
             ))}
           </div>
-        </Panel>}
-      />
-      <Panel title="Record Payment" eyebrow="Accounts entry">
+          </Panel>}
+        />
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Record Payment" eyebrow="Accounts entry" open={openAccountsSections.record} onToggle={() => toggleAccountsSection("record")}>
         <form className="form-grid" onSubmit={async (event) => {
           event.preventDefault();
           await onCreatePayment({
@@ -8258,8 +8403,8 @@ function AccountsPaymentsView({
             </div>
           </article>
         </div> : null}
-      </Panel>
-      <Panel title="Pending Verification" eyebrow="Accounts must complete payment">
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Pending Verification" eyebrow="Accounts must complete payment" open={openAccountsSections.pending} onToggle={() => toggleAccountsSection("pending")}>
         <div className="stack-list payment-update-list">
           {pending.length === 0 ? <div className="empty-card">No pending payments.</div> : pending.map((payment) => {
             const orderName = payment.side === "Purchase"
@@ -8312,7 +8457,7 @@ function AccountsPaymentsView({
             </article>;
           })}
         </div>
-      </Panel>
+      </CollapsiblePanel>
     </section>
   );
 }
