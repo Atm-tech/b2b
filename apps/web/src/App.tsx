@@ -7892,6 +7892,7 @@ function AccountsPaymentsView({
   const [paymentMakerError, setPaymentMakerError] = useState("");
   const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
   const [accountsEntryMode, setAccountsEntryMode] = useState<"quick" | "full">("quick");
+  const [advanceDeskMode, setAdvanceDeskMode] = useState<"advance" | "against-po">("advance");
   const [openAccountsSections, setOpenAccountsSections] = useState<Record<string, boolean>>({
     queue: true,
     posting: true,
@@ -8050,6 +8051,24 @@ function AccountsPaymentsView({
       proofName: "",
       operationDate: current.operationDate || today
     }));
+  }
+
+  async function submitAccountsPaymentForm(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    await onCreatePayment({
+      side: createForm.side,
+      linkedOrderId: createForm.linkedOrderId,
+      amount: Number(createForm.amount || 0),
+      mode: createForm.mode,
+      cashTiming: createForm.mode === "Cash" ? createForm.cashTiming as CashTiming : undefined,
+      referenceNumber: createForm.referenceNumber,
+      voucherNumber: createForm.voucherNumber || undefined,
+      utrNumber: createForm.utrNumber || undefined,
+      proofName: createForm.proofName || undefined,
+      verificationStatus: createForm.verificationStatus,
+      verificationNote: createForm.verificationNote,
+      operationDate: createForm.operationDate || undefined
+    });
   }
 
   function generateAdvanceExcel() {
@@ -8303,6 +8322,40 @@ function AccountsPaymentsView({
     setPaymentMakerError("");
   }
 
+  function renderAccountsPaymentPreview() {
+    if (!paymentPreview) return null;
+    return <div className="stack-list top-gap">
+      <article className="list-card">
+        <div className="payment-update-head">
+          <div>
+            <strong>{paymentPreview.outputMode === "Excel" ? "Excel payout preview" : "Cheque print preview"}</strong>
+            <p>{createForm.linkedOrderId} · {paymentPreview.partyName}</p>
+          </div>
+          <span className="status-pill">{paymentPreview.outputMode === "Excel" ? paymentPreview.sheetMode : "Cheque"}</span>
+        </div>
+        <div className="payment-meta-grid top-gap">
+          <div><span className="small-label">Amount</span><strong>{paymentPreview.amount.toFixed(2)}</strong></div>
+          <div><span className="small-label">Payment date</span><strong>{paymentPreview.paymentDate}</strong></div>
+          <div><span className="small-label">Reference</span><strong>{paymentPreview.referenceNumber}</strong></div>
+          <div><span className="small-label">Recorded mode</span><strong>{paymentPreview.dbMode}</strong></div>
+          <div className="wide-field"><span className="small-label">Narration</span><strong>{paymentPreview.narration}</strong></div>
+        </div>
+        {paymentPreview.outputMode === "Excel" ? <div className="table-wrap top-gap">
+          <table>
+            <thead><tr>{paymentSheetHeaders.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+            <tbody><tr>{paymentPreview.row.map((value, index) => <td key={`${paymentSheetHeaders[index]}-${index}`}>{value}</td>)}</tr></tbody>
+          </table>
+        </div> : <div className="payment-meta-grid top-gap">
+          <div className="wide-field"><span className="small-label">Amount in words</span><strong>{formatChequeAmountWords(paymentPreview.amount)}</strong></div>
+        </div>}
+        <div className="payment-card-actions top-gap">
+          <button className="ghost-button" type="button" onClick={() => setPaymentPreview(null)} disabled={paymentMakerBusy}>Cancel</button>
+          <button className="primary-button" type="button" onClick={() => void finalizeAccountsPayment()} disabled={paymentMakerBusy}>{paymentMakerBusy ? "Finalizing..." : paymentPreview.outputMode === "Excel" ? "Download Excel and record" : "Finalize and print cheque"}</button>
+        </div>
+      </article>
+    </div>;
+  }
+
   return (
     <section className="collapse-stack">
       <CollapsiblePanel title="Accounts Queue" eyebrow="Pending vs completed" open={openAccountsSections.queue} onToggle={() => toggleAccountsSection("queue")}>
@@ -8357,8 +8410,24 @@ function AccountsPaymentsView({
         /> : <div className="empty-card">Use the full form below for proof upload, cheque/export flow, or custom verification states.</div>}
       </CollapsiblePanel>
       <CollapsiblePanel title="Advance Payments" eyebrow="Create and review supplier advances" open={openAccountsSections.advances} onToggle={() => toggleAccountsSection("advances")}>
-        <Panel title="Create Advance" eyebrow="Accounts posting">
-          <form className="form-grid" onSubmit={submitAdvanceCreateForm}>
+        <Panel title="Advance Desk" eyebrow="Accounts posting">
+          <div className="summary-switch-bar">
+            <button className={advanceDeskMode === "advance" ? "tab-button active" : "tab-button"} type="button" onClick={() => { setAdvanceDeskMode("advance"); setPaymentPreview(null); setPaymentMakerError(""); }}>Advance</button>
+            <button className={advanceDeskMode === "against-po" ? "tab-button active" : "tab-button"} type="button" onClick={() => {
+              const nextPurchase = purchaseOrderPendingOptions.find((item) => item.id === createForm.linkedOrderId) || purchaseOrderPendingOptions[0];
+              setAdvanceDeskMode("against-po");
+              setPaymentPreview(null);
+              setPaymentMakerError("");
+              setCreateForm((current) => ({
+                ...current,
+                side: "Purchase",
+                linkedOrderId: nextPurchase?.id || "",
+                amount: String(nextPurchase?.pendingAmount || current.amount),
+                verificationNote: current.verificationNote.trim() || "Payment recorded by accounts"
+              }));
+            }}>Against PO</button>
+          </div>
+          {advanceDeskMode === "advance" ? <form className="form-grid top-gap" onSubmit={submitAdvanceCreateForm}>
             <label>Supplier<select value={advanceCreateForm.supplierId} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, supplierId: e.target.value }))}>{suppliers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label>Amount<input type="number" step="any" value={advanceCreateForm.amount} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
             <label>Mode<select value={advanceCreateForm.mode} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
@@ -8376,7 +8445,47 @@ function AccountsPaymentsView({
               <button className="primary-button" type="submit" disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0) || !advanceCreateForm.referenceNumber.trim()}>Create advance</button>
               {advanceCreateForm.mode !== "Cash" ? <button className="ghost-button" type="button" onClick={generateAdvanceExcel} disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0)}>Generate Excel</button> : null}
             </div>
-          </form>
+          </form> : purchaseOrderPendingOptions.length === 0 ? <div className="empty-card top-gap">No purchase orders are pending for against-PO payment.</div> : <form className="form-grid top-gap" onSubmit={submitAccountsPaymentForm}>
+            <label>PO<select value={createForm.linkedOrderId} onChange={(e) => {
+              const next = purchaseOrderPendingOptions.find((item) => item.id === e.target.value);
+              setCreateForm((current) => ({
+                ...current,
+                side: "Purchase",
+                linkedOrderId: e.target.value,
+                amount: String(next?.pendingAmount || current.amount)
+              }));
+            }}>{purchaseOrderPendingOptions.map((item) => <option key={item.id} value={item.id}>{`${item.id} - ${item.party} - Pending ${item.pendingAmount.toFixed(2)}`}</option>)}</select></label>
+            <label>Amount<input type="number" step="any" value={createForm.amount} onChange={(e) => setCreateForm((current) => ({ ...current, amount: e.target.value }))} /></label>
+            <label>Payment date<input type="date" value={createForm.operationDate} onChange={(e) => setCreateForm((current) => ({ ...current, operationDate: e.target.value }))} /></label>
+            <label>Mode<select value={createForm.mode} onChange={(e) => setCreateForm((current) => ({ ...current, mode: e.target.value as PaymentMode }))}><option>Cash</option><option>UPI</option><option>NEFT</option><option>RTGS</option><option>Cheque</option><option>Card</option></select></label>
+            {createForm.mode === "Cash" ? <label>Cash timing<select value={createForm.cashTiming} onChange={(e) => setCreateForm((current) => ({ ...current, cashTiming: e.target.value }))}><option value="">Select</option><option>In Hand</option><option>At Delivery</option></select></label> : null}
+            <label>Reference<input value={createForm.referenceNumber} onChange={(e) => setCreateForm((current) => ({ ...current, referenceNumber: e.target.value }))} /></label>
+            <label>Voucher<input value={createForm.voucherNumber} onChange={(e) => setCreateForm((current) => ({ ...current, voucherNumber: e.target.value }))} /></label>
+            <label>UTR<input value={createForm.utrNumber} onChange={(e) => setCreateForm((current) => ({ ...current, utrNumber: e.target.value }))} /></label>
+            <label>Status<select value={createForm.verificationStatus} onChange={(e) => setCreateForm((current) => ({ ...current, verificationStatus: e.target.value as "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved" }))}><option>Verified</option><option>Submitted</option><option>Pending</option></select></label>
+            <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setCreateForm((current) => ({ ...current, proofName: String((uploaded as { fileName: string }).fileName) })); }} /></label>
+            <label>Proof name<input value={createForm.proofName} onChange={(e) => setCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
+            <label className="wide-field">Note<input value={createForm.verificationNote} onChange={(e) => setCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} placeholder="Against PO narration" /></label>
+            <label className="wide-field">
+              {makePaymentMode === "Excel" ? "Generate Excel" : "Make cheque"}
+              <div className="payment-card-actions top-gap">
+                <label className="checkbox-line"><input type="radio" name="advance-against-po-make-payment" checked={makePaymentMode === "Cheque"} onChange={() => setMakePaymentMode("Cheque")} />Cheque</label>
+                <label className="checkbox-line"><input type="radio" name="advance-against-po-make-payment" checked={makePaymentMode === "Excel"} onChange={() => setMakePaymentMode("Excel")} />Excel</label>
+              </div>
+            </label>
+            {makePaymentMode === "Excel" ? <>
+              <label>Product code<input value={paymentExportConfig.productCode} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, productCode: e.target.value }))} placeholder="Same for all bank files" /></label>
+              <label>Debit account<input value={paymentExportConfig.debitAccountNumber} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, debitAccountNumber: e.target.value }))} placeholder="Same for all bank files" /></label>
+              <label>Mobile<input value={paymentExportConfig.mobileNumber} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, mobileNumber: e.target.value }))} placeholder="Optional export value" /></label>
+              <label>Email<input value={paymentExportConfig.emailId} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, emailId: e.target.value }))} placeholder="Optional export value" /></label>
+            </> : null}
+            {paymentMakerError ? <p className="message error wide-field">{paymentMakerError}</p> : null}
+            <div className="payment-card-actions wide-field">
+              <button className="primary-button" type="submit" disabled={!createForm.linkedOrderId || !(Number(createForm.amount || 0) > 0)}>Record against PO</button>
+              <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview} disabled={!createForm.linkedOrderId || !(Number(createForm.amount || 0) > 0)}>{makePaymentMode === "Excel" ? "Generate Excel" : "Make cheque"}</button>
+            </div>
+          </form>}
+          {advanceDeskMode === "against-po" ? renderAccountsPaymentPreview() : null}
         </Panel>
         <Panel title="Advance List" eyebrow="Search by party, amount, ref, UTR">
         <div className="form-grid">
@@ -8525,23 +8634,7 @@ function AccountsPaymentsView({
         />
       </CollapsiblePanel>
       <CollapsiblePanel title="Record Payment" eyebrow="Accounts entry" open={openAccountsSections.record} onToggle={() => toggleAccountsSection("record")}>
-        <form className="form-grid" onSubmit={async (event) => {
-          event.preventDefault();
-          await onCreatePayment({
-            side: createForm.side,
-            linkedOrderId: createForm.linkedOrderId,
-            amount: Number(createForm.amount || 0),
-            mode: createForm.mode,
-            cashTiming: createForm.mode === "Cash" ? createForm.cashTiming as CashTiming : undefined,
-            referenceNumber: createForm.referenceNumber,
-            voucherNumber: createForm.voucherNumber || undefined,
-            utrNumber: createForm.utrNumber || undefined,
-            proofName: createForm.proofName || undefined,
-            verificationStatus: createForm.verificationStatus,
-            verificationNote: createForm.verificationNote,
-            operationDate: createForm.operationDate || undefined
-          });
-        }}>
+        <form className="form-grid" onSubmit={submitAccountsPaymentForm}>
           <label>Side<select value={createForm.side} onChange={(e) => {
             const side = e.target.value as "Purchase" | "Sales";
             const next = accountOrderOptions.find((item) => item.side === side);
@@ -8581,36 +8674,7 @@ function AccountsPaymentsView({
             <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview}>{makePaymentMode === "Excel" ? "Generate Excel" : "Make payment"}</button>
           </div>
         </form>
-        {paymentPreview ? <div className="stack-list top-gap">
-          <article className="list-card">
-            <div className="payment-update-head">
-              <div>
-                <strong>{paymentPreview.outputMode === "Excel" ? "Excel payout preview" : "Cheque print preview"}</strong>
-                <p>{createForm.linkedOrderId} · {paymentPreview.partyName}</p>
-              </div>
-              <span className="status-pill">{paymentPreview.outputMode === "Excel" ? paymentPreview.sheetMode : "Cheque"}</span>
-            </div>
-            <div className="payment-meta-grid top-gap">
-              <div><span className="small-label">Amount</span><strong>{paymentPreview.amount.toFixed(2)}</strong></div>
-              <div><span className="small-label">Payment date</span><strong>{paymentPreview.paymentDate}</strong></div>
-              <div><span className="small-label">Reference</span><strong>{paymentPreview.referenceNumber}</strong></div>
-              <div><span className="small-label">Recorded mode</span><strong>{paymentPreview.dbMode}</strong></div>
-              <div className="wide-field"><span className="small-label">Narration</span><strong>{paymentPreview.narration}</strong></div>
-            </div>
-            {paymentPreview.outputMode === "Excel" ? <div className="table-wrap top-gap">
-              <table>
-                <thead><tr>{paymentSheetHeaders.map((header) => <th key={header}>{header}</th>)}</tr></thead>
-                <tbody><tr>{paymentPreview.row.map((value, index) => <td key={`${paymentSheetHeaders[index]}-${index}`}>{value}</td>)}</tr></tbody>
-              </table>
-            </div> : <div className="payment-meta-grid top-gap">
-              <div className="wide-field"><span className="small-label">Amount in words</span><strong>{formatChequeAmountWords(paymentPreview.amount)}</strong></div>
-            </div>}
-            <div className="payment-card-actions top-gap">
-              <button className="ghost-button" type="button" onClick={() => setPaymentPreview(null)} disabled={paymentMakerBusy}>Cancel</button>
-              <button className="primary-button" type="button" onClick={() => void finalizeAccountsPayment()} disabled={paymentMakerBusy}>{paymentMakerBusy ? "Finalizing..." : paymentPreview.outputMode === "Excel" ? "Download Excel and record" : "Finalize and print cheque"}</button>
-            </div>
-          </article>
-        </div> : null}
+        {renderAccountsPaymentPreview()}
       </CollapsiblePanel>
       <CollapsiblePanel title="Pending Verification" eyebrow="Accounts must complete payment" open={openAccountsSections.pending} onToggle={() => toggleAccountsSection("pending")}>
         <div className="stack-list payment-update-list">
