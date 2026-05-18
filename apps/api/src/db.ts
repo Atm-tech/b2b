@@ -177,6 +177,7 @@ async function ensureCompatibilityColumns() {
       product_sku TEXT NOT NULL,
       available_quantity_at_sale DOUBLE PRECISION NOT NULL,
       sold_quantity DOUBLE PRECISION NOT NULL,
+      probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
       original_probationary_quantity DOUBLE PRECISION NOT NULL,
       pending_probationary_quantity DOUBLE PRECISION NOT NULL,
       rate DOUBLE PRECISION NOT NULL,
@@ -190,8 +191,15 @@ async function ensureCompatibilityColumns() {
       cleared_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS original_probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS pending_probationary_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
+    UPDATE probationary_sales
+    SET probationary_quantity = CASE
+      WHEN probationary_quantity = 0 AND original_probationary_quantity > 0 THEN original_probationary_quantity
+      WHEN probationary_quantity = 0 AND pending_probationary_quantity > 0 THEN pending_probationary_quantity
+      ELSE probationary_quantity
+    END;
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending';
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMPTZ;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
@@ -1584,8 +1592,8 @@ export async function createSalesOrder(payload: {
       await query(
         `INSERT INTO probationary_sales (
           id, sales_order_id, sales_cart_id, shop_id, salesman_id, warehouse_id, product_sku,
-          available_quantity_at_sale, sold_quantity, original_probationary_quantity, pending_probationary_quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, note, status, created_at, cleared_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14, $15, $16, $17, 'Pending', $18, NULL)`,
+          available_quantity_at_sale, sold_quantity, probationary_quantity, original_probationary_quantity, pending_probationary_quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, note, status, created_at, cleared_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10, $11, $12, $13, $14, $15, $16, $17, 'Pending', $18, NULL)`,
         [
           makeId("PRB"),
           id,
@@ -2345,6 +2353,35 @@ export async function createPurchaseAdvancePayment(payload: {
     ]
   );
   await upsertLedger("Purchase", advanceId, stringValue(supplier.name), 0, payload.amount, undefined, createdAt);
+  return getSnapshot();
+}
+
+export async function clearPurchaseAdvancePayments() {
+  await ready;
+  await withTransaction(async (client) => {
+    const advances = await query<{ linked_order_id: string }>(
+      `SELECT linked_order_id
+       FROM payments
+       WHERE side = 'Purchase' AND payment_kind = 'Advance'`,
+      [],
+      client
+    );
+    const advanceIds = advances.rows.map((row) => stringValue(row.linked_order_id)).filter(Boolean);
+    await query(
+      `DELETE FROM payments
+       WHERE side = 'Purchase' AND payment_kind = 'Advance'`,
+      [],
+      client
+    );
+    if (advanceIds.length > 0) {
+      await query(
+        `DELETE FROM ledger_entries
+         WHERE side = 'Purchase' AND linked_order_id = ANY($1::text[])`,
+        [advanceIds],
+        client
+      );
+    }
+  });
   return getSnapshot();
 }
 

@@ -3,6 +3,9 @@ import { jsPDF } from "jspdf";
 import QRCode from "qrcode";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
+import { SidebarVectorIcon } from "./components/navigation";
+import { CollapsiblePanel, DataTable, LabelWithBadge, MetricCard, Panel, PendingBadge, TwoCol } from "./components/ui";
+import { downloadExcelTextWorkbook, downloadExcelWorkbook } from "./utils/excel";
 import type {
   AppSnapshot,
   AppUser,
@@ -249,6 +252,15 @@ function downloadDataUrlFile(fileName: string, dataUrl: string) {
   document.body.removeChild(link);
 }
 
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function displayLabel(view: ViewKey, user?: AppUser | null) {
   if (!user) return labels[view];
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
@@ -258,15 +270,6 @@ function displayLabel(view: ViewKey, user?: AppUser | null) {
   if (roles.includes("Purchaser") && view === "Purchase") return "PO";
   if (roles.includes("Sales") && view === "Sales") return "SO";
   return labels[view];
-}
-
-function PendingBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  return <span className="pending-count-badge">{count > 99 ? "99+" : count}</span>;
-}
-
-function LabelWithBadge({ label, count }: { label: string; count: number }) {
-  return <span className="button-badge-label"><span>{label}</span><PendingBadge count={count} /></span>;
 }
 
 function getVisibleViews(user: AppUser) {
@@ -870,40 +873,6 @@ function downloadBlobFile(fileName: string, blob: Blob) {
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
-}
-
-function escapeXml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function downloadExcelTextWorkbook(fileName: string, headers: string[], rows: string[][], sheetName = "Sheet1") {
-  const headerXml = headers.map((cell) => `<Cell ss:StyleID="Text"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join("");
-  const rowXml = rows.map((row) => `<Row>${row.map((cell) => `<Cell ss:StyleID="Text"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join("")}</Row>`).join("");
-  const xml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
-  <Styles>
-    <Style ss:ID="Text">
-      <NumberFormat ss:Format="@"/>
-    </Style>
-  </Styles>
-  <Worksheet ss:Name="${escapeXml(sheetName)}">
-    <Table>
-      <Row>${headerXml}</Row>
-      ${rowXml}
-    </Table>
-  </Worksheet>
-</Workbook>`;
-  downloadBlobFile(fileName, new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8;" }));
 }
 
 function numberToWordsUnder1000(value: number): string {
@@ -4362,13 +4331,13 @@ function App() {
           <nav className="side-nav">
             {safeVisibleViews.map((view) => (
               <button key={view} type="button" title={displayLabel(view, currentUser)} className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => navigateToView(view)}>
-                <span>{sidebarCollapsed ? displayLabel(view, currentUser).slice(0, 1).toUpperCase() : displayLabel(view, currentUser)}</span><small>{view}</small>
+                <span>{sidebarCollapsed ? <SidebarVectorIcon view={view} /> : displayLabel(view, currentUser)}</span><small>{view}</small>
               </button>
             ))}
           </nav>
         </aside> : null}
         <div className="content-shell">
-          {!effectiveSimpleMode ? <section className={isAccountsUser ? "metric-grid metric-collage-grid metric-collage-grid-accounts" : "metric-grid metric-collage-grid"}>
+          {!effectiveSimpleMode && activeView === "Overview" ? <section className={isAccountsUser ? "metric-grid metric-collage-grid metric-collage-grid-accounts" : "metric-grid metric-collage-grid"}>
             {topMetricCards.map((card) => (
               <MetricCard
                 key={card.label}
@@ -7927,6 +7896,7 @@ function AccountsPaymentsView({
     queue: true,
     posting: true,
     advances: false,
+    products: false,
     orders: false,
     record: false,
     pending: true
@@ -7947,6 +7917,8 @@ function AccountsPaymentsView({
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
+  const [advanceMakerError, setAdvanceMakerError] = useState("");
+  const [productDeskSearch, setProductDeskSearch] = useState("");
   const [quickPurchaseForm, setQuickPurchaseForm] = useState({
     linkedOrderId: purchaseOrderPendingOptions[0]?.id || "",
     mode: "NEFT" as PaymentMode,
@@ -8000,6 +7972,52 @@ function AccountsPaymentsView({
     return haystack.includes(advanceSearch.trim().toLowerCase());
   });
 
+  const productAccountingRows = snapshot.products
+    .map((product) => {
+      const purchaseLines = snapshot.purchaseOrders.filter((item) => item.productSku === product.sku);
+      const salesLines = snapshot.salesOrders.filter((item) => item.productSku === product.sku);
+      const stockLines = snapshot.stockSummary.filter((item) => item.productSku === product.sku);
+      const purchasedQty = purchaseLines.reduce((sum, item) => sum + item.quantityOrdered, 0);
+      const purchasedValue = purchaseLines.reduce((sum, item) => sum + item.totalAmount, 0);
+      const soldQty = salesLines.reduce((sum, item) => sum + item.quantity, 0);
+      const soldValue = salesLines.reduce((sum, item) => sum + item.totalAmount + item.deliveryCharge, 0);
+      const availableStock = stockLines.reduce((sum, item) => sum + item.availableQuantity, 0);
+      const reservedStock = stockLines.reduce((sum, item) => sum + item.reservedQuantity, 0);
+      const blockedStock = stockLines.reduce((sum, item) => sum + item.blockedQuantity, 0);
+      const totalStock = availableStock + reservedStock + blockedStock;
+      const sellThrough = purchasedQty > 0 ? (soldQty / purchasedQty) * 100 : 0;
+      return {
+        sku: product.sku,
+        name: product.name,
+        division: product.division,
+        purchasedQty,
+        purchasedValue,
+        soldQty,
+        soldValue,
+        sellThrough,
+        availableStock,
+        reservedStock,
+        blockedStock,
+        totalStock
+      };
+    })
+    .sort((left, right) => right.totalStock - left.totalStock || left.sku.localeCompare(right.sku));
+  const filteredProductAccountingRows = productAccountingRows.filter((item) => {
+    const query = productDeskSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      item.sku,
+      item.name,
+      item.division,
+      item.purchasedQty,
+      item.purchasedValue,
+      item.soldQty,
+      item.soldValue,
+      item.sellThrough,
+      item.totalStock
+    ].join(" ").toLowerCase().includes(query);
+  });
+
   function toggleAccountsSection(section: string) {
     setOpenAccountsSections((current) => ({
       ...current,
@@ -8025,6 +8043,69 @@ function AccountsPaymentsView({
     setAdvanceCreateForm((current) => ({
       ...current,
       supplierId: suppliers[0]?.id || "",
+      amount: "",
+      referenceNumber: "",
+      voucherNumber: "",
+      utrNumber: "",
+      proofName: "",
+      operationDate: current.operationDate || today
+    }));
+  }
+
+  function generateAdvanceExcel() {
+    const supplier = suppliers.find((item) => item.id === advanceCreateForm.supplierId);
+    const amount = Number(advanceCreateForm.amount || 0);
+    if (!supplier) {
+      setAdvanceMakerError("Select a supplier first.");
+      return;
+    }
+    if (!(amount > 0)) {
+      setAdvanceMakerError("Enter a valid advance amount first.");
+      return;
+    }
+    if (!paymentExportConfig.productCode.trim() || !paymentExportConfig.debitAccountNumber.trim()) {
+      setAdvanceMakerError("Enter the product code and debit account for Excel export first.");
+      return;
+    }
+    if (!supplier.bankAccountNumber.trim() || !supplier.ifscCode.trim()) {
+      setAdvanceMakerError("Supplier bank details are missing.");
+      return;
+    }
+    const ifsc = supplier.ifscCode.trim().toUpperCase();
+    const sheetMode = ifsc.startsWith("ICIC")
+      ? "FT"
+      : amount >= 200000
+        ? "RTGS"
+        : "NEFT";
+    const referenceNumber = advanceCreateForm.referenceNumber.trim() || `ADV-${supplier.id}`;
+    const paymentDate = advanceCreateForm.operationDate || today;
+    const narration = advanceCreateForm.verificationNote.trim() || `Advance paid to ${supplier.name}`;
+    const remark = advanceCreateForm.voucherNumber.trim() || `Advance ${supplier.name}`;
+    const row = [
+      paymentExportConfig.productCode.trim(),
+      sheetMode,
+      paymentExportConfig.debitAccountNumber.trim(),
+      supplier.name,
+      supplier.bankAccountNumber.trim(),
+      ifsc,
+      amount.toFixed(2),
+      narration,
+      narration,
+      paymentExportConfig.mobileNumber.trim(),
+      paymentExportConfig.emailId.trim(),
+      remark,
+      paymentDate,
+      referenceNumber,
+      supplier.name,
+      supplier.name,
+      supplier.name,
+      supplier.name,
+      supplier.name
+    ];
+    downloadExcelWorkbook(safePdfFileName(`${referenceNumber}-${sheetMode}-advance.xlsx`), paymentSheetHeaders, [row], "Sheet1");
+    setAdvanceMakerError("");
+    setAdvanceCreateForm((current) => ({
+      ...current,
       amount: "",
       referenceNumber: "",
       voucherNumber: "",
@@ -8145,7 +8226,7 @@ function AccountsPaymentsView({
       outputMode: makePaymentMode,
       dbMode,
       sheetMode,
-      fileName: safePdfFileName(`${referenceNumber}-${sheetMode}-payment.xls`),
+      fileName: safePdfFileName(`${referenceNumber}-${sheetMode}-payment.xlsx`),
       partyName: counterparty.name,
       amount,
       paymentDate,
@@ -8208,7 +8289,7 @@ function AccountsPaymentsView({
     setPaymentMakerBusy(false);
     if (success === false) return;
     if (paymentPreview.outputMode === "Excel") {
-      downloadExcelTextWorkbook(paymentPreview.fileName, paymentSheetHeaders, [paymentPreview.row], "Sheet1");
+      downloadExcelWorkbook(paymentPreview.fileName, paymentSheetHeaders, [paymentPreview.row], "Sheet1");
     } else {
       openChequePrintWindow({
         partyName: paymentPreview.partyName,
@@ -8290,8 +8371,10 @@ function AccountsPaymentsView({
             <label className="wide-field">Proof file<input type="file" accept="image/*,.pdf" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) setAdvanceCreateForm((current) => ({ ...current, proofName: String((uploaded as { fileName: string }).fileName) })); }} /></label>
             <label>Proof name<input value={advanceCreateForm.proofName} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
             <label className="wide-field">Note<input value={advanceCreateForm.verificationNote} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
+            {advanceMakerError ? <p className="message error wide-field">{advanceMakerError}</p> : null}
             <div className="payment-card-actions wide-field">
               <button className="primary-button" type="submit" disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0) || !advanceCreateForm.referenceNumber.trim()}>Create advance</button>
+              {advanceCreateForm.mode !== "Cash" ? <button className="ghost-button" type="button" onClick={generateAdvanceExcel} disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0)}>Generate Excel</button> : null}
             </div>
           </form>
         </Panel>
@@ -8329,6 +8412,47 @@ function AccountsPaymentsView({
           })}
         </div>
         </Panel>
+      </CollapsiblePanel>
+      <CollapsiblePanel title="Products" eyebrow="SKU wise purchase, sales, and stock" open={openAccountsSections.products} onToggle={() => toggleAccountsSection("products")}>
+        <div className="form-grid">
+          <label className="wide-field">Search product<input value={productDeskSearch} onChange={(event) => setProductDeskSearch(event.target.value)} placeholder="Search by SKU, name, division, qty, or value" /></label>
+        </div>
+        <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Name</th>
+                <th>Division</th>
+                <th>Purchased Qty</th>
+                <th>Purchase Value</th>
+                <th>Sold Qty</th>
+                <th>Sell Through</th>
+                <th>Sales Value</th>
+                <th>Available</th>
+                <th>Reserved</th>
+                <th>Blocked</th>
+                <th>Total Stock</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProductAccountingRows.length === 0 ? <tr><td colSpan={12}>No products matched this search.</td></tr> : filteredProductAccountingRows.map((item) => <tr key={item.sku}>
+                <td>{item.sku}</td>
+                <td>{item.name}</td>
+                <td>{item.division || "-"}</td>
+                <td>{item.purchasedQty}</td>
+                <td>{formatCurrencyInr(item.purchasedValue)}</td>
+                <td>{item.soldQty}</td>
+                <td>{item.sellThrough.toFixed(1)}%</td>
+                <td>{formatCurrencyInr(item.soldValue)}</td>
+                <td>{item.availableStock}</td>
+                <td>{item.reservedStock}</td>
+                <td>{item.blockedStock}</td>
+                <td>{item.totalStock}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
       </CollapsiblePanel>
       <CollapsiblePanel title="Order Visibility" eyebrow="Purchase and sales status" open={openAccountsSections.orders} onToggle={() => toggleAccountsSection("orders")}>
         <TwoCol
@@ -8439,7 +8563,7 @@ function AccountsPaymentsView({
           <label>Proof name<input value={createForm.proofName} onChange={(e) => setCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
           <label className="wide-field">Note<input value={createForm.verificationNote} onChange={(e) => setCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
           <label className="wide-field">
-            Make payment
+            {makePaymentMode === "Excel" ? "Generate Excel" : "Make payment"}
             <div className="payment-card-actions top-gap">
               <label className="checkbox-line"><input type="radio" name="accounts-make-payment" checked={makePaymentMode === "Cheque"} onChange={() => setMakePaymentMode("Cheque")} />Cheque</label>
               <label className="checkbox-line"><input type="radio" name="accounts-make-payment" checked={makePaymentMode === "Excel"} onChange={() => setMakePaymentMode("Excel")} />Excel</label>
@@ -8454,7 +8578,7 @@ function AccountsPaymentsView({
           {paymentMakerError ? <p className="message error wide-field">{paymentMakerError}</p> : null}
           <div className="payment-card-actions wide-field">
             <button className="primary-button" type="submit">Record payment</button>
-            <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview}>Make payment</button>
+            <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview}>{makePaymentMode === "Excel" ? "Generate Excel" : "Make payment"}</button>
           </div>
         </form>
         {paymentPreview ? <div className="stack-list top-gap">
@@ -8483,7 +8607,7 @@ function AccountsPaymentsView({
             </div>}
             <div className="payment-card-actions top-gap">
               <button className="ghost-button" type="button" onClick={() => setPaymentPreview(null)} disabled={paymentMakerBusy}>Cancel</button>
-              <button className="primary-button" type="button" onClick={() => void finalizeAccountsPayment()} disabled={paymentMakerBusy}>{paymentMakerBusy ? "Finalizing..." : paymentPreview.outputMode === "Excel" ? "Finalize and download XLS" : "Finalize and print cheque"}</button>
+              <button className="primary-button" type="button" onClick={() => void finalizeAccountsPayment()} disabled={paymentMakerBusy}>{paymentMakerBusy ? "Finalizing..." : paymentPreview.outputMode === "Excel" ? "Download Excel and record" : "Finalize and print cheque"}</button>
             </div>
           </article>
         </div> : null}
@@ -12139,50 +12263,6 @@ function ReturnsWorkspace({
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  note,
-  size = "small",
-  tone = "default",
-  onOpen
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  size?: "small" | "large";
-  tone?: "default" | "good" | "danger" | "pending";
-  onOpen?: () => void;
-}) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`metric-card panel ${size} tone-${tone}${focused ? " focused" : ""}`}
-      onClick={() => setFocused((current) => !current)}
-      onDoubleClick={() => onOpen?.()}
-    >
-      <span className="small-label">{label}</span>
-      <strong>{value}</strong>
-      {note ? <p>{note}</p> : null}
-      <span className="metric-card-hint">{focused ? "Double tap to open" : "Tap to zoom"}</span>
-    </button>
-  );
-}
-function Panel({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) { return <article className="panel"><div className="section-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div></div>{children}</article>; }
-function CollapsiblePanel({ eyebrow, title, open, onToggle, children }: { eyebrow: string; title: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
-  return (
-    <article className={open ? "panel collapsible-panel open" : "panel collapsible-panel"}>
-      <button className="collapsible-trigger" type="button" onClick={onToggle} aria-expanded={open}>
-        <div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>
-        <span className="collapsible-icon">{open ? "Close" : "Open"}</span>
-      </button>
-      {open ? <div className="collapsible-body">{children}</div> : null}
-    </article>
-  );
-}
-function TwoCol({ left, right }: { left: React.ReactNode; right: React.ReactNode }) { return <section className="dashboard-grid">{left}{right}</section>; }
-function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) { return <div className="table-wrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={headers.length}>No records yet.</td></tr> : rows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((cell, i) => <td key={`${index}-${i}`}>{cell}</td>)}</tr>)}</tbody></table></div>; }
 type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; subCategory: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
 
 function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {

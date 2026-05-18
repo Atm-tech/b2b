@@ -8,6 +8,7 @@ import {
   authenticate,
   bulkCreateProducts,
   clearSalesOperationalData,
+  clearPurchaseAdvancePayments,
   createSessionForUser,
   createCounterparty,
   createSalesDockets,
@@ -573,6 +574,11 @@ app.post("/payments/purchase-advance", async (req, res) => wrap(res, async () =>
     },
     currentUser
   );
+}));
+
+app.delete("/payments/purchase-advance", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin", "Accounts"]);
+  return clearPurchaseAdvancePayments();
 }));
 
 app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
