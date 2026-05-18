@@ -7881,14 +7881,23 @@ function AccountsPaymentsView({
     operationDate: today
   });
   const paymentSheetHeaders = ["PYMT_PROD_TYPE_CODE", "PYMT_MODE", "DEBIT_ACC_NO", "BNF_NAME", "BENE_ACC_NO", "BENE_IFSC", "AMOUNT", "DEBIT_NARR", "CREDIT_NARR", "MOBILE_NUM", "EMAIL_ID", "REMARK", "PYMT_DATE", "REF_NO", "ADDL_INFO1", "ADDL_INFO2", "ADDL_INFO3", "ADDL_INFO4", "ADDL_INFO5"];
+  const defaultPaymentExportConfig = {
+    productCode: "PAB_VENDOR",
+    debitAccountNumber: "118805000",
+    mobileNumber: "9111080628",
+    emailId: ""
+  };
   const accountsPaymentConfigKey = workspaceStorageKey("accounts", "payment-config");
   const [makePaymentMode, setMakePaymentMode] = useState<"Cheque" | "Excel">("Excel");
-  const [paymentExportConfig, setPaymentExportConfig] = useState(() => readStoredJson(accountsPaymentConfigKey, {
-    productCode: "",
-    debitAccountNumber: "",
-    mobileNumber: "",
-    emailId: ""
-  }));
+  const [paymentExportConfig, setPaymentExportConfig] = useState(() => {
+    const stored = readStoredJson(accountsPaymentConfigKey, defaultPaymentExportConfig);
+    return {
+      productCode: String(stored?.productCode || "").trim() || defaultPaymentExportConfig.productCode,
+      debitAccountNumber: String(stored?.debitAccountNumber || "").trim() || defaultPaymentExportConfig.debitAccountNumber,
+      mobileNumber: String(stored?.mobileNumber || "").trim() || defaultPaymentExportConfig.mobileNumber,
+      emailId: String(stored?.emailId || "").trim()
+    };
+  });
   const [paymentMakerError, setPaymentMakerError] = useState("");
   const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
   const [accountsEntryMode, setAccountsEntryMode] = useState<"quick" | "full">("quick");
