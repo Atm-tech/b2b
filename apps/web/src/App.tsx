@@ -7883,7 +7883,7 @@ function AccountsPaymentsView({
   const paymentSheetHeaders = ["PYMT_PROD_TYPE_CODE", "PYMT_MODE", "DEBIT_ACC_NO", "BNF_NAME", "BENE_ACC_NO", "BENE_IFSC", "AMOUNT", "DEBIT_NARR", "CREDIT_NARR", "MOBILE_NUM", "EMAIL_ID", "REMARK", "PYMT_DATE", "REF_NO", "ADDL_INFO1", "ADDL_INFO2", "ADDL_INFO3", "ADDL_INFO4", "ADDL_INFO5"];
   const defaultPaymentExportConfig = {
     productCode: "PAB_VENDOR",
-    debitAccountNumber: "118805000",
+    debitAccountNumber: "118805000220",
     mobileNumber: "9111080628",
     emailId: ""
   };
@@ -7918,12 +7918,39 @@ function AccountsPaymentsView({
     fileName: string;
     partyName: string;
     amount: number;
+    operationDate: string;
     paymentDate: string;
     referenceNumber: string;
     remark: string;
     narration: string;
     row: string[];
   }>(null);
+
+  function formatExcelPaymentDate(value: string) {
+    const parts = value.split("-");
+    if (parts.length !== 3) return value;
+    const [year, month, day] = parts;
+    return `${day}-${month}-${year}`;
+  }
+
+  function sanitizeAlphaNumeric(value: string) {
+    return value.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  }
+
+  function sanitizePartyToken(value: string) {
+    return value
+      .replace(/[^a-z0-9]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .toUpperCase();
+  }
+
+  function lastOrderDigits(value: string) {
+    const digits = value.replace(/\D/g, "");
+    if (digits.length >= 4) return digits.slice(-4);
+    const compact = sanitizeAlphaNumeric(value);
+    return compact.slice(-4) || "PO";
+  }
+
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
@@ -8105,10 +8132,12 @@ function AccountsPaymentsView({
       : amount >= 200000
         ? "RTGS"
         : "NEFT";
-    const referenceNumber = advanceCreateForm.referenceNumber.trim() || `ADV-${supplier.id}`;
-    const paymentDate = advanceCreateForm.operationDate || today;
+    const operationDate = advanceCreateForm.operationDate || today;
+    const paymentDate = formatExcelPaymentDate(operationDate);
+    const referenceNumber = sanitizeAlphaNumeric(advanceCreateForm.referenceNumber.trim()) || sanitizeAlphaNumeric(`ADV${supplier.id}`);
     const narration = advanceCreateForm.verificationNote.trim() || `Advance paid to ${supplier.name}`;
-    const remark = advanceCreateForm.voucherNumber.trim() || `Advance ${supplier.name}`;
+    const remark = sanitizeAlphaNumeric(advanceCreateForm.voucherNumber.trim()) || sanitizeAlphaNumeric(`ADV${supplier.name}`);
+    const fileName = safePdfFileName(`ADV_${sanitizePartyToken(supplier.name)}_${paymentDate}_${amount.toFixed(2)}.xlsx`);
     const row = [
       paymentExportConfig.productCode.trim(),
       sheetMode,
@@ -8130,7 +8159,7 @@ function AccountsPaymentsView({
       supplier.name,
       supplier.name
     ];
-    downloadExcelWorkbook(safePdfFileName(`${referenceNumber}-${sheetMode}-advance.xlsx`), paymentSheetHeaders, [row], "Sheet1");
+    downloadExcelWorkbook(fileName, paymentSheetHeaders, [row], "Sheet1");
     setAdvanceMakerError("");
     setAdvanceCreateForm((current) => ({
       ...current,
@@ -8246,17 +8275,20 @@ function AccountsPaymentsView({
           ? "RTGS"
           : "NEFT";
     const dbMode: PaymentMode = makePaymentMode === "Cheque" ? "Cheque" : amount >= 200000 ? "RTGS" : "NEFT";
-    const paymentDate = createForm.operationDate || today;
-    const referenceNumber = createForm.referenceNumber.trim() || createForm.linkedOrderId;
+    const operationDate = createForm.operationDate || today;
+    const paymentDate = formatExcelPaymentDate(operationDate);
+    const poLast4 = lastOrderDigits(createForm.linkedOrderId);
+    const referenceNumber = sanitizeAlphaNumeric(createForm.referenceNumber.trim()) || `PO${poLast4}`;
     const narration = createForm.verificationNote.trim() || `Against ${createForm.linkedOrderId}`;
-    const remark = createForm.voucherNumber.trim() || `${makePaymentMode} ${createForm.linkedOrderId}`;
+    const remark = sanitizeAlphaNumeric(createForm.voucherNumber.trim()) || `PO${poLast4}`;
     return {
       outputMode: makePaymentMode,
       dbMode,
       sheetMode,
-      fileName: safePdfFileName(`${referenceNumber}-${sheetMode}-payment.xlsx`),
+      fileName: safePdfFileName(`PO_${poLast4}_${sanitizePartyToken(counterparty.name)}_${paymentDate}_${amount.toFixed(2)}.xlsx`),
       partyName: counterparty.name,
       amount,
+      operationDate,
       paymentDate,
       referenceNumber,
       remark,
@@ -8312,7 +8344,7 @@ function AccountsPaymentsView({
       utrNumber: paymentPreview.outputMode === "Excel" ? "Pending" : undefined,
       verificationStatus: "Pending",
       verificationNote,
-      operationDate: paymentPreview.paymentDate || undefined
+      operationDate: paymentPreview.operationDate || undefined
     });
     setPaymentMakerBusy(false);
     if (success === false) return;
