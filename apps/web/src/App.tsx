@@ -3979,6 +3979,18 @@ function App() {
     setPartyEditForm(buildPartyEditDraft(item));
   }
 
+  function openSupplierUpdateFromAnywhere(supplierId: string) {
+    const supplier = counterparties.find((item) => item.id === supplierId && item.type === "Supplier");
+    if (!supplier) {
+      setError("Supplier not found.");
+      return;
+    }
+    setAccountsPartySearch(supplier.name);
+    setOpenPartyPanel("");
+    startAccountsPartyUpdate(supplier);
+    navigateToView("Parties");
+  }
+
   function startAccountsPartyPayment(item: Counterparty, orderId = "", pendingAmount = 0, paymentMode: PaymentMode = "NEFT") {
     setAccountsPartyUpdateId("");
     setAccountsPartyPaymentId(item.id);
@@ -4454,6 +4466,7 @@ function App() {
                 onCreatePurchaseAdvance={(body) => post("/payments/purchase-advance", body, "Purchase advance recorded.")}
                 onCreateDeliveryTask={(body) => post("/delivery-tasks", body, "Cash handover task created.")}
                 onVerify={(paymentId, verificationStatus, verificationNote) => post("/payments/verify", { paymentId, verificationStatus, verificationNote }, `Payment ${verificationStatus.toLowerCase()}.`)}
+                onOpenSupplierUpdate={openSupplierUpdateFromAnywhere}
               />
             ) : null
           ) : null}
@@ -7783,7 +7796,8 @@ function AccountsPaymentsView({
   onCreatePayment,
   onCreatePurchaseAdvance,
   onCreateDeliveryTask,
-  onVerify
+  onVerify,
+  onOpenSupplierUpdate
 }: {
   snapshot: AppSnapshot;
   onUploadProof: (file: File) => Promise<unknown>;
@@ -7816,6 +7830,7 @@ function AccountsPaymentsView({
   }) => Promise<boolean | void>;
   onCreateDeliveryTask: (body: { side: DeliveryTask["side"]; linkedOrderId: string; linkedOrderIds: string[]; mode: DeliveryTask["mode"]; transportType?: DeliveryTask["transportType"]; vehicleNumber?: string; freightAmount?: number; from: string; to: string; assignedTo: string; routeHint?: string; routeStops?: DeliveryTask["routeStops"]; paymentAction: DeliveryTask["paymentAction"]; cashCollectionRequired: boolean; status: DeliveryTask["status"] }) => Promise<boolean | void>;
   onVerify: (paymentId: string, verificationStatus: "Verified" | "Rejected" | "Resolved", verificationNote: string) => Promise<boolean | void>;
+  onOpenSupplierUpdate: (supplierId: string) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const suppliers = snapshot.counterparties.filter((item) => item.type === "Supplier").sort((left, right) => left.name.localeCompare(right.name));
@@ -7899,6 +7914,7 @@ function AccountsPaymentsView({
     };
   });
   const [paymentMakerError, setPaymentMakerError] = useState("");
+  const [paymentMakerSupplierFix, setPaymentMakerSupplierFix] = useState<null | { supplierId: string; supplierName: string; message: string }>(null);
   const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
   const [accountsEntryMode, setAccountsEntryMode] = useState<"quick" | "full">("quick");
   const [advanceDeskMode, setAdvanceDeskMode] = useState<"advance" | "against-po">("advance");
@@ -7937,12 +7953,24 @@ function AccountsPaymentsView({
     return value.replace(/[^a-z0-9]/gi, "").toUpperCase();
   }
 
-  function sanitizePartyToken(value: string) {
-    return value
-      .replace(/[^a-z0-9]+/gi, "_")
-      .replace(/^_+|_+$/g, "")
-      .toUpperCase();
-  }
+function sanitizePartyToken(value: string) {
+  return value
+    .replace(/[^a-z0-9]+/gi, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+}
+
+function hasUsableBankField(value?: string) {
+  const normalized = (value || "").trim().toUpperCase();
+  return normalized !== "" && normalized !== "N/A";
+}
+
+function supplierBankDetailsMissing(counterparty?: Counterparty) {
+  if (!counterparty || counterparty.type !== "Supplier") return true;
+  return !hasUsableBankField(counterparty.bankName)
+    || !hasUsableBankField(counterparty.bankAccountNumber)
+    || !hasUsableBankField(counterparty.ifscCode);
+}
 
   function lastOrderDigits(value: string) {
     const digits = value.replace(/\D/g, "");
@@ -7955,6 +7983,7 @@ function AccountsPaymentsView({
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
   const [advanceMakerError, setAdvanceMakerError] = useState("");
+  const [advanceMakerSupplierFix, setAdvanceMakerSupplierFix] = useState<null | { supplierId: string; supplierName: string; message: string }>(null);
   const [productDeskSearch, setProductDeskSearch] = useState("");
   const [quickPurchaseForm, setQuickPurchaseForm] = useState({
     linkedOrderId: purchaseOrderPendingOptions[0]?.id || "",
@@ -8062,6 +8091,37 @@ function AccountsPaymentsView({
     }));
   }
 
+  function setSupplierUpdateWarning(
+    scope: "advance" | "payment",
+    supplier: Counterparty | undefined,
+    fallbackMessage = "Update supplier first."
+  ) {
+    const next = supplier
+      ? { supplierId: supplier.id, supplierName: supplier.name, message: fallbackMessage }
+      : null;
+    if (scope === "advance") {
+      setAdvanceMakerSupplierFix(next);
+    } else {
+      setPaymentMakerSupplierFix(next);
+    }
+  }
+
+  function renderSupplierUpdateWarning(
+    warning: null | { supplierId: string; supplierName: string; message: string }
+  ) {
+    if (!warning) return null;
+    return (
+      <div className="message error wide-field">
+        <strong>{warning.message}</strong>
+        <div className="payment-card-actions top-gap">
+          <button className="primary-button" type="button" onClick={() => onOpenSupplierUpdate(warning.supplierId)}>
+            Update supplier now
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   async function submitAdvanceCreateForm(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onCreatePurchaseAdvance({
@@ -8112,18 +8172,22 @@ function AccountsPaymentsView({
     const amount = Number(advanceCreateForm.amount || 0);
     if (!supplier) {
       setAdvanceMakerError("Select a supplier first.");
+      setAdvanceMakerSupplierFix(null);
       return;
     }
     if (!(amount > 0)) {
       setAdvanceMakerError("Enter a valid advance amount first.");
+      setAdvanceMakerSupplierFix(null);
       return;
     }
     if (!paymentExportConfig.productCode.trim() || !paymentExportConfig.debitAccountNumber.trim()) {
       setAdvanceMakerError("Enter the product code and debit account for Excel export first.");
+      setAdvanceMakerSupplierFix(null);
       return;
     }
-    if (!supplier.bankAccountNumber.trim() || !supplier.ifscCode.trim()) {
-      setAdvanceMakerError("Supplier bank details are missing.");
+    if (supplierBankDetailsMissing(supplier)) {
+      setAdvanceMakerError("Update supplier first.");
+      setSupplierUpdateWarning("advance", supplier, "Update supplier first.");
       return;
     }
     const ifsc = supplier.ifscCode.trim().toUpperCase();
@@ -8161,6 +8225,7 @@ function AccountsPaymentsView({
     ];
     downloadExcelWorkbook(fileName, paymentSheetHeaders, [row], "Sheet1");
     setAdvanceMakerError("");
+    setAdvanceMakerSupplierFix(null);
     setAdvanceCreateForm((current) => ({
       ...current,
       amount: "",
@@ -8249,23 +8314,29 @@ function AccountsPaymentsView({
   function buildAccountsPaymentPreview() {
     const amount = Number(createForm.amount || 0);
     if (createForm.side !== "Purchase") {
+      setPaymentMakerSupplierFix(null);
       return { error: "Make payment is only available for purchase payouts." };
     }
     if (amount <= 0) {
+      setPaymentMakerSupplierFix(null);
       return { error: "Enter a valid payment amount first." };
     }
     const order = accountOrderOptions.find((item) => item.side === "Purchase" && item.id === createForm.linkedOrderId);
     const purchaseOrder = findPurchaseOrderByPublicId(snapshot.purchaseOrders, createForm.linkedOrderId);
     const counterparty = snapshot.counterparties.find((item) => item.id === purchaseOrder?.supplierId);
     if (!order || !purchaseOrder || !counterparty) {
+      setPaymentMakerSupplierFix(null);
       return { error: "Purchase order or supplier details are missing." };
     }
     if (makePaymentMode === "Excel" && (!paymentExportConfig.productCode.trim() || !paymentExportConfig.debitAccountNumber.trim())) {
+      setPaymentMakerSupplierFix(null);
       return { error: "Enter the fixed product code and debit account number for Excel export." };
     }
-    if (!counterparty.bankAccountNumber.trim() || !counterparty.ifscCode.trim()) {
-      return { error: "Supplier bank details are missing." };
+    if (supplierBankDetailsMissing(counterparty)) {
+      setSupplierUpdateWarning("payment", counterparty, "Update supplier first.");
+      return { error: "Update supplier first." };
     }
+    setPaymentMakerSupplierFix(null);
     const ifsc = counterparty.ifscCode.trim().toUpperCase();
     const sheetMode = makePaymentMode === "Cheque"
       ? "CHEQUE"
@@ -8325,6 +8396,7 @@ function AccountsPaymentsView({
       return;
     }
     setPaymentMakerError("");
+    setPaymentMakerSupplierFix(null);
     setPaymentPreview(next);
   }
 
@@ -8361,6 +8433,7 @@ function AccountsPaymentsView({
     }
     setPaymentPreview(null);
     setPaymentMakerError("");
+    setPaymentMakerSupplierFix(null);
   }
 
   function renderAccountsPaymentPreview() {
@@ -8482,6 +8555,7 @@ function AccountsPaymentsView({
             <label>Proof name<input value={advanceCreateForm.proofName} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, proofName: e.target.value }))} /></label>
             <label className="wide-field">Note<input value={advanceCreateForm.verificationNote} onChange={(e) => setAdvanceCreateForm((current) => ({ ...current, verificationNote: e.target.value }))} /></label>
             {advanceMakerError ? <p className="message error wide-field">{advanceMakerError}</p> : null}
+            {renderSupplierUpdateWarning(advanceMakerSupplierFix)}
             <div className="payment-card-actions wide-field">
               <button className="primary-button" type="submit" disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0) || !advanceCreateForm.referenceNumber.trim()}>Create advance</button>
               {advanceCreateForm.mode !== "Cash" ? <button className="ghost-button" type="button" onClick={generateAdvanceExcel} disabled={!advanceCreateForm.supplierId || !(Number(advanceCreateForm.amount || 0) > 0)}>Generate Excel</button> : null}
@@ -8521,6 +8595,7 @@ function AccountsPaymentsView({
               <label>Email<input value={paymentExportConfig.emailId} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, emailId: e.target.value }))} placeholder="Optional export value" /></label>
             </> : null}
             {paymentMakerError ? <p className="message error wide-field">{paymentMakerError}</p> : null}
+            {renderSupplierUpdateWarning(paymentMakerSupplierFix)}
             <div className="payment-card-actions wide-field">
               <button className="primary-button" type="submit" disabled={!createForm.linkedOrderId || !(Number(createForm.amount || 0) > 0)}>Record against PO</button>
               <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview} disabled={!createForm.linkedOrderId || !(Number(createForm.amount || 0) > 0)}>{makePaymentMode === "Excel" ? "Generate Excel" : "Make cheque"}</button>
@@ -8710,6 +8785,7 @@ function AccountsPaymentsView({
             <label>Email<input value={paymentExportConfig.emailId} onChange={(e) => setPaymentExportConfig((current) => ({ ...current, emailId: e.target.value }))} placeholder="Optional export value" /></label>
           </> : null}
           {paymentMakerError ? <p className="message error wide-field">{paymentMakerError}</p> : null}
+          {renderSupplierUpdateWarning(paymentMakerSupplierFix)}
           <div className="payment-card-actions wide-field">
             <button className="primary-button" type="submit">Record payment</button>
             <button className="ghost-button" type="button" onClick={openAccountsPaymentPreview}>{makePaymentMode === "Excel" ? "Generate Excel" : "Make payment"}</button>
