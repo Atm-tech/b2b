@@ -7972,6 +7972,10 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
     || !hasUsableBankField(counterparty.ifscCode);
 }
 
+function sanitizeExcelPayeeName(value: string) {
+  return sanitizeAlphaNumeric(value.trim());
+}
+
   function lastOrderDigits(value: string) {
     const digits = value.replace(/\D/g, "");
     if (digits.length >= 4) return digits.slice(-4);
@@ -8202,11 +8206,12 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
     const narration = advanceCreateForm.verificationNote.trim() || `Advance paid to ${supplier.name}`;
     const remark = sanitizeAlphaNumeric(advanceCreateForm.voucherNumber.trim()) || sanitizeAlphaNumeric(`ADV${supplier.name}`);
     const fileName = safePdfFileName(`ADV_${sanitizePartyToken(supplier.name)}_${paymentDate}_${amount.toFixed(2)}.xlsx`);
+    const payeeName = sanitizeExcelPayeeName(supplier.name) || sanitizeAlphaNumeric(supplier.id);
     const row = [
       paymentExportConfig.productCode.trim(),
       sheetMode,
       paymentExportConfig.debitAccountNumber.trim(),
-      supplier.name,
+      payeeName,
       supplier.bankAccountNumber.trim(),
       ifsc,
       amount.toFixed(2),
@@ -8217,11 +8222,11 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
       remark,
       paymentDate,
       referenceNumber,
-      supplier.name,
-      supplier.name,
-      supplier.name,
-      supplier.name,
-      supplier.name
+      payeeName,
+      payeeName,
+      payeeName,
+      payeeName,
+      payeeName
     ];
     downloadExcelWorkbook(fileName, paymentSheetHeaders, [row], "Sheet1");
     setAdvanceMakerError("");
@@ -8352,6 +8357,7 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
     const referenceNumber = sanitizeAlphaNumeric(createForm.referenceNumber.trim()) || `PO${poLast4}`;
     const narration = createForm.verificationNote.trim() || `Against ${createForm.linkedOrderId}`;
     const remark = sanitizeAlphaNumeric(createForm.voucherNumber.trim()) || `PO${poLast4}`;
+    const payeeName = sanitizeExcelPayeeName(counterparty.name) || sanitizeAlphaNumeric(counterparty.id);
     return {
       outputMode: makePaymentMode,
       dbMode,
@@ -8368,7 +8374,7 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
         paymentExportConfig.productCode.trim(),
         sheetMode,
         paymentExportConfig.debitAccountNumber.trim(),
-        counterparty.name,
+        payeeName,
         counterparty.bankAccountNumber.trim(),
         ifsc,
         amount.toFixed(2),
@@ -8379,11 +8385,11 @@ function supplierBankDetailsMissing(counterparty?: Counterparty) {
         remark,
         paymentDate,
         referenceNumber,
-        counterparty.name,
-        counterparty.name,
-        counterparty.name,
-        counterparty.name,
-        counterparty.name
+        payeeName,
+        payeeName,
+        payeeName,
+        payeeName,
+        payeeName
       ]
     };
   }

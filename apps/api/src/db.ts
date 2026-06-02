@@ -3216,9 +3216,16 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
 
   await withTransaction(async (client) => {
     const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
+    const currentQtyByKey = new Map<string, number>();
     const nextQtyByKey = new Map<string, number>();
     const addQty = (map: Map<string, number>, key: string, value: number) => map.set(key, (map.get(key) || 0) + value);
     const inventoryKey = (warehouseId: string, productSku: string) => `${warehouseId}::${productSku}`;
+
+    for (const existing of editable.lines) {
+      const warehouseId = stringValue(existing.warehouse_id);
+      const productSku = stringValue(existing.product_sku);
+      addQty(currentQtyByKey, inventoryKey(warehouseId, productSku), numberValue(existing.quantity));
+    }
 
     for (const line of payload.lines) {
       if (line.quantity <= 0) throw new Error("Quantity must be greater than zero.");
@@ -3233,6 +3240,9 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
     for (const key of nextQtyByKey.keys()) {
       const [warehouseId, productSku] = key.split("::");
       const nextQty = nextQtyByKey.get(key) || 0;
+      const currentQty = currentQtyByKey.get(key) || 0;
+      const additionalQtyRequired = Math.max(nextQty - currentQty, 0);
+      if (additionalQtyRequired <= 0) continue;
       const available = await one<Record<string, unknown>>(
         `SELECT COALESCE(SUM(quantity_available), 0) AS qty
          FROM inventory_lots
@@ -3240,7 +3250,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
         [warehouseId, productSku],
         client
       );
-      if (numberValue(available?.qty) < nextQty) {
+      if (numberValue(available?.qty) < additionalQtyRequired) {
         throw new Error(`Requested quantity exceeds available stock for ${productSku} at ${warehouseId}.`);
       }
     }
