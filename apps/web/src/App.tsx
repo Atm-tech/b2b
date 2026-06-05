@@ -72,6 +72,7 @@ type ViewKey =
   | "Users"
   | "Warehouses"
   | "Products"
+  | "ExcelMaker"
   | "Parties"
   | "Purchase"
   | "Purchases"
@@ -94,7 +95,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
-  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "Ledger", "Stock", "Notes"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns", "Ledger", "Notes"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -108,7 +109,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
-  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "Ledger"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -122,6 +123,7 @@ const labels: Record<ViewKey, string> = {
   Users: "Users",
   Warehouses: "Warehouses",
   Products: "Products",
+  ExcelMaker: "Excel Maker",
   Parties: "Parties",
   Purchase: "Purchase",
   Purchases: "Purchases",
@@ -4367,6 +4369,7 @@ function App() {
           {activeView === "Users" ? <TwoCol left={<Panel title="Create User" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/users", { ...userForm, role: userForm.roles[0], roles: userForm.roles }, "User created.", () => setUserForm({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"], warehouseIds: [], password: "1234" })); }}><label>Username<input value={userForm.username} onChange={(e) => setUserForm((c) => ({ ...c, username: e.target.value }))} /></label><label>Name<input value={userForm.fullName} onChange={(e) => setUserForm((c) => ({ ...c, fullName: e.target.value }))} /></label><label>Mobile<input value={userForm.mobileNumber} onChange={(e) => setUserForm((c) => ({ ...c, mobileNumber: e.target.value }))} /></label><label>Roles<select multiple value={userForm.roles} onChange={(e) => setUserForm((c) => ({ ...c, roles: Array.from(e.target.selectedOptions).map((option) => option.value as UserRole) }))}>{userRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Warehouses<select multiple value={userForm.warehouseIds} onChange={(e) => setUserForm((c) => ({ ...c, warehouseIds: Array.from(e.target.selectedOptions).map((option) => option.value) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label><label>Password<input value={userForm.password} onChange={(e) => setUserForm((c) => ({ ...c, password: e.target.value }))} /></label><button className="primary-button" type="submit">Create user</button></form></Panel>} right={<Panel title="Users" eyebrow="Directory"><DataTable headers={["Username","Name","Roles","Warehouses","Mobile"]} rows={snapshot.users.map((u) => [u.username, u.fullName, (u.roles && u.roles.length > 0 ? u.roles : [u.role]).join(", "), (u.warehouseIds || []).join(", ") || "All", u.mobileNumber])} /></Panel>} /> : null}
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
+          {activeView === "ExcelMaker" ? <StandaloneExcelMaker /> : null}
           {activeView === "Parties" ? partiesView : null}
           {activeView === "Purchase" ? (isAdminUser ? <AnalystPurchaseView snapshot={snapshot} orders={snapshot.purchaseOrders} /> : <>
             <PurchaserPurchaseWorkspace
@@ -12805,6 +12808,185 @@ function AnalystInventoryView({ snapshot }: { snapshot: AppSnapshot }) {
     <TwoCol
       left={<Panel title="Inventory Summary" eyebrow="Analyst view"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-summary.csv", stockHeaders, stockRows)}>Download CSV</button></div><DataTable headers={stockHeaders} rows={stockRows} /></Panel>}
       right={<Panel title="Inventory Lots" eyebrow="Traceability"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-lots.csv", lotHeaders, lotRows)}>Download CSV</button></div><DataTable headers={lotHeaders} rows={lotRows} /></Panel>}
+    />
+  );
+}
+
+function StandaloneExcelMaker() {
+  const today = new Date().toISOString().slice(0, 10);
+  const paymentSheetHeaders = ["PYMT_PROD_TYPE_CODE", "PYMT_MODE", "DEBIT_ACC_NO", "BNF_NAME", "BENE_ACC_NO", "BENE_IFSC", "AMOUNT", "DEBIT_NARR", "CREDIT_NARR", "MOBILE_NUM", "EMAIL_ID", "REMARK", "PYMT_DATE", "REF_NO", "ADDL_INFO1", "ADDL_INFO2", "ADDL_INFO3", "ADDL_INFO4", "ADDL_INFO5"];
+  const configKey = workspaceStorageKey("excel-maker", "config");
+  const rowsKey = workspaceStorageKey("excel-maker", "rows");
+  const [config, setConfig] = useState(() => {
+    const stored = readStoredJson(configKey, {
+      productCode: "PAB_VENDOR",
+      paymentMode: "NEFT",
+      debitAccountNumber: "118805000220",
+      mobileNumber: "9111080628",
+      emailId: "",
+      paymentDate: today,
+      referenceNumber: "",
+      remark: ""
+    });
+    return {
+      productCode: String(stored?.productCode || "").trim() || "PAB_VENDOR",
+      paymentMode: String(stored?.paymentMode || "").trim() || "NEFT",
+      debitAccountNumber: String(stored?.debitAccountNumber || "").trim() || "118805000220",
+      mobileNumber: String(stored?.mobileNumber || "").trim() || "9111080628",
+      emailId: String(stored?.emailId || "").trim(),
+      paymentDate: String(stored?.paymentDate || "").trim() || today,
+      referenceNumber: String(stored?.referenceNumber || "").trim(),
+      remark: String(stored?.remark || "").trim()
+    };
+  });
+  const [partyForm, setPartyForm] = useState(() => {
+    const storedRows = readStoredJson<Array<{ partyName: string; accountNumber: string; ifsc: string; amount: string }>>(rowsKey, []);
+    return storedRows.length > 0 ? storedRows : [{ partyName: "", accountNumber: "", ifsc: "", amount: "" }];
+  });
+  const [makerError, setMakerError] = useState("");
+
+  useEffect(() => {
+    writeStoredJson(configKey, config);
+  }, [config, configKey]);
+
+  useEffect(() => {
+    writeStoredJson(rowsKey, partyForm);
+  }, [partyForm, rowsKey]);
+
+  function formatPaymentDate(value: string) {
+    const parts = value.split("-");
+    if (parts.length !== 3) return value;
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+
+  function updatePartyRow(index: number, field: "partyName" | "accountNumber" | "ifsc" | "amount", value: string) {
+    setPartyForm((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
+  }
+
+  function addPartyRow() {
+    setPartyForm((current) => [...current, { partyName: "", accountNumber: "", ifsc: "", amount: "" }]);
+  }
+
+  function removePartyRow(index: number) {
+    setPartyForm((current) => current.length === 1 ? [{ partyName: "", accountNumber: "", ifsc: "", amount: "" }] : current.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  function clearAllRows() {
+    setPartyForm([{ partyName: "", accountNumber: "", ifsc: "", amount: "" }]);
+    setMakerError("");
+  }
+
+  function buildWorkbookRows() {
+    const trimmedProductCode = config.productCode.trim();
+    const trimmedDebitAccount = config.debitAccountNumber.trim();
+    if (!trimmedProductCode || !trimmedDebitAccount) {
+      return { error: "Enter product code and debit account number first." };
+    }
+    const validRows = partyForm
+      .map((row) => ({
+        partyName: row.partyName.trim(),
+        accountNumber: row.accountNumber.trim(),
+        ifsc: row.ifsc.trim().toUpperCase(),
+        amount: Number(row.amount)
+      }))
+      .filter((row) => row.partyName || row.accountNumber || row.ifsc || row.amount);
+    if (validRows.length === 0) {
+      return { error: "Add at least one party row." };
+    }
+    const invalidRow = validRows.find((row) => !row.partyName || !row.accountNumber || !row.ifsc || !(row.amount > 0));
+    if (invalidRow) {
+      return { error: "Each row needs party name, account number, IFSC, and amount greater than zero." };
+    }
+    const paymentDate = formatPaymentDate(config.paymentDate || today);
+    const narrationBase = config.remark.trim() || "Party payment";
+    const workbookRows = validRows.map((row, index) => {
+      const rowReference = config.referenceNumber.trim() || `PMT-${paymentDate}-${index + 1}`;
+      return [
+        trimmedProductCode,
+        config.paymentMode.trim() || "NEFT",
+        trimmedDebitAccount,
+        row.partyName,
+        row.accountNumber,
+        row.ifsc,
+        row.amount.toFixed(2),
+        narrationBase,
+        narrationBase,
+        config.mobileNumber.trim(),
+        config.emailId.trim(),
+        config.remark.trim(),
+        paymentDate,
+        rowReference,
+        "",
+        "",
+        "",
+        "",
+        ""
+      ];
+    });
+    return { workbookRows };
+  }
+
+  function downloadWorkbook() {
+    const result = buildWorkbookRows();
+    if ("error" in result) {
+      setMakerError(result.error || "Unable to build workbook rows.");
+      return;
+    }
+    setMakerError("");
+    downloadExcelWorkbook(`party-excel-maker-${config.paymentDate || today}.xlsx`, paymentSheetHeaders, result.workbookRows, "Sheet1");
+  }
+
+  const previewRows = buildWorkbookRows();
+  const previewWorkbookRows = "workbookRows" in previewRows ? (previewRows.workbookRows || []) : [];
+
+  return (
+    <TwoCol
+      left={<Panel title="Party Excel Maker" eyebrow="Standalone utility">
+        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); downloadWorkbook(); }}>
+          <label>Product code<input value={config.productCode} onChange={(event) => setConfig((current) => ({ ...current, productCode: event.target.value }))} /></label>
+          <label>Payment mode<input value={config.paymentMode} onChange={(event) => setConfig((current) => ({ ...current, paymentMode: event.target.value }))} /></label>
+          <label>Debit account number<input value={config.debitAccountNumber} onChange={(event) => setConfig((current) => ({ ...current, debitAccountNumber: event.target.value }))} /></label>
+          <label>Mobile number<input value={config.mobileNumber} onChange={(event) => setConfig((current) => ({ ...current, mobileNumber: event.target.value }))} /></label>
+          <label>Email ID<input value={config.emailId} onChange={(event) => setConfig((current) => ({ ...current, emailId: event.target.value }))} /></label>
+          <label>Payment date<input type="date" value={config.paymentDate} onChange={(event) => setConfig((current) => ({ ...current, paymentDate: event.target.value }))} /></label>
+          <label>Reference no<input value={config.referenceNumber} placeholder="Optional fixed reference" onChange={(event) => setConfig((current) => ({ ...current, referenceNumber: event.target.value }))} /></label>
+          <label className="wide-field">Remark<input value={config.remark} placeholder="Optional narration / remark" onChange={(event) => setConfig((current) => ({ ...current, remark: event.target.value }))} /></label>
+          {makerError ? <p className="message error wide-field">{makerError}</p> : null}
+          <div className="payment-card-actions wide-field">
+            <button className="primary-button" type="submit">Download Excel</button>
+            <button className="ghost-button" type="button" onClick={addPartyRow}>Add party row</button>
+            <button className="ghost-button" type="button" onClick={clearAllRows}>Clear rows</button>
+          </div>
+        </form>
+      </Panel>}
+      right={<Panel title="Party Details" eyebrow="Name / account / IFSC / amount">
+        <div className="form-grid">
+          {partyForm.map((row, index) => (
+            <div className="panel" key={`party-row-${index}`}>
+              <div className="payment-card-actions">
+                <strong>Party {index + 1}</strong>
+                <button className="ghost-button" type="button" onClick={() => removePartyRow(index)}>Remove</button>
+              </div>
+              <div className="form-grid top-gap">
+                <label>Party name<input value={row.partyName} onChange={(event) => updatePartyRow(index, "partyName", event.target.value)} /></label>
+                <label>Account number<input value={row.accountNumber} onChange={(event) => updatePartyRow(index, "accountNumber", event.target.value)} /></label>
+                <label>IFSC<input value={row.ifsc} onChange={(event) => updatePartyRow(index, "ifsc", event.target.value.toUpperCase())} /></label>
+                <label>Amount<input type="number" min="0" step="0.01" value={row.amount} onChange={(event) => updatePartyRow(index, "amount", event.target.value)} /></label>
+              </div>
+            </div>
+          ))}
+        </div>
+        {previewWorkbookRows.length > 0 ? <div className="table-wrap top-gap">
+          <table>
+            <thead>
+              <tr>{paymentSheetHeaders.map((header) => <th key={header}>{header}</th>)}</tr>
+            </thead>
+            <tbody>
+              {previewWorkbookRows.map((row, index) => <tr key={`preview-row-${index}`}>{row.map((cell, cellIndex) => <td key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>)}
+            </tbody>
+          </table>
+        </div> : <p className="small-label top-gap">Preview will appear after valid party details are entered.</p>}
+      </Panel>}
     />
   );
 }
