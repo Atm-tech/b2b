@@ -12859,6 +12859,15 @@ function StandaloneExcelMaker() {
     return `${parts[2]}-${parts[1]}-${parts[0]}`;
   }
 
+  function sanitizeFilePart(value: string) {
+    return value
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "") || "party";
+  }
+
   function updatePartyRow(index: number, field: "partyName" | "accountNumber" | "ifsc" | "amount", value: string) {
     setPartyForm((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
   }
@@ -12933,7 +12942,11 @@ function StandaloneExcelMaker() {
       return;
     }
     setMakerError("");
-    downloadExcelWorkbook(`party-excel-maker-${config.paymentDate || today}.xlsx`, paymentSheetHeaders, result.workbookRows, "Sheet1");
+    const firstFilledRow = partyForm.find((row) => row.partyName.trim() && Number(row.amount) > 0);
+    const filePartyName = sanitizeFilePart(firstFilledRow?.partyName || "party");
+    const fileAmount = Number(firstFilledRow?.amount || 0).toFixed(2);
+    const fileDate = sanitizeFilePart(config.paymentDate || today);
+    downloadExcelWorkbook(`${filePartyName}-${fileAmount}-${fileDate}.xlsx`, paymentSheetHeaders, result.workbookRows, "Sheet1");
   }
 
   const previewRows = buildWorkbookRows();
