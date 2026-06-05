@@ -109,6 +109,37 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
+    DO $$
+    DECLARE constraint_name TEXT;
+    DECLARE index_name TEXT;
+    BEGIN
+      FOR constraint_name IN
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        JOIN unnest(con.conkey) WITH ORDINALITY AS cols(attnum, ord) ON TRUE
+        JOIN pg_attribute attr ON attr.attrelid = rel.oid AND attr.attnum = cols.attnum
+        WHERE rel.relname = 'counterparties'
+          AND nsp.nspname = current_schema()
+          AND con.contype = 'u'
+        GROUP BY con.conname
+        HAVING COUNT(*) = 1 AND MIN(attr.attname) = 'ifsc_code'
+      LOOP
+        EXECUTE format('ALTER TABLE counterparties DROP CONSTRAINT IF EXISTS %I', constraint_name);
+      END LOOP;
+
+      FOR index_name IN
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename = 'counterparties'
+          AND indexdef ILIKE '%UNIQUE INDEX%'
+          AND indexdef ILIKE '%(ifsc_code)%'
+      LOOP
+        EXECUTE format('DROP INDEX IF EXISTS %I', index_name);
+      END LOOP;
+    END $$;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;

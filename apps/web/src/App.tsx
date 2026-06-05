@@ -3928,7 +3928,7 @@ function App() {
       name: !name || scopedParties.some((item) => item.name.trim().toLowerCase() === name.toLowerCase()),
       gstNumber: !gstNumber || (!isNaGst(gstNumber) && scopedParties.some((item) => item.gstNumber.trim().toLowerCase() === gstNumber.toLowerCase())),
       bankAccountNumber: !bankAccountNumber || (!isNaGst(bankAccountNumber) && scopedParties.some((item) => item.bankAccountNumber.trim().toLowerCase() === bankAccountNumber.toLowerCase())),
-      ifscCode: !ifscCode || (!isNaGst(ifscCode) && scopedParties.some((item) => item.ifscCode.trim().toLowerCase() === ifscCode.toLowerCase()))
+      ifscCode: !ifscCode
     };
   }
 
@@ -3946,7 +3946,7 @@ function App() {
             ? "GST number is required and must be unique. Use N/A for non-GST parties."
             : nextErrors.bankAccountNumber
               ? "Bank account number is required and must be unique. Use N/A when not available."
-              : "IFSC code is required and must be unique. Use N/A when not available."
+              : "IFSC code is required. Use N/A when not available."
       );
       return;
     }
@@ -4020,7 +4020,7 @@ function App() {
             ? `GST number is required and must be unique. Use N/A for non-GST ${partyEditForm.type === "Shop" ? "customers" : "suppliers"}.`
             : nextErrors.bankAccountNumber
               ? "Bank account number is required and must be unique. Use N/A when not available."
-              : "IFSC code is required and must be unique. Use N/A when not available."
+              : "IFSC code is required. Use N/A when not available."
       );
       return;
     }
@@ -5311,7 +5311,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       name: !name || parties.some((item) => item.name.trim().toLowerCase() === name.toLowerCase()),
       gstNumber: !gstNumber || (gstNumber.toUpperCase() !== "N/A" && parties.some((item) => item.gstNumber.trim().toLowerCase() === gstNumber.toLowerCase())),
       bankAccountNumber: !bankAccountNumber || (bankAccountNumber.toUpperCase() !== "N/A" && parties.some((item) => item.bankAccountNumber.trim().toLowerCase() === bankAccountNumber.toLowerCase())),
-      ifscCode: !ifscCode || (ifscCode.toUpperCase() !== "N/A" && parties.some((item) => item.ifscCode.trim().toLowerCase() === ifscCode.toLowerCase()))
+      ifscCode: !ifscCode
     };
     setPartyDraftErrors(nextErrors);
     if (nextErrors.name || nextErrors.gstNumber || nextErrors.bankAccountNumber || nextErrors.ifscCode) {
@@ -5322,7 +5322,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
             ? "GST number is required and must be unique. Use N/A for non-GST parties."
             : nextErrors.bankAccountNumber
               ? "Bank account number is required and must be unique. Use N/A when not available."
-              : "IFSC code is required and must be unique. Use N/A when not available."
+              : "IFSC code is required. Use N/A when not available."
       );
       return;
     }
