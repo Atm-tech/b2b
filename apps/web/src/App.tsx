@@ -5542,7 +5542,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
             </div>
             </>}
 
-            {cartLines.length > 0 ? <button type="button" className="floating-checkout-button" onClick={() => setCartOpen(true)}>
+            {cartLines.length > 0 && !cartOpen && !ratePopup ? <button type="button" className="floating-checkout-button" onClick={() => setCartOpen(true)}>
               <strong>Checkout</strong>
               <span>{cartLines.length} product{cartLines.length === 1 ? "" : "s"} · Total {cartTotal.toFixed(2)}</span>
             </button> : null}
