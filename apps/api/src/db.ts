@@ -12,6 +12,9 @@ import type {
   DeliveryConsignment,
   DeliveryDocket,
   DeliveryTask,
+  GoodsWarrantOutlet,
+  GoodsWarrantPaymentMode,
+  GoodsWarrantRecord,
   InventoryLot,
   LedgerEntry,
   NoteRecord,
@@ -259,6 +262,27 @@ async function ensureCompatibilityColumns() {
       created_by TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS goods_warrants (
+      id TEXT PRIMARY KEY,
+      warrant_number TEXT NOT NULL UNIQUE,
+      outlet TEXT NOT NULL,
+      issued_to TEXT NOT NULL DEFAULT '',
+      issuer_name TEXT NOT NULL DEFAULT '',
+      amount DOUBLE PRECISION NOT NULL,
+      payment_mode TEXT NOT NULL,
+      cheque_number TEXT,
+      cash_collected_on DATE,
+      issue_on DATE NOT NULL DEFAULT CURRENT_DATE,
+      valid_through DATE NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE goods_warrants ADD COLUMN IF NOT EXISTS issuer_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE goods_warrants ADD COLUMN IF NOT EXISTS issue_on DATE NOT NULL DEFAULT CURRENT_DATE;
+    UPDATE goods_warrants
+    SET issue_on = COALESCE(issue_on, cash_collected_on, DATE(created_at))
+    WHERE issue_on IS NULL;
   `);
 }
 
@@ -807,6 +831,26 @@ async function mapNotes(client?: DbClient): Promise<NoteRecord[]> {
   }));
 }
 
+async function mapGoodsWarrants(client?: DbClient): Promise<GoodsWarrantRecord[]> {
+  const rows = await query<Record<string, unknown>>("SELECT * FROM goods_warrants ORDER BY created_at DESC", [], client);
+  return rows.rows.map((row) => ({
+    id: stringValue(row.id),
+    warrantNumber: stringValue(row.warrant_number),
+    outlet: stringValue(row.outlet) as GoodsWarrantOutlet,
+    issuedTo: stringValue(row.issued_to),
+    issuerName: stringValue(row.issuer_name),
+    amount: numberValue(row.amount),
+    paymentMode: stringValue(row.payment_mode) as GoodsWarrantPaymentMode,
+    chequeNumber: row.cheque_number ? stringValue(row.cheque_number) : undefined,
+    cashCollectedOn: row.cash_collected_on ? isoValue(row.cash_collected_on).slice(0, 10) : undefined,
+    issueOn: isoValue(row.issue_on).slice(0, 10),
+    validThrough: isoValue(row.valid_through).slice(0, 10),
+    note: stringValue(row.note),
+    createdBy: stringValue(row.created_by),
+    createdAt: isoValue(row.created_at)
+  }));
+}
+
 function buildStockSummary(warehouses: Warehouse[], products: ProductMaster[], inventoryLots: InventoryLot[]): StockSummary[] {
   return warehouses.flatMap((warehouse) =>
     products
@@ -1030,7 +1074,7 @@ async function reconcileRetrospectiveDeliveryCashCollections(client?: DbClient) 
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
   await reconcileRetrospectiveDeliveryCashCollections();
-  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, probationarySales, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, notes, settings] = await Promise.all([
+  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, probationarySales, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, goodsWarrants, notes, settings] = await Promise.all([
     mapUsers(),
     mapWarehouses(),
     mapProducts(),
@@ -1047,6 +1091,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     mapDeliveryTasks(),
     mapDeliveryDockets(),
     mapDeliveryConsignments(),
+    mapGoodsWarrants(),
     mapNotes(),
     mapSettings()
   ]);
@@ -1070,6 +1115,7 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     deliveryTasks,
     deliveryDockets,
     deliveryConsignments,
+    goodsWarrants,
     notes
   };
   if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("In Delivery") || currentUser.roles.includes("Out Delivery") || currentUser.roles.includes("Delivery"))) {
@@ -1101,12 +1147,228 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
       deliveryTasks: snapshotWithoutMetrics.deliveryTasks.filter((item) => scopedDeliveryTaskIds.has(item.id)),
       deliveryDockets: snapshotWithoutMetrics.deliveryDockets.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
       deliveryConsignments: snapshotWithoutMetrics.deliveryConsignments.filter((item) => scopedWarehouseIds.has(item.warehouseId)),
+      goodsWarrants: snapshotWithoutMetrics.goodsWarrants,
       notes: snapshotWithoutMetrics.notes.filter((item) => scopedPurchaseOrderIds.has(item.entityId) || scopedSalesOrderIds.has(item.entityId) || scopedCartIds.has(item.entityId))
     };
   }
   return {
     metrics: buildMetrics(snapshotWithoutMetrics),
     ...snapshotWithoutMetrics
+  };
+}
+
+function warrantDateToken(value = now()) {
+  return value.slice(0, 10).replace(/-/g, "");
+}
+
+function addMonthsToDateKey(dateKey: string, monthsToAdd: number) {
+  const [yearText, monthText, dayText] = dateKey.split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const day = Number(dayText);
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || !Number.isFinite(day)) {
+    throw new Error("Invalid date provided for goods warrant schedule.");
+  }
+  const baseMonth = monthIndex + monthsToAdd;
+  const targetYear = year + Math.floor(baseMonth / 12);
+  const normalizedMonth = ((baseMonth % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDay);
+  return `${String(targetYear).padStart(4, "0")}-${String(normalizedMonth + 1).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
+}
+
+async function nextGoodsWarrantNumber(client: DbClient, createdAt: string) {
+  const prefix = `GW-${warrantDateToken(createdAt)}-`;
+  const latest = await one<{ warrant_number: string }>(
+    `SELECT warrant_number
+     FROM goods_warrants
+     WHERE warrant_number LIKE $1
+     ORDER BY warrant_number DESC
+     LIMIT 1`,
+    [`${prefix}%`],
+    client
+  );
+  const latestSuffix = latest?.warrant_number ? Number(latest.warrant_number.slice(prefix.length)) : 0;
+  const nextSuffix = Number.isFinite(latestSuffix) ? latestSuffix + 1 : 1;
+  return `${prefix}${String(nextSuffix).padStart(4, "0")}`;
+}
+
+export async function createGoodsWarrant(payload: {
+  outlet: GoodsWarrantOutlet;
+  issuedTo?: string;
+  issuerName?: string;
+  amount: number;
+  paymentMode: GoodsWarrantPaymentMode;
+  chequeNumber?: string;
+  cashCollectedOn?: string;
+  validThrough: string;
+  note?: string;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (!(payload.amount > 0)) throw new Error("Amount must be greater than zero.");
+  if (!payload.validThrough?.trim()) throw new Error("Valid through date is required.");
+  if (payload.paymentMode === "Cheque" && !payload.chequeNumber?.trim()) {
+    throw new Error("Cheque number is required for cheque warrants.");
+  }
+  if (payload.paymentMode === "Cash" && !payload.cashCollectedOn?.trim()) {
+    throw new Error("Cash collection date is required for cash warrants.");
+  }
+  const createdAt = now();
+  let warrant: GoodsWarrantRecord | null = null;
+  await withTransaction(async (client) => {
+    const warrantNumber = await nextGoodsWarrantNumber(client, createdAt);
+    const id = makeId("GW");
+    const issuedTo = payload.issuedTo?.trim() || "";
+    const issuerName = payload.issuerName?.trim() || "";
+    const chequeNumber = payload.paymentMode === "Cheque" ? (payload.chequeNumber?.trim() || "") : "";
+    const cashCollectedOn = payload.paymentMode === "Cash" ? operationalDate(payload.cashCollectedOn).slice(0, 10) : null;
+    const issueOn = cashCollectedOn || createdAt.slice(0, 10);
+    const validThrough = operationalDate(payload.validThrough).slice(0, 10);
+    await query(
+      `INSERT INTO goods_warrants (
+        id, warrant_number, outlet, issued_to, issuer_name, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        id,
+        warrantNumber,
+        payload.outlet,
+        issuedTo,
+        issuerName,
+        Math.max(payload.amount || 0, 0),
+        payload.paymentMode,
+        chequeNumber || null,
+        cashCollectedOn,
+        issueOn,
+        validThrough,
+        payload.note?.trim() || "",
+        currentUser.fullName || currentUser.username,
+        createdAt
+      ],
+      client
+    );
+    warrant = {
+      id,
+      warrantNumber,
+      outlet: payload.outlet,
+      issuedTo,
+      issuerName,
+      amount: Math.max(payload.amount || 0, 0),
+      paymentMode: payload.paymentMode,
+      chequeNumber: chequeNumber || undefined,
+      cashCollectedOn: cashCollectedOn || undefined,
+      issueOn,
+      validThrough,
+      note: payload.note?.trim() || "",
+      createdBy: currentUser.fullName || currentUser.username,
+      createdAt
+    } as GoodsWarrantRecord;
+  });
+  if (!warrant) throw new Error("Goods warrant could not be created.");
+  return {
+    warrant,
+    snapshot: await getSnapshot()
+  };
+}
+
+export async function createBulkGoodsWarrants(payload: {
+  outlet: GoodsWarrantOutlet;
+  issuedTo?: string;
+  issuerName?: string;
+  totalAmount: number;
+  denominationAmount: number;
+  allowedPerMonth?: number;
+  paymentMode: GoodsWarrantPaymentMode;
+  chequeNumber?: string;
+  cashCollectedOn?: string;
+  validThrough: string;
+  note?: string;
+}, currentUser: CurrentUser) {
+  await ready;
+  if (!(payload.totalAmount > 0)) throw new Error("Total amount must be greater than zero.");
+  if (!(payload.denominationAmount > 0)) throw new Error("Voucher denomination must be greater than zero.");
+  if (!payload.validThrough?.trim()) throw new Error("Valid through date is required.");
+  if (payload.allowedPerMonth !== undefined && (!Number.isFinite(payload.allowedPerMonth) || payload.allowedPerMonth <= 0)) {
+    throw new Error("Allowed vouchers per month must be greater than zero.");
+  }
+  if (payload.paymentMode === "Cheque" && !payload.chequeNumber?.trim()) {
+    throw new Error("Cheque number is required for cheque warrants.");
+  }
+  if (payload.paymentMode === "Cash" && !payload.cashCollectedOn?.trim()) {
+    throw new Error("Cash collection date is required for cash warrants.");
+  }
+  const ratio = payload.totalAmount / payload.denominationAmount;
+  const count = Math.round(ratio);
+  if (!Number.isFinite(count) || count <= 0) {
+    throw new Error("Unable to calculate voucher count.");
+  }
+  if (Math.abs(ratio - count) > 0.000001) {
+    throw new Error("Total amount must divide exactly by voucher denomination.");
+  }
+  const createdAt = now();
+  const issuedTo = payload.issuedTo?.trim() || "";
+  const issuerName = payload.issuerName?.trim() || "";
+  const chequeNumber = payload.paymentMode === "Cheque" ? (payload.chequeNumber?.trim() || "") : "";
+  const cashCollectedOn = payload.paymentMode === "Cash" ? operationalDate(payload.cashCollectedOn).slice(0, 10) : null;
+  const issueStartDate = cashCollectedOn || createdAt.slice(0, 10);
+  const validThrough = operationalDate(payload.validThrough).slice(0, 10);
+  const allowedPerMonth = Math.max(1, Math.floor(payload.allowedPerMonth || 1));
+  const warrants: GoodsWarrantRecord[] = [];
+  await withTransaction(async (client) => {
+    for (let index = 0; index < count; index += 1) {
+      const warrantNumber = await nextGoodsWarrantNumber(client, createdAt);
+      const id = makeId("GW");
+      const issueOn = addMonthsToDateKey(issueStartDate, Math.floor(index / allowedPerMonth));
+      await query(
+        `INSERT INTO goods_warrants (
+          id, warrant_number, outlet, issued_to, issuer_name, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [
+          id,
+          warrantNumber,
+          payload.outlet,
+          issuedTo,
+          issuerName,
+          Math.max(payload.denominationAmount || 0, 0),
+          payload.paymentMode,
+          chequeNumber || null,
+          cashCollectedOn,
+          issueOn,
+          validThrough,
+          payload.note?.trim() || "",
+          currentUser.fullName || currentUser.username,
+          createdAt
+        ],
+        client
+      );
+      warrants.push({
+        id,
+        warrantNumber,
+        outlet: payload.outlet,
+        issuedTo,
+        issuerName,
+        amount: Math.max(payload.denominationAmount || 0, 0),
+        paymentMode: payload.paymentMode,
+        chequeNumber: chequeNumber || undefined,
+        cashCollectedOn: cashCollectedOn || undefined,
+        issueOn,
+        validThrough,
+        note: payload.note?.trim() || "",
+        createdBy: currentUser.fullName || currentUser.username,
+        createdAt
+      } as GoodsWarrantRecord);
+    }
+  });
+  return {
+    warrants,
+    snapshot: await getSnapshot()
+  };
+}
+
+export async function clearGoodsWarrants() {
+  await ready;
+  await query("DELETE FROM goods_warrants");
+  return {
+    snapshot: await getSnapshot()
   };
 }
 

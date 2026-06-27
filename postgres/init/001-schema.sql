@@ -299,6 +299,23 @@ CREATE TABLE IF NOT EXISTS delivery_consignments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS goods_warrants (
+  id TEXT PRIMARY KEY,
+  warrant_number TEXT NOT NULL UNIQUE,
+  outlet TEXT NOT NULL,
+  issued_to TEXT NOT NULL DEFAULT '',
+  issuer_name TEXT NOT NULL DEFAULT '',
+  amount DOUBLE PRECISION NOT NULL,
+  payment_mode TEXT NOT NULL,
+  cheque_number TEXT,
+  cash_collected_on DATE,
+  issue_on DATE NOT NULL DEFAULT CURRENT_DATE,
+  valid_through DATE NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS note_records (
   id TEXT PRIMARY KEY,
   entity_type TEXT NOT NULL,

@@ -7,6 +7,7 @@ type SidebarView =
   | "SalesOrders"
   | "Payments"
   | "ExcelMaker"
+  | "GoodsWarrants"
   | "Ledger"
   | "Stock"
   | "Products"
@@ -29,6 +30,8 @@ export function SidebarVectorIcon({ view }: { view: SidebarView }) {
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect {...common} x="3.5" y="6" width="17" height="12" rx="2" /><path {...common} d="M3.5 10.5h17" /><path {...common} d="M8 15h2.5" /></svg></span>;
     case "ExcelMaker":
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect {...common} x="4" y="4.5" width="16" height="15" rx="2" /><path {...common} d="M8 8.5h8" /><path {...common} d="M8 12h3" /><path {...common} d="M14 12h2" /><path {...common} d="M8 15.5h2" /><path {...common} d="M13.5 14.5l3 3" /><path {...common} d="m16.5 14.5-3 3" /></svg></span>;
+    case "GoodsWarrants":
+      return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path {...common} d="M6 4.5h12A1.5 1.5 0 0 1 19.5 6v12A1.5 1.5 0 0 1 18 19.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5Z" /><path {...common} d="M8 8h8" /><path {...common} d="M8 12h8" /><path {...common} d="M8 16h4" /><path {...common} d="M15.5 15.5h2.5" /></svg></span>;
     case "Ledger":
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path {...common} d="M6 4.5h12A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5Z" /><path {...common} d="M8 9h8" /><path {...common} d="M8 12h8" /><path {...common} d="M8 15h5" /></svg></span>;
     case "Stock":

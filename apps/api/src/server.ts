@@ -1,19 +1,22 @@
 import cors from "cors";
 import express from "express";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import multer from "multer";
 import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, ProductMaster, UserRole, Warehouse } from "@aapoorti-b2b/domain";
 import {
   authenticate,
+  clearGoodsWarrants,
   bulkCreateProducts,
   clearSalesOperationalData,
   clearPurchaseAdvancePayments,
   createSessionForUser,
   createCounterparty,
   createSalesDockets,
+  createBulkGoodsWarrants,
   createDeliveryConsignment,
   createDeliveryTask,
+  createGoodsWarrant,
   mergeDeliveryTasks,
   createNote,
   createPayment,
@@ -55,6 +58,7 @@ const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");
 const receiptDir = path.join(uploadsDir, "receipt-proofs");
 const returnDir = path.join(uploadsDir, "return-proofs");
+const goodsWarrantLogoPath = path.resolve("D:/AAPOORTI/ASSETS/Apoorti Logo/Aapurti Mart Logo.png");
 const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "2mb";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -127,6 +131,14 @@ app.get("/health", (_req, res) => {
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.round(process.uptime())
   });
+});
+
+app.get("/goods-warrants/logo", (_req, res) => {
+  if (!existsSync(goodsWarrantLogoPath)) {
+    res.status(404).json({ message: "Goods warrant logo not found." });
+    return;
+  }
+  res.sendFile(goodsWarrantLogoPath);
 });
 
 app.post("/auth/login", async (req, res) => {
@@ -655,6 +667,67 @@ app.post("/payments/verify", async (req, res) => wrap(res, async () => {
     currentUser
   );
 }));
+
+app.post("/goods-warrants", async (req, res) => {
+  try {
+    const currentUser = await requireRole(req, ["Accounts"]);
+    const result = await createGoodsWarrant(
+      {
+        outlet: requiredString(req.body?.outlet, "Outlet") as any,
+        issuedTo: optionalString(req.body?.issuedTo),
+        issuerName: optionalString(req.body?.issuerName),
+        amount: requiredNumber(req.body?.amount, "Amount"),
+        paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as "Cash" | "Cheque",
+        chequeNumber: optionalString(req.body?.chequeNumber),
+        cashCollectedOn: optionalString(req.body?.cashCollectedOn),
+        validThrough: requiredString(req.body?.validThrough, "Valid through"),
+        note: optionalString(req.body?.note)
+      },
+      currentUser
+    );
+    res.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error.";
+    res.status(400).json({ message });
+  }
+});
+
+app.post("/goods-warrants/bulk", async (req, res) => {
+  try {
+    const currentUser = await requireRole(req, ["Accounts"]);
+    const result = await createBulkGoodsWarrants(
+      {
+        outlet: requiredString(req.body?.outlet, "Outlet") as any,
+        issuedTo: optionalString(req.body?.issuedTo),
+        issuerName: optionalString(req.body?.issuerName),
+        totalAmount: requiredNumber(req.body?.totalAmount, "Total amount"),
+        denominationAmount: requiredNumber(req.body?.denominationAmount, "Voucher denomination"),
+        allowedPerMonth: req.body?.allowedPerMonth === undefined ? undefined : requiredNumber(req.body?.allowedPerMonth, "Allowed vouchers per month"),
+        paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as "Cash" | "Cheque",
+        chequeNumber: optionalString(req.body?.chequeNumber),
+        cashCollectedOn: optionalString(req.body?.cashCollectedOn),
+        validThrough: requiredString(req.body?.validThrough, "Valid through"),
+        note: optionalString(req.body?.note)
+      },
+      currentUser
+    );
+    res.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error.";
+    res.status(400).json({ message });
+  }
+});
+
+app.delete("/goods-warrants", async (req, res) => {
+  try {
+    await requireRole(req, ["Accounts"]);
+    const result = await clearGoodsWarrants();
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error.";
+    res.status(400).json({ message });
+  }
+});
 
 app.post("/receipt-checks", async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Warehouse Manager"]);

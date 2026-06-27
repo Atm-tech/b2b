@@ -19,6 +19,9 @@ CREATE INDEX IF NOT EXISTS idx_ledger_entries_lookup ON ledger_entries(linked_or
 CREATE INDEX IF NOT EXISTS idx_delivery_tasks_status ON delivery_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_delivery_tasks_assigned_to ON delivery_tasks(assigned_to);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_dockets_sales_order_unique ON delivery_dockets(sales_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_goods_warrants_number_unique ON goods_warrants(warrant_number);
+CREATE INDEX IF NOT EXISTS idx_goods_warrants_created_at ON goods_warrants(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_goods_warrants_outlet ON goods_warrants(outlet);
 
 CREATE INDEX IF NOT EXISTS idx_notes_entity ON note_records(entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

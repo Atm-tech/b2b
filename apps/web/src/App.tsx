@@ -14,6 +14,9 @@ import type {
   DeliveryDocket,
   DeliveryTask,
   CashTiming,
+  GoodsWarrantOutlet,
+  GoodsWarrantPaymentMode,
+  GoodsWarrantRecord,
   NoteRecord,
   PaymentRecord,
   PaymentMode,
@@ -73,6 +76,7 @@ type ViewKey =
   | "Warehouses"
   | "Products"
   | "ExcelMaker"
+  | "GoodsWarrants"
   | "Parties"
   | "Purchase"
   | "Purchases"
@@ -95,7 +99,7 @@ const roleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
-  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "Ledger", "Stock", "Notes"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "GoodsWarrants", "Ledger", "Stock", "Notes"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns", "Ledger", "Notes"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -109,7 +113,7 @@ const simpleRoleViews: Record<UserRole, ViewKey[]> = {
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
-  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "Ledger"],
+  Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "GoodsWarrants", "Ledger"],
   Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
@@ -124,6 +128,7 @@ const labels: Record<ViewKey, string> = {
   Warehouses: "Warehouses",
   Products: "Products",
   ExcelMaker: "Excel Maker",
+  GoodsWarrants: "Goods Warrants",
   Parties: "Parties",
   Purchase: "Purchase",
   Purchases: "Purchases",
@@ -143,6 +148,7 @@ const labels: Record<ViewKey, string> = {
 };
 
 const returnReasons: Array<PurchaseReturn["reason"]> = ["Rate Difference", "Damage", "Quality Issue", "Wrong Item", "Excess Quantity", "Other"];
+const goodsWarrantOutlets: GoodsWarrantOutlet[] = ["Awadhpuri", "Koh E Fiza", "New Market", "Kolar", "Indrapuri"];
 
 type OrderQrTarget = {
   side: "Purchase" | "Sales";
@@ -284,6 +290,12 @@ function shouldForceSimpleMode(user: AppUser | null) {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   if (roles.includes("Admin") || roles.includes("Accounts") || roles.includes("Data Analyst")) return false;
   return roles.some((role) => role === "Purchaser" || role === "Sales" || role === "Delivery Manager" || role === "In Delivery" || role === "Out Delivery" || role === "Delivery");
+}
+
+function preferredSimpleMode(user: AppUser) {
+  if (shouldForceSimpleMode(user)) return true;
+  const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
+  return !roles.some((role) => role === "Admin" || role === "Accounts" || role === "Data Analyst");
 }
 
 function getVisibleViewsForMode(user: AppUser, simpleMode: boolean) {
@@ -495,6 +507,18 @@ function formatDateIst(value?: string) {
     timeZone: "Asia/Kolkata",
     day: "2-digit",
     month: "2-digit",
+    year: "numeric"
+  });
+}
+
+function formatLongDateIst(value?: string) {
+  if (!value) return "Pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Pending";
+  return date.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "long",
     year: "numeric"
   });
 }
@@ -3430,12 +3454,13 @@ function App() {
     try {
       const user = JSON.parse(stored) as AppUser;
       const workspace = readStoredJson(workspaceStorageKey(user.id, "app"), {} as Record<string, unknown>);
-      const visible = getVisibleViewsForMode(user, true);
+      const preferredMode = preferredSimpleMode(user);
+      const visible = getVisibleViewsForMode(user, preferredMode);
       const storedView = (workspace.activeView as ViewKey | undefined) || (window.localStorage.getItem(ACTIVE_VIEW_KEY) as ViewKey | null);
       const storedDeliveryManagerWarehouseId = window.localStorage.getItem(DELIVERY_MANAGER_WAREHOUSE_KEY) || "";
       setCurrentUser(user);
       setSessionToken(token);
-      if (workspace.simpleMode !== undefined) setSimpleMode(Boolean(workspace.simpleMode));
+      setSimpleMode(workspace.simpleMode !== undefined ? Boolean(workspace.simpleMode) : preferredMode);
       if (typeof workspace.deliveryManagerScreen === "string") setDeliveryManagerScreen(workspace.deliveryManagerScreen as "home" | "in" | "out");
       setDeliveryManagerWarehouseId((workspace.deliveryManagerWarehouseId as string | undefined) || storedDeliveryManagerWarehouseId);
       if (workspace.purchaseForm) setPurchaseForm(workspace.purchaseForm as typeof purchaseForm);
@@ -3619,7 +3644,9 @@ function App() {
       setSessionToken(String(data.token || ""));
       setSnapshot(data.snapshot as AppSnapshot);
       const nextUser = data.user as AppUser;
-      const nextView = getVisibleViewsForMode(nextUser, simpleMode)[0] || "Overview";
+      const nextSimpleMode = preferredSimpleMode(nextUser);
+      setSimpleMode(nextSimpleMode);
+      const nextView = getVisibleViewsForMode(nextUser, nextSimpleMode)[0] || "Overview";
       setActiveView(nextView);
       window.localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
       window.localStorage.setItem(TOKEN_KEY, String(data.token || ""));
@@ -3788,13 +3815,16 @@ function App() {
   const purchaserBottomViews: ViewKey[] = ["Overview", "Purchase", "Purchases"];
   const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
   const collectionBottomViews: ViewKey[] = ["Overview", "Payments", "SalesOrders"];
+  const accountsBottomViews: ViewKey[] = ["Overview", "Payments", "GoodsWarrants"];
   const bottomNavViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
     ? purchaserBottomViews.filter((view) => safeVisibleViews.includes(view))
     : currentRoles.includes("Sales") && !currentRoles.includes("Purchaser")
       ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
       : currentRoles.includes("Collection Agent")
         ? collectionBottomViews.filter((view) => safeVisibleViews.includes(view))
-      : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
+      : currentRoles.includes("Accounts")
+        ? accountsBottomViews.filter((view) => safeVisibleViews.includes(view))
+        : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
 
@@ -4370,6 +4400,7 @@ function App() {
           {activeView === "Warehouses" ? <TwoCol left={<Panel title="Create Warehouse" eyebrow="Admin"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/warehouses", warehouseForm, "Warehouse created.", () => setWarehouseForm({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" })); }}><label>Code<input value={warehouseForm.id} onChange={(e) => setWarehouseForm((c) => ({ ...c, id: e.target.value }))} /></label><label>Name<input value={warehouseForm.name} onChange={(e) => setWarehouseForm((c) => ({ ...c, name: e.target.value }))} /></label><label>City<input value={warehouseForm.city} onChange={(e) => setWarehouseForm((c) => ({ ...c, city: e.target.value }))} /></label><label>Type<select value={warehouseForm.type} onChange={(e) => setWarehouseForm((c) => ({ ...c, type: e.target.value as "Warehouse" | "Yard" }))}><option>Warehouse</option><option>Yard</option></select></label><label className="wide-field">Address<input value={warehouseForm.address} onChange={(e) => setWarehouseForm((c) => ({ ...c, address: e.target.value }))} /></label><button className="primary-button" type="submit">Create warehouse</button></form></Panel>} right={<Panel title="Warehouses" eyebrow="Receiving points"><DataTable headers={["Code","Name","City","Type"]} rows={snapshot.warehouses.map((w) => [w.id, w.name, w.city, w.type])} /></Panel>} /> : null}
           {activeView === "Products" ? <ProductAdminView snapshot={snapshot} productForm={productForm} setProductForm={setProductForm} bulkCsv={bulkCsv} setBulkCsv={setBulkCsv} setBulkCsvFile={setBulkCsvFile} onCreate={(body) => post("/products", body, "Product created.")} onUpdate={(sku, body) => patch(`/products/${encodeURIComponent(sku)}`, body, "Product updated.")} onDelete={(sku) => remove(`/products/${encodeURIComponent(sku)}`, "Product deleted.")} onBulkImport={(rows) => post("/products/bulk", { rows }, "CSV products imported.")} onBulkUpload={async () => { if (!bulkCsvFile) { setError("Select a CSV or Excel file first."); return; } const data = await uploadFile("/products/bulk-upload", "csv", bulkCsvFile, "Product file uploaded and imported."); if (data && typeof data === "object" && "products" in data) setSnapshot(data as AppSnapshot); }} /> : null}
           {activeView === "ExcelMaker" ? <StandaloneExcelMaker /> : null}
+          {activeView === "GoodsWarrants" ? <GoodsWarrantView snapshot={snapshot} sessionToken={sessionToken} setSnapshot={setSnapshot} setLoading={setLoading} setError={setError} setMessage={setMessage} /> : null}
           {activeView === "Parties" ? partiesView : null}
           {activeView === "Purchase" ? (isAdminUser ? <AnalystPurchaseView snapshot={snapshot} orders={snapshot.purchaseOrders} /> : <>
             <PurchaserPurchaseWorkspace
@@ -12808,6 +12839,476 @@ function AnalystInventoryView({ snapshot }: { snapshot: AppSnapshot }) {
     <TwoCol
       left={<Panel title="Inventory Summary" eyebrow="Analyst view"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-summary.csv", stockHeaders, stockRows)}>Download CSV</button></div><DataTable headers={stockHeaders} rows={stockRows} /></Panel>}
       right={<Panel title="Inventory Lots" eyebrow="Traceability"><div className="payment-card-actions"><button className="ghost-button" type="button" onClick={() => downloadCsvFile("inventory-lots.csv", lotHeaders, lotRows)}>Download CSV</button></div><DataTable headers={lotHeaders} rows={lotRows} /></Panel>}
+    />
+  );
+}
+
+function GoodsWarrantView({
+  snapshot,
+  sessionToken,
+  setSnapshot,
+  setLoading,
+  setError,
+  setMessage
+}: {
+  snapshot: AppSnapshot;
+  sessionToken: string;
+  setSnapshot: React.Dispatch<React.SetStateAction<AppSnapshot | null>>;
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setError: React.Dispatch<React.SetStateAction<string>>;
+  setMessage: React.Dispatch<React.SetStateAction<string>>;
+}) {
+  const today = indiaDateKey();
+  const [form, setForm] = useState({
+    outlet: "" as GoodsWarrantOutlet | "",
+    issuedTo: "",
+    issuerName: "",
+    totalAmount: "",
+    denominationAmount: "500",
+    allowedPerMonth: "1",
+    paymentMode: "Cash" as GoodsWarrantPaymentMode,
+    chequeNumber: "",
+    cashCollectedOn: today,
+    validThrough: today,
+    note: ""
+  });
+
+  function resetForm() {
+    setForm({
+      outlet: "",
+      issuedTo: "",
+      issuerName: "",
+      totalAmount: "",
+      denominationAmount: "500",
+      allowedPerMonth: "1",
+      paymentMode: "Cash",
+      chequeNumber: "",
+      cashCollectedOn: today,
+      validThrough: today,
+      note: ""
+    });
+  }
+
+  const totalAmountNumber = Number(form.totalAmount || 0);
+  const denominationAmountNumber = Number(form.denominationAmount || 0);
+  const allowedPerMonthNumber = Math.max(1, Math.floor(Number(form.allowedPerMonth || 0) || 1));
+  const rawVoucherCount = denominationAmountNumber > 0 ? totalAmountNumber / denominationAmountNumber : 0;
+  const voucherCount = Number.isFinite(rawVoucherCount) ? Math.round(rawVoucherCount) : 0;
+  const hasExactDenominationSplit =
+    totalAmountNumber > 0 &&
+    denominationAmountNumber > 0 &&
+    voucherCount > 0 &&
+    Math.abs(rawVoucherCount - voucherCount) < 0.000001;
+
+  function writeGoodsWarrantPrintDocument(popup: Window, warrant: GoodsWarrantRecord) {
+    const logoUrl = `${API_BASE}/goods-warrants/logo`;
+    const paymentLine = warrant.paymentMode === "Cheque"
+      ? `Cheque No: ${escapeHtml(warrant.chequeNumber || "-")}`
+      : `Cash Collected On: ${escapeHtml(formatLongDateIst(warrant.cashCollectedOn))}`;
+    popup.document.open();
+    popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(warrant.warrantNumber)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: "Segoe UI", sans-serif; color: #172033; background: #fff; }
+      .sheet { width: 100%; max-width: 780px; margin: 0 auto; padding: 20px; }
+      .card {
+        position: relative;
+        overflow: hidden;
+        border: 2px solid #d2b16f;
+        border-radius: 24px;
+        padding: 28px;
+        min-height: 1060px;
+        background: #fffdf8;
+      }
+      .watermark {
+        position: absolute;
+        inset: 110px 70px 110px 70px;
+        width: calc(100% - 140px);
+        height: calc(100% - 220px);
+        object-fit: contain;
+        opacity: 0.08;
+        pointer-events: none;
+      }
+      .head, .meta-grid, .sign-row { position: relative; z-index: 1; }
+      .head { display: flex; justify-content: space-between; gap: 18px; border-bottom: 1px solid #eadfca; padding-bottom: 18px; }
+      .brand h1 { margin: 6px 0 0; font-size: 34px; letter-spacing: 0.04em; text-transform: uppercase; }
+      .brand p, .code p, .body p { margin: 0; }
+      .brand-tag { font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: #8a6634; font-weight: 700; }
+      .code { text-align: right; }
+      .code strong { display: block; font-size: 24px; margin-top: 6px; }
+      .hero { position: relative; z-index: 1; padding: 22px 0; }
+      .hero strong { display: block; font-size: 44px; color: #183153; }
+      .hero span { display: block; margin-top: 10px; font-size: 16px; color: #6a7280; }
+      .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
+      .meta-card {
+        padding: 16px 18px;
+        border: 1px solid #eadfca;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.9);
+      }
+      .meta-card small { display: block; margin-bottom: 6px; color: #8a6634; text-transform: uppercase; letter-spacing: 0.08em; }
+      .meta-card strong { font-size: 22px; }
+      .body { position: relative; z-index: 1; margin-top: 24px; padding: 20px; border-radius: 20px; background: rgba(255,255,255,0.82); border: 1px solid #eadfca; }
+      .body p { line-height: 1.7; font-size: 16px; }
+      .sign-row { display: flex; justify-content: space-between; gap: 24px; margin-top: 80px; }
+      .sign-box { width: 220px; padding-top: 18px; border-top: 1px solid #7c8798; }
+      .foot { position: absolute; left: 28px; right: 28px; bottom: 28px; display: flex; justify-content: space-between; gap: 16px; color: #6a7280; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="card">
+        <img class="watermark" src="${logoUrl}" alt="" />
+        <div class="head">
+          <div class="brand">
+            <span class="brand-tag">Aapoorti Mart</span>
+            <h1>Goods Warrant</h1>
+            <p>Outlet tagged issue instrument</p>
+          </div>
+          <div class="code">
+            <p>Warrant Number</p>
+            <strong>${escapeHtml(warrant.warrantNumber)}</strong>
+          </div>
+        </div>
+        <div class="hero">
+          <strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong>
+          <span>Valid through ${escapeHtml(formatLongDateIst(warrant.validThrough))}</span>
+        </div>
+        <div class="meta-grid">
+          <div class="meta-card"><small>Outlet</small><strong>${escapeHtml(warrant.outlet)}</strong></div>
+          <div class="meta-card"><small>Issue Date</small><strong>${escapeHtml(formatLongDateIst(warrant.issueOn))}</strong></div>
+          <div class="meta-card"><small>Payment Mode</small><strong>${escapeHtml(warrant.paymentMode)}</strong></div>
+          <div class="meta-card"><small>Payment Detail</small><strong>${paymentLine}</strong></div>
+          <div class="meta-card"><small>Bearer</small><strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong></div>
+          <div class="meta-card"><small>Issuer</small><strong>${escapeHtml(warrant.issuerName || warrant.createdBy)}</strong></div>
+        </div>
+        <div class="body">
+          <p>We undertake to deliver Aapoorti Mart goods worth <strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong> to the bearer on or before the validity date printed on this voucher.</p>
+          <p>Outlet: <strong>${escapeHtml(warrant.outlet)}</strong> | Bearer: <strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong> | Issuer: <strong>${escapeHtml(warrant.issuerName || warrant.createdBy)}</strong></p>
+          <p>${escapeHtml(warrant.note || "Use this warrant before the validity date. After expiry it will not be honored.")}</p>
+        </div>
+        <div class="sign-row">
+          <div class="sign-box">Authorized Signatory</div>
+          <div class="sign-box">Outlet Receiver</div>
+        </div>
+        <div class="foot">
+          <span>Generated from Aapoorti B2B accounts module</span>
+          <span>${escapeHtml(warrant.warrantNumber)}</span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`);
+    popup.document.close();
+    popup.focus();
+    window.setTimeout(() => {
+      try {
+        popup.focus();
+        popup.print();
+      } catch {}
+    }, 350);
+  }
+
+  function writeGoodsWarrantSheetPrintDocument(popup: Window, warrants: GoodsWarrantRecord[], totalAmount: number, denominationAmount: number) {
+    const logoUrl = `${API_BASE}/goods-warrants/logo`;
+    const pages = Array.from({ length: Math.ceil(warrants.length / 4) }, (_, pageIndex) => warrants.slice(pageIndex * 4, pageIndex * 4 + 4));
+    popup.document.open();
+    popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Voucher Sheet</title>
+    <style>
+      @page { size: A4; margin: 10mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: "Segoe UI", sans-serif; color: #172033; background: #f7f1e6; }
+      .page { width: 100%; min-height: 277mm; page-break-after: always; }
+      .page:last-child { page-break-after: auto; }
+      .page-head { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 10px; }
+      .page-head strong { display: block; font-size: 26px; }
+      .page-head p { margin: 4px 0 0; color: #68553a; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8mm; }
+      .card {
+        position: relative;
+        min-height: 122mm;
+        border: 2px solid #7f5f73;
+        border-radius: 22px;
+        padding: 14px 18px;
+        background: linear-gradient(180deg, #f6d8ea 0%, #efc6df 100%);
+        overflow: hidden;
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: 8px;
+        border: 2px solid #8d6b7f;
+        border-radius: 16px;
+        pointer-events: none;
+      }
+      .watermark {
+        position: absolute;
+        inset: 22px;
+        width: calc(100% - 44px);
+        height: calc(100% - 44px);
+        object-fit: contain;
+        opacity: 0.11;
+        pointer-events: none;
+      }
+      .card > :not(.watermark) { position: relative; z-index: 1; }
+      .brand-row, .footer-row { display: flex; justify-content: space-between; gap: 12px; }
+      .brand-tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.22em; color: #66485b; font-weight: 800; }
+      .voucher-no { font-size: 11px; color: #5f4e59; text-align: right; }
+      .title { margin: 10px 0 2px; font-size: 24px; text-transform: uppercase; letter-spacing: 0.18em; }
+      .sub { margin: 0; font-size: 12px; color: #5f4e59; }
+      .amount { margin: 12px 0 10px; font-size: 34px; font-weight: 800; color: #1f2033; letter-spacing: 0.04em; }
+      .promise {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.42);
+        border: 1px solid rgba(111, 73, 95, 0.28);
+        font-size: 15px;
+        line-height: 1.55;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #292131;
+      }
+      .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+      .meta-box { padding: 10px 12px; border-radius: 14px; background: rgba(255,255,255,0.56); border: 1px solid rgba(111, 73, 95, 0.28); }
+      .meta-box small { display: block; margin-bottom: 4px; color: #66485b; text-transform: uppercase; letter-spacing: 0.08em; }
+      .meta-box strong { font-size: 14px; }
+      .name-band {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.44);
+        border: 1px dashed rgba(111, 73, 95, 0.42);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .footer-row { margin-top: 14px; font-size: 12px; color: #5f4e59; }
+    </style>
+  </head>
+  <body>
+    ${pages.map((page, pageIndex) => `
+      <section class="page">
+        <div class="page-head">
+          <div>
+            <strong>Aapoorti Mart Voucher Sheet</strong>
+            <p>${escapeHtml(formatCurrencyInr(denominationAmount))} per voucher x ${String(warrants.length)} vouchers = ${escapeHtml(formatCurrencyInr(totalAmount))}</p>
+          </div>
+          <div class="voucher-no">Page ${pageIndex + 1} of ${pages.length}</div>
+        </div>
+        <div class="grid">
+          ${page.map((warrant, itemIndex) => `
+            <article class="card">
+              <img class="watermark" src="${logoUrl}" alt="" />
+              <div class="brand-row">
+                <div>
+                  <div class="brand-tag">Aapoorti Mart</div>
+                  <h1 class="title">Goods Voucher</h1>
+                  <p class="sub">Assured supply against value received</p>
+                </div>
+                <div class="voucher-no">
+                  <div>${escapeHtml(warrant.warrantNumber)}</div>
+                  <div>${pageIndex * 4 + itemIndex + 1} / ${warrants.length}</div>
+                </div>
+              </div>
+              <div class="amount">${escapeHtml(formatCurrencyInr(warrant.amount))}</div>
+              <div class="promise">We undertake to deliver Aapoorti Mart goods worth <strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong> to the bearer on or before <strong>${escapeHtml(formatLongDateIst(warrant.validThrough))}</strong>, against value already received and recorded for this voucher.</div>
+              <div class="meta-grid">
+                <div class="meta-box"><small>Outlet</small><strong>${escapeHtml(warrant.outlet)}</strong></div>
+                <div class="meta-box"><small>Bearer</small><strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong></div>
+                <div class="meta-box"><small>Payment Mode</small><strong>${escapeHtml(warrant.paymentMode)}</strong></div>
+                <div class="meta-box"><small>Issue Date</small><strong>${escapeHtml(formatDateIst(warrant.issueOn))}</strong></div>
+              </div>
+              <div class="name-band">
+                <strong>Issuer:</strong> ${escapeHtml(warrant.issuerName || warrant.createdBy || "Authorized Issuer")}<br />
+                <strong>Bearer:</strong> ${escapeHtml(warrant.issuedTo || "Bearer")}<br />
+                <strong>Note:</strong> ${escapeHtml(warrant.note || "Redeem only at the tagged outlet before expiry.")}
+              </div>
+              <div class="footer-row">
+                <span>Authorized issue</span>
+                <span>Valid only for tagged outlet</span>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `).join("")}
+  </body>
+</html>`);
+    popup.document.close();
+    popup.focus();
+    window.setTimeout(() => {
+      try {
+        popup.focus();
+        popup.print();
+      } catch {}
+    }, 350);
+  }
+
+  function openGoodsWarrantPrintWindow() {
+    if (typeof window === "undefined") return null;
+    return window.open("", "_blank", "width=900,height=1200");
+  }
+
+  function printGoodsWarrant(warrant: GoodsWarrantRecord) {
+    const popup = openGoodsWarrantPrintWindow();
+    if (!popup) return false;
+    writeGoodsWarrantPrintDocument(popup, warrant);
+    return true;
+  }
+
+  async function clearRegister() {
+    if (!sessionToken) return;
+    if (typeof window !== "undefined" && !window.confirm("Delete all previously created vouchers from the register?")) return;
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.delete<{ snapshot: AppSnapshot }>("/goods-warrants", {
+        headers: { authorization: `Bearer ${sessionToken}` }
+      });
+      setSnapshot(data.snapshot);
+      setMessage("Old vouchers removed from the register.");
+    } catch (submitError) {
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Voucher register clear failed.") : "Voucher register clear failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitWarrant(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!sessionToken) return;
+    if (!hasExactDenominationSplit) {
+      setError("Total amount must divide exactly by voucher denomination.");
+      return;
+    }
+    const popup = openGoodsWarrantPrintWindow();
+    if (!popup) {
+      setError("Popup blocked. Allow popups for this site, then try again.");
+      return;
+    }
+    popup.document.write("<!doctype html><html><head><title>Preparing vouchers...</title></head><body style=\"font-family:Segoe UI,sans-serif;padding:24px;\">Preparing voucher sheet...</body></html>");
+    popup.document.close();
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.post<{ warrants: GoodsWarrantRecord[]; snapshot: AppSnapshot }>("/goods-warrants/bulk", {
+        outlet: form.outlet,
+        issuedTo: form.issuedTo.trim() || undefined,
+        issuerName: form.issuerName.trim() || undefined,
+        totalAmount: totalAmountNumber,
+        denominationAmount: denominationAmountNumber,
+        allowedPerMonth: allowedPerMonthNumber,
+        paymentMode: form.paymentMode,
+        chequeNumber: form.paymentMode === "Cheque" ? form.chequeNumber.trim() || undefined : undefined,
+        cashCollectedOn: form.paymentMode === "Cash" ? form.cashCollectedOn : undefined,
+        validThrough: form.validThrough,
+        note: form.note.trim() || undefined
+      }, {
+        headers: { authorization: `Bearer ${sessionToken}` }
+      });
+      setSnapshot(data.snapshot);
+      setMessage(`${data.warrants.length} vouchers created at ${formatCurrencyInr(denominationAmountNumber)} each.`);
+      writeGoodsWarrantSheetPrintDocument(popup, data.warrants, totalAmountNumber, denominationAmountNumber);
+      resetForm();
+    } catch (submitError) {
+      popup.close();
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Voucher creation failed.") : "Voucher creation failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function downloadRegister() {
+    const headers = ["Warrant No", "Outlet", "Bearer", "Issuer", "Amount", "Payment Mode", "Cheque No", "Cash Collected On", "Issue Date", "Valid Through", "Created By", "Created At", "Note"];
+    const rows = snapshot.goodsWarrants.map((item) => ([
+      item.warrantNumber,
+      item.outlet,
+      item.issuedTo || "Bearer",
+      item.issuerName || "",
+      item.amount.toFixed(2),
+      item.paymentMode,
+      item.chequeNumber || "",
+      item.cashCollectedOn || "",
+      item.issueOn,
+      item.validThrough,
+      item.createdBy,
+      item.createdAt,
+      item.note
+    ]));
+    downloadExcelWorkbook(`goods-warrants-${today}.xlsx`, headers, rows, "Goods Warrants");
+  }
+
+  const outletSelected = Boolean(form.outlet);
+
+  return (
+    <TwoCol
+      left={<Panel title="Generate Voucher Sheet" eyebrow="Accounts only">
+        <form className="form-grid" onSubmit={(event) => void submitWarrant(event)}>
+          <label>Outlet<select value={form.outlet} onChange={(event) => setForm((current) => ({ ...current, outlet: event.target.value as GoodsWarrantOutlet | "" }))}>
+            <option value="">Select outlet to continue</option>
+            {goodsWarrantOutlets.map((outlet) => <option key={outlet} value={outlet}>{outlet}</option>)}
+          </select></label>
+          {!outletSelected ? <p className="message wide-field">Select an outlet first. Warrant generation is outlet-tagged.</p> : null}
+          <label>Name of bearer<input value={form.issuedTo} disabled={!outletSelected} placeholder="Enter bearer name" onChange={(event) => setForm((current) => ({ ...current, issuedTo: event.target.value }))} /></label>
+          <label>Name of issuer<input value={form.issuerName} disabled={!outletSelected} placeholder="Enter issuer name" onChange={(event) => setForm((current) => ({ ...current, issuerName: event.target.value }))} /></label>
+          <label>Total amount<input type="number" min="0" step="0.01" value={form.totalAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, totalAmount: event.target.value }))} /></label>
+          <label>Per voucher denomination<input type="number" min="0" step="0.01" value={form.denominationAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, denominationAmount: event.target.value }))} /></label>
+          <label>Allowed per month<input type="number" min="1" step="1" value={form.allowedPerMonth} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, allowedPerMonth: event.target.value }))} /></label>
+          <label>Payment mode<select value={form.paymentMode} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, paymentMode: event.target.value as GoodsWarrantPaymentMode }))}><option value="Cash">Cash</option><option value="Cheque">Cheque</option></select></label>
+          {form.paymentMode === "Cheque"
+            ? <label>Cheque number<input value={form.chequeNumber} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, chequeNumber: event.target.value }))} /></label>
+            : <label>Cash collection date<input type="date" value={form.cashCollectedOn} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, cashCollectedOn: event.target.value }))} /></label>}
+          <label>Valid through<input type="date" value={form.validThrough} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, validThrough: event.target.value }))} /></label>
+          <label className="wide-field">Print note<input value={form.note} disabled={!outletSelected} placeholder="Optional note to print on warrant" onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label>
+          {outletSelected && totalAmountNumber > 0 && denominationAmountNumber > 0 ? (
+            <div className="message wide-field">
+              {hasExactDenominationSplit
+                ? `${formatCurrencyInr(denominationAmountNumber)} per voucher for ${formatCurrencyInr(totalAmountNumber)} = ${voucherCount} vouchers. ${allowedPerMonthNumber} voucher(s) will use the same issue date before moving to the next month from ${formatDateIst(form.paymentMode === "Cash" ? form.cashCollectedOn : today)}.`
+                : `Amount split is not exact. ${formatCurrencyInr(totalAmountNumber)} cannot be divided cleanly into ${formatCurrencyInr(denominationAmountNumber)} vouchers.`}
+            </div>
+          ) : null}
+          <div className="payment-card-actions wide-field">
+            <button className="primary-button" type="submit" disabled={!outletSelected || !hasExactDenominationSplit}>Generate and print</button>
+            <button className="ghost-button" type="button" onClick={resetForm}>Clear</button>
+            <button className="ghost-button" type="button" onClick={() => void clearRegister()} disabled={snapshot.goodsWarrants.length === 0}>Remove old vouchers</button>
+            <button className="ghost-button" type="button" onClick={downloadRegister} disabled={snapshot.goodsWarrants.length === 0}>Download Excel Register</button>
+          </div>
+        </form>
+      </Panel>}
+      right={<Panel title="Voucher Register" eyebrow={`${snapshot.goodsWarrants.length} records`}>
+        {snapshot.goodsWarrants.length === 0 ? <div className="empty-card">No vouchers generated yet.</div> : <div className="report-accordion-list">
+          {snapshot.goodsWarrants.map((item) => (
+            <article key={item.id} className="list-card report-accordion-card">
+              <div className="report-accordion-toggle goods-warrant-row">
+                <div className="report-accordion-main">
+                  <span className="small-label">{item.warrantNumber}</span>
+                  <strong>{item.outlet}</strong>
+                  <p>{item.issuedTo || "Bearer"} | {item.issuerName || item.createdBy} | {item.paymentMode}</p>
+                </div>
+                <div className="report-accordion-vitals">
+                  <span><small>Amount</small><strong>{formatCurrencyInr(item.amount)}</strong></span>
+                  <span><small>Valid Through</small><strong>{formatDateIst(item.validThrough)}</strong></span>
+                  <span><small>Issue Date</small><strong>{formatDateIst(item.issueOn)}</strong></span>
+                </div>
+                <div className="report-accordion-side">
+                  <button className="ghost-button" type="button" onClick={() => printGoodsWarrant(item)}>Print</button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>}
+      </Panel>}
     />
   );
 }

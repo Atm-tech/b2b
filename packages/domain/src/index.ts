@@ -88,6 +88,26 @@ export type PaymentMode = "Cash" | "Card" | "UPI" | "NEFT" | "RTGS" | "Cheque";
 export type CashTiming = "In Hand" | "At Delivery" | "Later";
 export type VerificationStatus = "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved";
 
+export type GoodsWarrantOutlet = "Awadhpuri" | "Koh E Fiza" | "New Market" | "Kolar" | "Indrapuri";
+export type GoodsWarrantPaymentMode = "Cash" | "Cheque";
+
+export type GoodsWarrantRecord = {
+  id: string;
+  warrantNumber: string;
+  outlet: GoodsWarrantOutlet;
+  issuedTo: string;
+  issuerName: string;
+  amount: number;
+  paymentMode: GoodsWarrantPaymentMode;
+  chequeNumber?: string;
+  cashCollectedOn?: string;
+  issueOn: string;
+  validThrough: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type PaymentMethodSetting = {
   code: PaymentMode;
   label: string;
@@ -450,6 +470,7 @@ export type AppSnapshot = {
   deliveryTasks: DeliveryTask[];
   deliveryDockets: DeliveryDocket[];
   deliveryConsignments: DeliveryConsignment[];
+  goodsWarrants: GoodsWarrantRecord[];
   notes: NoteRecord[];
 };
 
