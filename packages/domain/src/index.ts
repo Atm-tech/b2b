@@ -97,6 +97,7 @@ export type GoodsWarrantRecord = {
   outlet: GoodsWarrantOutlet;
   issuedTo: string;
   issuerName: string;
+  receivedAmount: number;
   amount: number;
   paymentMode: GoodsWarrantPaymentMode;
   chequeNumber?: string;

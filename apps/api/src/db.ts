@@ -268,6 +268,7 @@ async function ensureCompatibilityColumns() {
       outlet TEXT NOT NULL,
       issued_to TEXT NOT NULL DEFAULT '',
       issuer_name TEXT NOT NULL DEFAULT '',
+      received_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
       amount DOUBLE PRECISION NOT NULL,
       payment_mode TEXT NOT NULL,
       cheque_number TEXT,
@@ -280,9 +281,15 @@ async function ensureCompatibilityColumns() {
     );
     ALTER TABLE goods_warrants ADD COLUMN IF NOT EXISTS issuer_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE goods_warrants ADD COLUMN IF NOT EXISTS issue_on DATE NOT NULL DEFAULT CURRENT_DATE;
+    ALTER TABLE goods_warrants ADD COLUMN IF NOT EXISTS received_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     UPDATE goods_warrants
     SET issue_on = COALESCE(issue_on, cash_collected_on, DATE(created_at))
     WHERE issue_on IS NULL;
+    UPDATE goods_warrants
+    SET received_amount = CASE
+      WHEN received_amount IS NULL OR received_amount <= 0 THEN amount
+      ELSE received_amount
+    END;
   `);
 }
 
@@ -839,6 +846,7 @@ async function mapGoodsWarrants(client?: DbClient): Promise<GoodsWarrantRecord[]
     outlet: stringValue(row.outlet) as GoodsWarrantOutlet,
     issuedTo: stringValue(row.issued_to),
     issuerName: stringValue(row.issuer_name),
+    receivedAmount: numberValue(row.received_amount) || numberValue(row.amount),
     amount: numberValue(row.amount),
     paymentMode: stringValue(row.payment_mode) as GoodsWarrantPaymentMode,
     chequeNumber: row.cheque_number ? stringValue(row.cheque_number) : undefined,
@@ -1177,6 +1185,15 @@ function addMonthsToDateKey(dateKey: string, monthsToAdd: number) {
   return `${String(targetYear).padStart(4, "0")}-${String(normalizedMonth + 1).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
 }
 
+function subtractDaysFromDateKey(dateKey: string, daysToSubtract: number) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid date provided for goods warrant schedule.");
+  }
+  date.setUTCDate(date.getUTCDate() - daysToSubtract);
+  return date.toISOString().slice(0, 10);
+}
+
 async function nextGoodsWarrantNumber(client: DbClient, createdAt: string) {
   const prefix = `GW-${warrantDateToken(createdAt)}-`;
   const latest = await one<{ warrant_number: string }>(
@@ -1197,6 +1214,7 @@ export async function createGoodsWarrant(payload: {
   outlet: GoodsWarrantOutlet;
   issuedTo?: string;
   issuerName?: string;
+  receivedAmount?: number;
   amount: number;
   paymentMode: GoodsWarrantPaymentMode;
   chequeNumber?: string;
@@ -1206,6 +1224,8 @@ export async function createGoodsWarrant(payload: {
 }, currentUser: CurrentUser) {
   await ready;
   if (!(payload.amount > 0)) throw new Error("Amount must be greater than zero.");
+  const receivedAmount = payload.receivedAmount === undefined ? payload.amount : payload.receivedAmount;
+  if (!(receivedAmount >= 0)) throw new Error("Received amount cannot be negative.");
   if (!payload.validThrough?.trim()) throw new Error("Valid through date is required.");
   if (payload.paymentMode === "Cheque" && !payload.chequeNumber?.trim()) {
     throw new Error("Cheque number is required for cheque warrants.");
@@ -1226,14 +1246,15 @@ export async function createGoodsWarrant(payload: {
     const validThrough = operationalDate(payload.validThrough).slice(0, 10);
     await query(
       `INSERT INTO goods_warrants (
-        id, warrant_number, outlet, issued_to, issuer_name, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        id, warrant_number, outlet, issued_to, issuer_name, received_amount, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         id,
         warrantNumber,
         payload.outlet,
         issuedTo,
         issuerName,
+        Math.max(receivedAmount || 0, 0),
         Math.max(payload.amount || 0, 0),
         payload.paymentMode,
         chequeNumber || null,
@@ -1252,6 +1273,7 @@ export async function createGoodsWarrant(payload: {
       outlet: payload.outlet,
       issuedTo,
       issuerName,
+      receivedAmount: Math.max(receivedAmount || 0, 0),
       amount: Math.max(payload.amount || 0, 0),
       paymentMode: payload.paymentMode,
       chequeNumber: chequeNumber || undefined,
@@ -1274,19 +1296,21 @@ export async function createBulkGoodsWarrants(payload: {
   outlet: GoodsWarrantOutlet;
   issuedTo?: string;
   issuerName?: string;
+  receivedAmount: number;
   totalAmount: number;
   denominationAmount: number;
   allowedPerMonth?: number;
   paymentMode: GoodsWarrantPaymentMode;
   chequeNumber?: string;
   cashCollectedOn?: string;
-  validThrough: string;
+  issueStartOn: string;
   note?: string;
 }, currentUser: CurrentUser) {
   await ready;
+  if (!(payload.receivedAmount >= 0)) throw new Error("Received amount cannot be negative.");
   if (!(payload.totalAmount > 0)) throw new Error("Total amount must be greater than zero.");
   if (!(payload.denominationAmount > 0)) throw new Error("Voucher denomination must be greater than zero.");
-  if (!payload.validThrough?.trim()) throw new Error("Valid through date is required.");
+  if (!payload.issueStartOn?.trim()) throw new Error("First issue date is required.");
   if (payload.allowedPerMonth !== undefined && (!Number.isFinite(payload.allowedPerMonth) || payload.allowedPerMonth <= 0)) {
     throw new Error("Allowed vouchers per month must be greater than zero.");
   }
@@ -1309,25 +1333,27 @@ export async function createBulkGoodsWarrants(payload: {
   const issuerName = payload.issuerName?.trim() || "";
   const chequeNumber = payload.paymentMode === "Cheque" ? (payload.chequeNumber?.trim() || "") : "";
   const cashCollectedOn = payload.paymentMode === "Cash" ? operationalDate(payload.cashCollectedOn).slice(0, 10) : null;
-  const issueStartDate = cashCollectedOn || createdAt.slice(0, 10);
-  const validThrough = operationalDate(payload.validThrough).slice(0, 10);
+  const issueStartDate = operationalDate(payload.issueStartOn).slice(0, 10);
   const allowedPerMonth = Math.max(1, Math.floor(payload.allowedPerMonth || 1));
+  const receivedAmountPerVoucher = payload.receivedAmount / count;
   const warrants: GoodsWarrantRecord[] = [];
   await withTransaction(async (client) => {
     for (let index = 0; index < count; index += 1) {
       const warrantNumber = await nextGoodsWarrantNumber(client, createdAt);
       const id = makeId("GW");
       const issueOn = addMonthsToDateKey(issueStartDate, Math.floor(index / allowedPerMonth));
+      const validThrough = subtractDaysFromDateKey(addMonthsToDateKey(issueOn, 1), 1);
       await query(
         `INSERT INTO goods_warrants (
-          id, warrant_number, outlet, issued_to, issuer_name, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          id, warrant_number, outlet, issued_to, issuer_name, received_amount, amount, payment_mode, cheque_number, cash_collected_on, issue_on, valid_through, note, created_by, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           id,
           warrantNumber,
           payload.outlet,
           issuedTo,
           issuerName,
+          Math.max(receivedAmountPerVoucher || 0, 0),
           Math.max(payload.denominationAmount || 0, 0),
           payload.paymentMode,
           chequeNumber || null,
@@ -1346,6 +1372,7 @@ export async function createBulkGoodsWarrants(payload: {
         outlet: payload.outlet,
         issuedTo,
         issuerName,
+        receivedAmount: Math.max(receivedAmountPerVoucher || 0, 0),
         amount: Math.max(payload.denominationAmount || 0, 0),
         paymentMode: payload.paymentMode,
         chequeNumber: chequeNumber || undefined,
@@ -1367,6 +1394,65 @@ export async function createBulkGoodsWarrants(payload: {
 export async function clearGoodsWarrants() {
   await ready;
   await query("DELETE FROM goods_warrants");
+  return {
+    snapshot: await getSnapshot()
+  };
+}
+
+export async function updateGoodsWarrant(payload: {
+  id: string;
+  issuedTo?: string;
+  issuerName?: string;
+  receivedAmount: number;
+  amount: number;
+  paymentMode: GoodsWarrantPaymentMode;
+  chequeNumber?: string;
+  cashCollectedOn?: string;
+  validThrough: string;
+  note?: string;
+}) {
+  await ready;
+  if (!payload.id.trim()) throw new Error("Voucher id is required.");
+  if (!(payload.receivedAmount >= 0)) throw new Error("Received amount cannot be negative.");
+  if (!(payload.amount > 0)) throw new Error("Voucher amount must be greater than zero.");
+  if (!payload.validThrough?.trim()) throw new Error("Valid through date is required.");
+  if (payload.paymentMode === "Cheque" && !payload.chequeNumber?.trim()) {
+    throw new Error("Cheque number is required for cheque vouchers.");
+  }
+  if (payload.paymentMode === "Cash" && !payload.cashCollectedOn?.trim()) {
+    throw new Error("Cash collection date is required for cash vouchers.");
+  }
+  const issuedTo = payload.issuedTo?.trim() || "";
+  const issuerName = payload.issuerName?.trim() || "";
+  const chequeNumber = payload.paymentMode === "Cheque" ? (payload.chequeNumber?.trim() || "") : "";
+  const cashCollectedOn = payload.paymentMode === "Cash" ? operationalDate(payload.cashCollectedOn).slice(0, 10) : null;
+  const validThrough = operationalDate(payload.validThrough).slice(0, 10);
+  await query(
+    `UPDATE goods_warrants
+     SET issued_to = $2,
+         issuer_name = $3,
+         received_amount = $4,
+         amount = $5,
+         payment_mode = $6,
+         cheque_number = $7,
+         cash_collected_on = $8,
+         issue_on = COALESCE($8, issue_on),
+         valid_through = $9,
+         note = $10
+     WHERE id = $1`,
+    [
+      payload.id.trim(),
+      issuedTo,
+      issuerName,
+      Math.max(payload.receivedAmount || 0, 0),
+      Math.max(payload.amount || 0, 0),
+      payload.paymentMode,
+      chequeNumber || null,
+      cashCollectedOn,
+      validThrough,
+      payload.note?.trim() || ""
+    ]
+  );
   return {
     snapshot: await getSnapshot()
   };

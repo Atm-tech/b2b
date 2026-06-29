@@ -44,6 +44,7 @@ const ACTIVE_VIEW_KEY = "aapoorti-b2b-active-view";
 const DELIVERY_MANAGER_WAREHOUSE_KEY = "aapoorti-b2b-dm-warehouse";
 const WORKSPACE_DRAFT_KEY = "aapoorti-b2b-workspace";
 const SIDEBAR_COLLAPSED_KEY = "aapoorti-b2b-sidebar-collapsed";
+const COMPANY_GST_NUMBER = "23AAECA1547R1ZH";
 const api = axios.create({
   baseURL: API_BASE
 });
@@ -523,6 +524,24 @@ function formatLongDateIst(value?: string) {
   });
 }
 
+function addOneMonthForVoucherPreview(dateKey: string) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return dateKey;
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const nextMonthLastDay = new Date(Date.UTC(year, month + 2, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month + 1, Math.min(day, nextMonthLastDay))).toISOString().slice(0, 10);
+}
+
+function subtractOneDayFromNextMonth(dateKey: string) {
+  const nextCycleDate = addOneMonthForVoucherPreview(dateKey);
+  const date = new Date(`${nextCycleDate}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return dateKey;
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-IN", {
     minimumFractionDigits: 2,
@@ -883,6 +902,7 @@ type InvoicePdfConfig = {
   rows: InvoicePdfRow[];
   totals: Array<{ label: string; value: number }>;
   nonGst: boolean;
+  companyGstNumber?: string;
 };
 
 function safePdfFileName(value: string) {
@@ -1051,7 +1071,9 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  if (!config.nonGst) {
+  if (!config.nonGst && config.companyGstNumber) {
+    doc.text(`AAPOORTI B2B | GSTIN: ${config.companyGstNumber}`, margin + 4, cursorY + 6);
+  } else if (!config.nonGst) {
     doc.text("AAPOORTI B2B", margin + 4, cursorY + 6);
   }
   doc.setFontSize(18);
@@ -1077,7 +1099,7 @@ function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Warehouse", config.warehouseName);
   cursorY += 20;
   drawMetaCard(margin, cursorY, metaWidth, "Date", formatShortDate(config.createdAt));
-  drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Bill Type", config.nonGst ? "Estimate" : "GST");
+  drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, config.nonGst ? "Bill Type" : "AAPOORTI GSTIN", config.nonGst ? "Estimate" : invoiceValue(config.companyGstNumber));
   cursorY += 20;
   drawMetaCard(margin, cursorY, metaWidth, "Contact", config.contactName);
   drawMetaCard(margin + metaWidth + 6, cursorY, metaWidth, "Mobile", config.mobileNumber);
@@ -1200,7 +1222,8 @@ async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: strin
         { label: "GST", value: group.lines.reduce((sum, line) => sum + line.gstAmount, 0) },
         { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount, 0) }
       ],
-    nonGst
+    nonGst,
+    companyGstNumber: nonGst ? undefined : COMPANY_GST_NUMBER
   });
 }
 
@@ -1250,7 +1273,8 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
         { label: "Delivery", value: group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0) },
         { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }
       ],
-    nonGst
+    nonGst,
+    companyGstNumber: nonGst ? undefined : COMPANY_GST_NUMBER
   });
 }
 
@@ -12863,6 +12887,7 @@ function GoodsWarrantView({
     outlet: "" as GoodsWarrantOutlet | "",
     issuedTo: "",
     issuerName: "",
+    receivedAmount: "",
     totalAmount: "",
     denominationAmount: "500",
     allowedPerMonth: "1",
@@ -12878,6 +12903,7 @@ function GoodsWarrantView({
       outlet: "",
       issuedTo: "",
       issuerName: "",
+      receivedAmount: "",
       totalAmount: "",
       denominationAmount: "500",
       allowedPerMonth: "1",
@@ -12889,11 +12915,26 @@ function GoodsWarrantView({
     });
   }
 
+  const [editingWarrantId, setEditingWarrantId] = useState("");
+  const [editDrafts, setEditDrafts] = useState<Record<string, {
+    issuedTo: string;
+    issuerName: string;
+    receivedAmount: string;
+    amount: string;
+    paymentMode: GoodsWarrantPaymentMode;
+    chequeNumber: string;
+    cashCollectedOn: string;
+    validThrough: string;
+    note: string;
+  }>>({});
+
+  const receivedAmountNumber = Number(form.receivedAmount || 0);
   const totalAmountNumber = Number(form.totalAmount || 0);
   const denominationAmountNumber = Number(form.denominationAmount || 0);
   const allowedPerMonthNumber = Math.max(1, Math.floor(Number(form.allowedPerMonth || 0) || 1));
   const rawVoucherCount = denominationAmountNumber > 0 ? totalAmountNumber / denominationAmountNumber : 0;
   const voucherCount = Number.isFinite(rawVoucherCount) ? Math.round(rawVoucherCount) : 0;
+  const bonusValueNumber = Math.max(totalAmountNumber - receivedAmountNumber, 0);
   const hasExactDenominationSplit =
     totalAmountNumber > 0 &&
     denominationAmountNumber > 0 &&
@@ -12984,11 +13025,14 @@ function GoodsWarrantView({
           <div class="meta-card"><small>Issue Date</small><strong>${escapeHtml(formatLongDateIst(warrant.issueOn))}</strong></div>
           <div class="meta-card"><small>Payment Mode</small><strong>${escapeHtml(warrant.paymentMode)}</strong></div>
           <div class="meta-card"><small>Payment Detail</small><strong>${paymentLine}</strong></div>
+          <div class="meta-card"><small>Value Received</small><strong>${escapeHtml(formatCurrencyInr(warrant.receivedAmount || warrant.amount))}</strong></div>
+          <div class="meta-card"><small>Voucher Worth</small><strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong></div>
           <div class="meta-card"><small>Bearer</small><strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong></div>
           <div class="meta-card"><small>Issuer</small><strong>${escapeHtml(warrant.issuerName || warrant.createdBy)}</strong></div>
         </div>
         <div class="body">
           <p>We undertake to deliver Aapoorti Mart goods worth <strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong> to the bearer on or before the validity date printed on this voucher.</p>
+          ${warrant.receivedAmount && Math.abs((warrant.receivedAmount || 0) - warrant.amount) > 0.009 ? `<p>Value received for this voucher: <strong>${escapeHtml(formatCurrencyInr(warrant.receivedAmount))}</strong>. Promotional uplift issued: <strong>${escapeHtml(formatCurrencyInr(Math.max(warrant.amount - warrant.receivedAmount, 0)))}</strong>.</p>` : ""}
           <p>Outlet: <strong>${escapeHtml(warrant.outlet)}</strong> | Bearer: <strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong> | Issuer: <strong>${escapeHtml(warrant.issuerName || warrant.createdBy)}</strong></p>
           <p>${escapeHtml(warrant.note || "Use this warrant before the validity date. After expiry it will not be honored.")}</p>
         </div>
@@ -13014,7 +13058,7 @@ function GoodsWarrantView({
     }, 350);
   }
 
-  function writeGoodsWarrantSheetPrintDocument(popup: Window, warrants: GoodsWarrantRecord[], totalAmount: number, denominationAmount: number) {
+  function writeGoodsWarrantSheetPrintDocument(popup: Window, warrants: GoodsWarrantRecord[], totalAmount: number, denominationAmount: number, receivedAmount: number) {
     const logoUrl = `${API_BASE}/goods-warrants/logo`;
     const pages = Array.from({ length: Math.ceil(warrants.length / 4) }, (_, pageIndex) => warrants.slice(pageIndex * 4, pageIndex * 4 + 4));
     popup.document.open();
@@ -13101,6 +13145,7 @@ function GoodsWarrantView({
           <div>
             <strong>Aapoorti Mart Voucher Sheet</strong>
             <p>${escapeHtml(formatCurrencyInr(denominationAmount))} per voucher x ${String(warrants.length)} vouchers = ${escapeHtml(formatCurrencyInr(totalAmount))}</p>
+            <p>Value received: ${escapeHtml(formatCurrencyInr(receivedAmount))}${receivedAmount < totalAmount ? ` | Promotional uplift: ${escapeHtml(formatCurrencyInr(totalAmount - receivedAmount))}` : ""}</p>
           </div>
           <div class="voucher-no">Page ${pageIndex + 1} of ${pages.length}</div>
         </div>
@@ -13126,6 +13171,8 @@ function GoodsWarrantView({
                 <div class="meta-box"><small>Bearer</small><strong>${escapeHtml(warrant.issuedTo || "Bearer")}</strong></div>
                 <div class="meta-box"><small>Payment Mode</small><strong>${escapeHtml(warrant.paymentMode)}</strong></div>
                 <div class="meta-box"><small>Issue Date</small><strong>${escapeHtml(formatDateIst(warrant.issueOn))}</strong></div>
+                <div class="meta-box"><small>Value Received</small><strong>${escapeHtml(formatCurrencyInr(warrant.receivedAmount || warrant.amount))}</strong></div>
+                <div class="meta-box"><small>Voucher Worth</small><strong>${escapeHtml(formatCurrencyInr(warrant.amount))}</strong></div>
               </div>
               <div class="name-band">
                 <strong>Issuer:</strong> ${escapeHtml(warrant.issuerName || warrant.createdBy || "Authorized Issuer")}<br />
@@ -13163,6 +13210,75 @@ function GoodsWarrantView({
     if (!popup) return false;
     writeGoodsWarrantPrintDocument(popup, warrant);
     return true;
+  }
+
+  function openEditWarrant(item: GoodsWarrantRecord) {
+    setEditingWarrantId(item.id);
+    setEditDrafts((current) => ({
+      ...current,
+      [item.id]: {
+        issuedTo: item.issuedTo || "",
+        issuerName: item.issuerName || "",
+        receivedAmount: String(item.receivedAmount || item.amount || 0),
+        amount: String(item.amount || 0),
+        paymentMode: item.paymentMode,
+        chequeNumber: item.chequeNumber || "",
+        cashCollectedOn: item.cashCollectedOn || today,
+        validThrough: item.validThrough || today,
+        note: item.note || ""
+      }
+    }));
+  }
+
+  function setEditDraftValue(id: string, key: "issuedTo" | "issuerName" | "receivedAmount" | "amount" | "paymentMode" | "chequeNumber" | "cashCollectedOn" | "validThrough" | "note", value: string) {
+    setEditDrafts((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] || {
+          issuedTo: "",
+          issuerName: "",
+          receivedAmount: "0",
+          amount: "0",
+          paymentMode: "Cash" as GoodsWarrantPaymentMode,
+          chequeNumber: "",
+          cashCollectedOn: today,
+          validThrough: today,
+          note: ""
+        }),
+        [key]: value
+      }
+    }));
+  }
+
+  async function saveWarrantEdit(id: string) {
+    if (!sessionToken) return;
+    const draft = editDrafts[id];
+    if (!draft) return;
+    setLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const { data } = await api.put<{ snapshot: AppSnapshot }>(`/goods-warrants/${id}`, {
+        issuedTo: draft.issuedTo.trim() || undefined,
+        issuerName: draft.issuerName.trim() || undefined,
+        receivedAmount: Number(draft.receivedAmount || 0),
+        amount: Number(draft.amount || 0),
+        paymentMode: draft.paymentMode,
+        chequeNumber: draft.paymentMode === "Cheque" ? draft.chequeNumber.trim() || undefined : undefined,
+        cashCollectedOn: draft.paymentMode === "Cash" ? draft.cashCollectedOn : undefined,
+        validThrough: draft.validThrough,
+        note: draft.note.trim() || undefined
+      }, {
+        headers: { authorization: `Bearer ${sessionToken}` }
+      });
+      setSnapshot(data.snapshot);
+      setEditingWarrantId("");
+      setMessage("Voucher updated.");
+    } catch (submitError) {
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Voucher update failed.") : "Voucher update failed.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function clearRegister() {
@@ -13206,20 +13322,21 @@ function GoodsWarrantView({
         outlet: form.outlet,
         issuedTo: form.issuedTo.trim() || undefined,
         issuerName: form.issuerName.trim() || undefined,
+        receivedAmount: receivedAmountNumber,
         totalAmount: totalAmountNumber,
         denominationAmount: denominationAmountNumber,
         allowedPerMonth: allowedPerMonthNumber,
         paymentMode: form.paymentMode,
         chequeNumber: form.paymentMode === "Cheque" ? form.chequeNumber.trim() || undefined : undefined,
         cashCollectedOn: form.paymentMode === "Cash" ? form.cashCollectedOn : undefined,
-        validThrough: form.validThrough,
+        issueStartOn: form.validThrough,
         note: form.note.trim() || undefined
       }, {
         headers: { authorization: `Bearer ${sessionToken}` }
       });
       setSnapshot(data.snapshot);
       setMessage(`${data.warrants.length} vouchers created at ${formatCurrencyInr(denominationAmountNumber)} each.`);
-      writeGoodsWarrantSheetPrintDocument(popup, data.warrants, totalAmountNumber, denominationAmountNumber);
+      writeGoodsWarrantSheetPrintDocument(popup, data.warrants, totalAmountNumber, denominationAmountNumber, receivedAmountNumber);
       resetForm();
     } catch (submitError) {
       popup.close();
@@ -13230,13 +13347,15 @@ function GoodsWarrantView({
   }
 
   function downloadRegister() {
-    const headers = ["Warrant No", "Outlet", "Bearer", "Issuer", "Amount", "Payment Mode", "Cheque No", "Cash Collected On", "Issue Date", "Valid Through", "Created By", "Created At", "Note"];
+    const headers = ["Warrant No", "Outlet", "Bearer", "Issuer", "Received Amount", "Voucher Worth", "Bonus Value", "Payment Mode", "Cheque No", "Cash Collected On", "Issue Date", "Valid Through", "Created By", "Created At", "Note"];
     const rows = snapshot.goodsWarrants.map((item) => ([
       item.warrantNumber,
       item.outlet,
       item.issuedTo || "Bearer",
       item.issuerName || "",
+      (item.receivedAmount || item.amount).toFixed(2),
       item.amount.toFixed(2),
+      Math.max(item.amount - (item.receivedAmount || item.amount), 0).toFixed(2),
       item.paymentMode,
       item.chequeNumber || "",
       item.cashCollectedOn || "",
@@ -13262,28 +13381,30 @@ function GoodsWarrantView({
           {!outletSelected ? <p className="message wide-field">Select an outlet first. Warrant generation is outlet-tagged.</p> : null}
           <label>Name of bearer<input value={form.issuedTo} disabled={!outletSelected} placeholder="Enter bearer name" onChange={(event) => setForm((current) => ({ ...current, issuedTo: event.target.value }))} /></label>
           <label>Name of issuer<input value={form.issuerName} disabled={!outletSelected} placeholder="Enter issuer name" onChange={(event) => setForm((current) => ({ ...current, issuerName: event.target.value }))} /></label>
-          <label>Total amount<input type="number" min="0" step="0.01" value={form.totalAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, totalAmount: event.target.value }))} /></label>
+          <label>Money received<input type="number" min="0" step="0.01" value={form.receivedAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, receivedAmount: event.target.value }))} /></label>
+          <label>Voucher worth to issue<input type="number" min="0" step="0.01" value={form.totalAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, totalAmount: event.target.value }))} /></label>
           <label>Per voucher denomination<input type="number" min="0" step="0.01" value={form.denominationAmount} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, denominationAmount: event.target.value }))} /></label>
           <label>Allowed per month<input type="number" min="1" step="1" value={form.allowedPerMonth} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, allowedPerMonth: event.target.value }))} /></label>
           <label>Payment mode<select value={form.paymentMode} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, paymentMode: event.target.value as GoodsWarrantPaymentMode }))}><option value="Cash">Cash</option><option value="Cheque">Cheque</option></select></label>
           {form.paymentMode === "Cheque"
             ? <label>Cheque number<input value={form.chequeNumber} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, chequeNumber: event.target.value }))} /></label>
             : <label>Cash collection date<input type="date" value={form.cashCollectedOn} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, cashCollectedOn: event.target.value }))} /></label>}
-          <label>Valid through<input type="date" value={form.validThrough} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, validThrough: event.target.value }))} /></label>
+          <label>First voucher issue date<input type="date" value={form.validThrough} disabled={!outletSelected} onChange={(event) => setForm((current) => ({ ...current, validThrough: event.target.value }))} /></label>
           <label className="wide-field">Print note<input value={form.note} disabled={!outletSelected} placeholder="Optional note to print on warrant" onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label>
           {outletSelected && totalAmountNumber > 0 && denominationAmountNumber > 0 ? (
             <div className="message wide-field">
               {hasExactDenominationSplit
-                ? `${formatCurrencyInr(denominationAmountNumber)} per voucher for ${formatCurrencyInr(totalAmountNumber)} = ${voucherCount} vouchers. ${allowedPerMonthNumber} voucher(s) will use the same issue date before moving to the next month from ${formatDateIst(form.paymentMode === "Cash" ? form.cashCollectedOn : today)}.`
+                ? `${formatCurrencyInr(receivedAmountNumber || 0)} received, ${formatCurrencyInr(totalAmountNumber)} voucher worth issued, bonus value ${formatCurrencyInr(bonusValueNumber)}. ${formatCurrencyInr(denominationAmountNumber)} per voucher = ${voucherCount} vouchers. ${allowedPerMonthNumber} voucher(s) per cycle will be issued from ${formatDateIst(form.validThrough)} to ${formatDateIst(subtractOneDayFromNextMonth(form.validThrough))}, then the next ${allowedPerMonthNumber} will start on ${formatDateIst(addOneMonthForVoucherPreview(form.validThrough))}.`
                 : `Amount split is not exact. ${formatCurrencyInr(totalAmountNumber)} cannot be divided cleanly into ${formatCurrencyInr(denominationAmountNumber)} vouchers.`}
             </div>
           ) : null}
           <div className="payment-card-actions wide-field">
-            <button className="primary-button" type="submit" disabled={!outletSelected || !hasExactDenominationSplit}>Generate and print</button>
+            <button className="primary-button" type="submit" disabled={!outletSelected || !hasExactDenominationSplit || receivedAmountNumber < 0}>Generate and print</button>
             <button className="ghost-button" type="button" onClick={resetForm}>Clear</button>
             <button className="ghost-button" type="button" onClick={() => void clearRegister()} disabled={snapshot.goodsWarrants.length === 0}>Remove old vouchers</button>
             <button className="ghost-button" type="button" onClick={downloadRegister} disabled={snapshot.goodsWarrants.length === 0}>Download Excel Register</button>
           </div>
+          <div className="message wide-field">For old voucher bonus issue, set `Money received` to `0`, enter only the extra `Voucher worth to issue`, and mention the old batch in the note.</div>
         </form>
       </Panel>}
       right={<Panel title="Voucher Register" eyebrow={`${snapshot.goodsWarrants.length} records`}>
@@ -13297,14 +13418,33 @@ function GoodsWarrantView({
                   <p>{item.issuedTo || "Bearer"} | {item.issuerName || item.createdBy} | {item.paymentMode}</p>
                 </div>
                 <div className="report-accordion-vitals">
-                  <span><small>Amount</small><strong>{formatCurrencyInr(item.amount)}</strong></span>
+                  <span><small>Received</small><strong>{formatCurrencyInr(item.receivedAmount || item.amount)}</strong></span>
+                  <span><small>Voucher Worth</small><strong>{formatCurrencyInr(item.amount)}</strong></span>
                   <span><small>Valid Through</small><strong>{formatDateIst(item.validThrough)}</strong></span>
                   <span><small>Issue Date</small><strong>{formatDateIst(item.issueOn)}</strong></span>
                 </div>
                 <div className="report-accordion-side">
                   <button className="ghost-button" type="button" onClick={() => printGoodsWarrant(item)}>Print</button>
+                  <button className="ghost-button" type="button" onClick={() => openEditWarrant(item)}>{editingWarrantId === item.id ? "Editing" : "Edit"}</button>
                 </div>
               </div>
+              {editingWarrantId === item.id ? <div className="form-grid top-gap">
+                <label>Bearer<input value={editDrafts[item.id]?.issuedTo || ""} onChange={(e) => setEditDraftValue(item.id, "issuedTo", e.target.value)} /></label>
+                <label>Issuer<input value={editDrafts[item.id]?.issuerName || ""} onChange={(e) => setEditDraftValue(item.id, "issuerName", e.target.value)} /></label>
+                <label>Money received<input type="number" min="0" step="0.01" value={editDrafts[item.id]?.receivedAmount || ""} onChange={(e) => setEditDraftValue(item.id, "receivedAmount", e.target.value)} /></label>
+                <label>Voucher worth<input type="number" min="0" step="0.01" value={editDrafts[item.id]?.amount || ""} onChange={(e) => setEditDraftValue(item.id, "amount", e.target.value)} /></label>
+                <label>Payment mode<select value={editDrafts[item.id]?.paymentMode || "Cash"} onChange={(e) => setEditDraftValue(item.id, "paymentMode", e.target.value)}><option value="Cash">Cash</option><option value="Cheque">Cheque</option></select></label>
+                {(editDrafts[item.id]?.paymentMode || "Cash") === "Cheque"
+                  ? <label>Cheque number<input value={editDrafts[item.id]?.chequeNumber || ""} onChange={(e) => setEditDraftValue(item.id, "chequeNumber", e.target.value)} /></label>
+                  : <label>Cash collection date<input type="date" value={editDrafts[item.id]?.cashCollectedOn || today} onChange={(e) => setEditDraftValue(item.id, "cashCollectedOn", e.target.value)} /></label>}
+                <label>Valid through<input type="date" value={editDrafts[item.id]?.validThrough || today} onChange={(e) => setEditDraftValue(item.id, "validThrough", e.target.value)} /></label>
+                <label className="wide-field">Note<input value={editDrafts[item.id]?.note || ""} onChange={(e) => setEditDraftValue(item.id, "note", e.target.value)} /></label>
+                <div className="message wide-field">Bonus value: {formatCurrencyInr(Math.max(Number(editDrafts[item.id]?.amount || 0) - Number(editDrafts[item.id]?.receivedAmount || 0), 0))}</div>
+                <div className="payment-card-actions wide-field">
+                  <button className="primary-button" type="button" onClick={() => void saveWarrantEdit(item.id)}>Save voucher</button>
+                  <button className="ghost-button" type="button" onClick={() => setEditingWarrantId("")}>Cancel</button>
+                </div>
+              </div> : null}
             </article>
           ))}
         </div>}
