@@ -17,6 +17,7 @@ import {
   createDeliveryConsignment,
   createDeliveryTask,
   createGoodsWarrant,
+  updateGoodsWarrant,
   mergeDeliveryTasks,
   createNote,
   createPayment,
@@ -700,18 +701,41 @@ app.post("/goods-warrants/bulk", async (req, res) => {
         outlet: requiredString(req.body?.outlet, "Outlet") as any,
         issuedTo: optionalString(req.body?.issuedTo),
         issuerName: optionalString(req.body?.issuerName),
+        receivedAmount: requiredNumber(req.body?.receivedAmount, "Received amount"),
         totalAmount: requiredNumber(req.body?.totalAmount, "Total amount"),
         denominationAmount: requiredNumber(req.body?.denominationAmount, "Voucher denomination"),
         allowedPerMonth: req.body?.allowedPerMonth === undefined ? undefined : requiredNumber(req.body?.allowedPerMonth, "Allowed vouchers per month"),
         paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as "Cash" | "Cheque",
         chequeNumber: optionalString(req.body?.chequeNumber),
         cashCollectedOn: optionalString(req.body?.cashCollectedOn),
-        validThrough: requiredString(req.body?.validThrough, "Valid through"),
+        issueStartOn: requiredString(req.body?.issueStartOn, "First issue date"),
         note: optionalString(req.body?.note)
       },
       currentUser
     );
     res.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error.";
+    res.status(400).json({ message });
+  }
+});
+
+app.put("/goods-warrants/:id", async (req, res) => {
+  try {
+    await requireRole(req, ["Accounts"]);
+    const result = await updateGoodsWarrant({
+      id: requiredString(req.params?.id, "Voucher id"),
+      issuedTo: optionalString(req.body?.issuedTo),
+      issuerName: optionalString(req.body?.issuerName),
+      receivedAmount: requiredNumber(req.body?.receivedAmount, "Received amount"),
+      amount: requiredNumber(req.body?.amount, "Voucher amount"),
+      paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as "Cash" | "Cheque",
+      chequeNumber: optionalString(req.body?.chequeNumber),
+      cashCollectedOn: optionalString(req.body?.cashCollectedOn),
+      validThrough: requiredString(req.body?.validThrough, "Valid through"),
+      note: optionalString(req.body?.note)
+    });
+    res.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(400).json({ message });

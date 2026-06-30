@@ -10,6 +10,9 @@ apps/*/.env.local
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+data/
+scripts/__pycache__/
+.chrome-sessions/
 uploads/
 temp-*.csv
 temp-*.txt
