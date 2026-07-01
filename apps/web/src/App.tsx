@@ -1897,6 +1897,14 @@ function findSalesOrderByPublicId(orders: SalesOrder[], orderId: string) {
   return orders.find((order) => order.id === orderId || order.cartId === orderId);
 }
 
+function productNameBySku(products: AppSnapshot["products"], sku: string) {
+  return products.find((product) => product.sku === sku)?.name || sku;
+}
+
+function productNamesSummary(products: AppSnapshot["products"], skus: string[], separator = ", ") {
+  return skus.map((sku) => productNameBySku(products, sku)).join(separator);
+}
+
 function purchaseOrderPublicTotal(orders: PurchaseOrder[], orderId: string) {
   const lines = orders.filter((order) => order.id === orderId || order.cartId === orderId);
   return lines.reduce((sum, order) => sum + order.totalAmount, 0);
@@ -2122,7 +2130,7 @@ function salesOrderExportRows(snapshot: AppSnapshot, groups: Array<{ id: string;
     indiaDateKey(line.createdAt),
     group.id,
     line.shopName,
-    line.productSku,
+    productNameBySku(snapshot.products, line.productSku),
     "",
     line.rate,
     line.quantity,
@@ -2330,7 +2338,7 @@ function outboundOpsExportRows(
       item.task.id,
       stop.orderId,
       stop.supplierName,
-      stop.productSummary || first?.productSku || "",
+      stop.productSummary || (first ? productNameBySku(snapshot.products, first.productSku) : ""),
       orderLines.reduce((sum, line) => sum + line.quantity, 0),
       "",
       first?.rate ?? "",
@@ -2384,7 +2392,7 @@ function salesCollectionExportRows(snapshot: AppSnapshot, groups: Array<{ id: st
     indiaDateKey(new Date(groupNewestCreatedAt(group.lines))),
     group.id,
     group.shopName,
-    group.lines.map((line) => line.productSku).join(" | "),
+    productNamesSummary(snapshot.products, group.lines.map((line) => line.productSku), " | "),
     group.totalAmount,
     group.paidAmount,
     group.pendingAmount,
@@ -4684,6 +4692,130 @@ type CartLine = {
   note?: string;
 };
 
+type CatalogDisplayProduct = {
+  key: string;
+  displayName: string;
+  product: AppSnapshot["products"][number];
+  variants: AppSnapshot["products"];
+  familyKey?: string;
+};
+
+function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
+  const weightText = [
+    product.size,
+    product.name,
+    product.sku,
+    product.shortName,
+    product.articleName,
+    product.itemName
+  ].filter(Boolean).join(" ").trim().toUpperCase();
+  const sizeMatch = weightText.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|G|GM|GRAM|L|LTR|LT|ML)\b/);
+  if (sizeMatch) {
+    const value = Number(sizeMatch[1]);
+    const unit = sizeMatch[2];
+    if (["KG", "KGS"].includes(unit)) return `${value}KG`;
+    if (["G", "GM", "GRAM"].includes(unit)) return `${value}GM`;
+    if (["L", "LTR", "LT"].includes(unit)) return `${value}L`;
+    if (unit === "ML") return `${value}ML`;
+  }
+  const weight = Number(product.defaultWeightKg || 0);
+  if (weight > 0) {
+    if (weight >= 1) return `${weight}KG`;
+    return `${Math.round(weight * 1000)}GM`;
+  }
+  if (weightText.includes("LOOSE")) return "LOOSE";
+  return product.unit || "Weight";
+}
+
+function nonBrandedStaplesFamily(product: AppSnapshot["products"][number]) {
+  const isStaplesLike =
+    product.category.trim().toLowerCase() === "staples"
+    || product.division.trim().toLowerCase() === "staples & cooking";
+  if (!isStaplesLike) {
+    return null;
+  }
+  const normalized = [
+    product.name,
+    product.shortName,
+    product.itemName,
+    product.articleName,
+    product.department,
+    product.section
+  ].join(" ").toUpperCase();
+  if (normalized.includes("BESAN")) return "BESAN";
+  if (normalized.includes("RAJMA")) return "RAJMA";
+  if (normalized.includes("TOOR DAAL") || normalized.includes("TOOR DAL") || normalized.includes("ARHAR")) return "TOOR DAAL";
+  if (normalized.includes("POHA")) return "POHA";
+  if (
+    normalized.includes("DUBRAJ")
+    || normalized.includes("DUBRAJ RICE")
+    || normalized.includes("NAVRATAN")
+    || normalized.includes("SORTEX")
+  ) return "DUBRAJ RICE";
+  return null;
+}
+
+function buildCatalogDisplayProducts(items: AppSnapshot["products"]) {
+  const grouped = new Map<string, AppSnapshot["products"]>();
+  const display: CatalogDisplayProduct[] = [];
+
+  for (const product of items) {
+    const family = nonBrandedStaplesFamily(product);
+    if (!family) {
+      display.push({
+        key: product.sku,
+        displayName: product.name,
+        product,
+        variants: [product]
+      });
+      continue;
+    }
+    const current = grouped.get(family) || [];
+    current.push(product);
+    grouped.set(family, current);
+  }
+
+  for (const [family, variants] of grouped.entries()) {
+    const sortedVariants = [...variants].sort((left, right) => {
+      const weightDiff = left.defaultWeightKg - right.defaultWeightKg;
+      if (weightDiff !== 0) return weightDiff;
+      return left.name.localeCompare(right.name, "en-IN");
+    });
+    const uniqueVariants = Array.from(
+      sortedVariants.reduce((map, variant) => {
+        const label = normalizeStaplesWeightLabel(variant);
+        const current = map.get(label);
+        if (!current) {
+          map.set(label, variant);
+          return map;
+        }
+        const currentScore =
+          (current.defaultWeightKg > 0 ? 10 : 0)
+          + (/LOOSE/i.test(current.name) ? 0 : 5)
+          + (/LOOSE/i.test(current.sku) ? 0 : 2);
+        const nextScore =
+          (variant.defaultWeightKg > 0 ? 10 : 0)
+          + (/LOOSE/i.test(variant.name) ? 0 : 5)
+          + (/LOOSE/i.test(variant.sku) ? 0 : 2);
+        if (nextScore > currentScore) {
+          map.set(label, variant);
+        }
+        return map;
+      }, new Map<string, AppSnapshot["products"][number]>())
+      .values()
+    );
+    display.push({
+      key: `family-${family}`,
+      displayName: family,
+      product: uniqueVariants[0],
+      variants: uniqueVariants,
+      familyKey: family
+    });
+  }
+
+  return display.sort((left, right) => left.displayName.localeCompare(right.displayName, "en-IN"));
+}
+
 function CatalogOrderView(props: CatalogOrderViewProps) {
   const { mode, title, eyebrow, persistKey, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onUploadProof, onSubmit, rightPanel } = props;
   const persisted = persistKey ? readStoredJson(persistKey, {
@@ -4718,6 +4850,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [billTaxOverride, setBillTaxOverride] = useState<{ enabled: boolean; gstRate: GstRateInput; taxMode: TaxModeInput }>(persisted?.billTaxOverride || { enabled: false, gstRate: "0", taxMode: "Exclusive" });
   const [cartErrors, setCartErrors] = useState<Record<string, boolean>>(persisted?.cartErrors || {});
   const [cartLines, setCartLines] = useState<CartLine[]>(persisted?.cartLines || []);
+  const [catalogVariantSelection, setCatalogVariantSelection] = useState<Record<string, string>>({});
   const [submittingCart, setSubmittingCart] = useState(false);
   const [ratePopup, setRatePopup] = useState<{
     product: AppSnapshot["products"][number];
@@ -4807,6 +4940,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     if (scoreDiff !== 0) return scoreDiff;
     return left.name.localeCompare(right.name, "en-IN");
   });
+  const catalogProducts = buildCatalogDisplayProducts(filteredProducts);
   const searchSuggestions = search.trim() === ""
     ? []
     : products
@@ -4890,6 +5024,20 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       || product.rsp
       || product.slabs[0]?.purchaseRate
       || 0;
+  }
+
+  function resolveCatalogProduct(item: CatalogDisplayProduct) {
+    if (!item.familyKey) return item.product;
+    const selectedSku = catalogVariantSelection[item.familyKey];
+    if (selectedSku) {
+      return item.variants.find((variant) => variant.sku === selectedSku) || item.variants[0];
+    }
+    const variantFromCart = item.variants.find((variant) => cartLines.some((line) => line.productSku === variant.sku));
+    return variantFromCart || item.variants[0];
+  }
+
+  function setCatalogFamilyVariant(familyKey: string, sku: string) {
+    setCatalogVariantSelection((current) => ({ ...current, [familyKey]: sku }));
   }
 
   function selectProduct(product: AppSnapshot["products"][number]) {
@@ -5090,8 +5238,16 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       cartLine.stockApprovalRequested = nextQuantity > availableStockAtOrder;
     }
     setCartLines((lines) => {
-      const exists = lines.some((line) => line.productSku === cartLine.productSku);
-      return exists ? lines.map((line) => line.productSku === cartLine.productSku ? cartLine : line) : [...lines, cartLine];
+      const family = nonBrandedStaplesFamily(popup.product);
+      const comparableLines = family
+        ? lines.filter((line) => {
+            const lineProduct = products.find((product) => product.sku === line.productSku);
+            return !lineProduct || nonBrandedStaplesFamily(lineProduct) !== family;
+          })
+        : lines;
+      const exists = comparableLines.some((line) => line.productSku === cartLine.productSku);
+      const baseLines = comparableLines.filter((line) => line.productSku !== cartLine.productSku);
+      return exists ? [...baseLines, cartLine] : [...comparableLines, cartLine];
     });
     setOrderForm((current: any) => ({
       ...current,
@@ -5534,39 +5690,59 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
             </div>
 
             <div className="catalog-grid">
-              {filteredProducts.map((product) => {
-                const selected = cartLines.some((line) => line.productSku === product.sku);
-                const availableStock = getAvailableStock(product.sku);
-                const warehouseStock = getWarehouseStock(product.sku, orderForm.warehouseId || "");
-                const stockedWarehouses = stockSummary
-                  .filter((item) => item.productSku === product.sku && item.availableQuantity > 0)
-                  .sort((left, right) => right.availableQuantity - left.availableQuantity);
+              {catalogProducts.map((item) => {
+                const product = resolveCatalogProduct(item);
+                const selected = item.variants.some((variant) => cartLines.some((line) => line.productSku === variant.sku));
+                const availableStock = item.variants.reduce((sum, variant) => sum + getAvailableStock(variant.sku), 0);
+                const warehouseStock = item.variants.reduce((sum, variant) => sum + getWarehouseStock(variant.sku, orderForm.warehouseId || ""), 0);
+                const stockedWarehouses = Array.from(
+                  stockSummary
+                    .filter((stock) => item.variants.some((variant) => variant.sku === stock.productSku) && stock.availableQuantity > 0)
+                    .reduce((map, stock) => {
+                      const current = map.get(stock.warehouseId);
+                      map.set(stock.warehouseId, current ? { ...current, availableQuantity: current.availableQuantity + stock.availableQuantity } : { ...stock });
+                      return map;
+                    }, new Map<string, AppSnapshot["stockSummary"][number]>())
+                    .values()
+                ).sort((left, right) => right.availableQuantity - left.availableQuantity);
                 const metaLabelSource = product.brand || product.shortName || product.unit;
-                const normalizedName = product.name.trim().toLowerCase();
+                const normalizedName = item.displayName.trim().toLowerCase();
                 const metaLabel = metaLabelSource && metaLabelSource.trim().toLowerCase() !== normalizedName
                   ? metaLabelSource
                   : product.sku;
                 const cardQuantity = cartLines.find((line) => line.productSku === product.sku)?.quantity || 1;
-                const initials = product.name
+                const initials = item.displayName
                   .split(" ")
                   .filter(Boolean)
                   .slice(0, 2)
                   .map((item) => item[0]?.toUpperCase() || "")
                   .join("") || "PR";
                 return (
-                  <div key={product.sku} className={selected ? "product-card selected" : "product-card"} onClick={() => selectProduct(product)}>
+                  <div key={item.key} className={selected ? "product-card selected" : "product-card"} onClick={() => selectProduct(product)}>
                     <div className="product-card-main">
                     <div className="product-thumb">{initials}</div>
                     <div className="product-card-copy">
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
-                      <strong>{product.name}</strong>
+                      <strong>{item.displayName}</strong>
                       <p>{product.department} / {product.section}</p>
                     </div>
                     <div className="product-meta compact">
                       <span>{metaLabel}</span>
-                      <span>{product.size || product.unit}</span>
+                      <span>{normalizeStaplesWeightLabel(product)}</span>
                     </div>
+                    {item.familyKey ? <div className="product-meta compact">
+                      <label className="wide-field">
+                        <span className="small-label">Weight</span>
+                        <select
+                          value={product.sku}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => { event.stopPropagation(); setCatalogFamilyVariant(item.familyKey || "", event.target.value); }}
+                        >
+                          {item.variants.map((variant) => <option key={variant.sku} value={variant.sku}>{normalizeStaplesWeightLabel(variant)}</option>)}
+                        </select>
+                      </label>
+                    </div> : null}
                     <div className="product-pricing compact">
                       <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Min sell ${getLastPurchaseRate(product)}`}</strong>
                       <span>{`MRP ${product.mrp ?? 0}`}</span>
@@ -6264,7 +6440,7 @@ function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, o
                 </button>
                 {expanded ? <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Supplier</span><strong>{first?.supplierName || "Supplier"}</strong></div>
-                  <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Products</span><strong>{productNamesSummary(snapshot.products, group.lines.map((line) => line.productSku))}</strong></div>
                   <div><span className="small-label">Mode</span><strong>{first?.deliveryMode || "-"}</strong></div>
                   <div><span className="small-label">Delivery</span><strong>{purchaseDeliveryStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{purchasePaymentStatus(snapshot, group.id)}</strong></div>
@@ -6737,7 +6913,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
   const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { amount: string; mode: PaymentMode; cashTiming: string; operationDate: string }>>({});
   const [collectionAgentDrafts, setCollectionAgentDrafts] = useState<Record<string, string>>({});
   const collectionAgents = snapshot.users.filter((user) => user.active && user.roles.includes("Collection Agent"));
-  const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
+  const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.shopName || ""} ${group.lines.map((line) => productNameBySku(snapshot.products, line.productSku)).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCollectionGroups = collectionGroups.filter((group) => `${group.id} ${group.shopName}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const salesExportHeaders = viewMode === "orders" ? salesOrderExportHeaders() : salesCollectionExportHeaders();
   const salesExportRows = viewMode === "orders"
@@ -6834,7 +7010,7 @@ function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreate
                 </button>
                 {expanded ? <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
-                  <div><span className="small-label">Products</span><strong>{group.lines.map((line) => line.productSku).join(", ")}</strong></div>
+                  <div><span className="small-label">Products</span><strong>{productNamesSummary(snapshot.products, group.lines.map((line) => line.productSku))}</strong></div>
                   <div><span className="small-label">Mode</span><strong>{first?.deliveryMode || "-"}</strong></div>
                   <div><span className="small-label">Delivery</span><strong>{salesDeliveryStatus(snapshot, group.id)}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{salesPaymentStatus(snapshot, group.id)}</strong></div>
@@ -7653,7 +7829,7 @@ function SalesPaymentsView({
         id: group.id,
         lines: group.lines,
         shopName: first?.shopName || "Customer",
-        searchText: `${group.id} ${first?.shopName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase(),
+        searchText: `${group.id} ${first?.shopName || ""} ${group.lines.map((line) => productNameBySku(snapshot.products, line.productSku)).join(" ")}`.toLowerCase(),
         totalAmount,
         paidAmount: ledger?.paidAmount ?? 0,
         pendingAmount: ledger?.pendingAmount ?? totalAmount,
@@ -7782,7 +7958,7 @@ function SalesPaymentsView({
               <div className="payment-update-head">
                 <div>
                   <strong>{orderPublicId(order)}</strong>
-                  <p>{order.shopName} · {order.productSku} · {order.deliveryMode}</p>
+                  <p>{order.shopName} · {productNameBySku(snapshot.products, order.productSku)} · {order.deliveryMode}</p>
                 </div>
                 <span className={`status-pill ${order.status === "Draft" ? "status-rejected" : "status-pending"}`}>{order.status === "Draft" ? "Draft" : order.status}</span>
               </div>
@@ -8996,7 +9172,7 @@ function WarehouseOperationsView({
               <div className="payment-card-actions top-gap">
                 <button className="ghost-button" type="button" onClick={() => setExpandedIncomingIds((current) => ({ ...current, [group.id]: !expanded }))}>{expanded ? "Close lines" : "Open lines"}</button>
               </div>
-              {expanded ? <div className="stack-list top-gap">{group.lines.map((line) => <div className="list-card" key={line.id}><strong>{line.productSku}</strong><p>Pending {Math.max(line.quantityOrdered - line.quantityReceived, 0)} · Expected {line.expectedWeightKg} kg · Amount {line.totalAmount}</p></div>)}</div> : null}
+              {expanded ? <div className="stack-list top-gap">{group.lines.map((line) => <div className="list-card" key={line.id}><strong>{productNameBySku(snapshot.products, line.productSku)}</strong><p>Pending {Math.max(line.quantityOrdered - line.quantityReceived, 0)} · Expected {line.expectedWeightKg} kg · Amount {line.totalAmount}</p></div>)}</div> : null}
               {!expanded ? <form className="form-grid top-gap" onSubmit={async (event) => {
                 event.preventDefault();
                 const receivedQuantity = Number(draft.receivedQuantity || 0);
@@ -9038,7 +9214,7 @@ function WarehouseOperationsView({
               <div className="payment-update-head">
                 <div>
                   <strong>{order.id}</strong>
-                  <p>{order.shopName} · {order.productSku} · {order.deliveryMode}</p>
+                  <p>{order.shopName} · {productNameBySku(snapshot.products, order.productSku)} · {order.deliveryMode}</p>
                 </div>
                 <span className={`status-pill ${hasVerifiedPayment ? "status-verified" : "status-pending"}`}>{hasVerifiedPayment ? "Payment ok" : "Check with admin"}</span>
               </div>
@@ -9670,7 +9846,7 @@ function WarehouseOperationsViewV2({
               const base = current[group.id] || pendingLines.map((item) => item.id);
               return { ...current, [group.id]: e.target.checked ? [...new Set([...base, line.id])] : base.filter((item) => item !== line.id) };
             })} /><span /></label> : null}
-            <strong>{line.productSku}</strong>
+            <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>
           </div>
           <div className="payment-meta-grid">
             <div><span className="small-label">Ordered</span><strong>{line.quantityOrdered}</strong></div>
@@ -9957,7 +10133,7 @@ function WarehouseOperationsViewV2({
           </div>
           <div className="stack-list top-gap">
             {group.lines.map((line) => <article className="list-card" key={line.id}>
-              <strong>{line.productSku}</strong>
+              <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>
               <p>{line.quantity} qty | Rate {line.rate.toFixed(2)} | Total {(line.totalAmount + line.deliveryCharge).toFixed(2)}</p>
             </article>)}
           </div>
@@ -10010,7 +10186,7 @@ function WarehouseOperationsViewV2({
           </div>
           <div className="stack-list top-gap">
             {group.lines.map((line) => <article className="list-card" key={line.id}>
-              <strong>{line.productSku}</strong>
+              <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>
               <p>{line.quantity} qty · {line.totalAmount.toFixed(2)} · {line.paymentMode}</p>
             </article>)}
           </div>
@@ -11381,7 +11557,7 @@ function Overview({ snapshot, currentUser, simpleMode, onOpen, onOpenQrScanner, 
         </div>
       </Panel>
       <Panel title="Purchase Orders" eyebrow="Inbound"><DataTable headers={["PO","Supplier","Product","Ordered","Received","Status"]} rows={snapshot.purchaseOrders.map((p) => [p.id, p.supplierName, p.productSku, p.quantityOrdered, p.quantityReceived, p.status])} /></Panel>
-      <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, s.productSku, s.quantity, s.deliveryMode, s.status])} /></Panel>
+      <Panel title="Sales Orders" eyebrow="Outbound"><DataTable headers={["SO","Shop","Product","Qty","Delivery","Status"]} rows={snapshot.salesOrders.map((s) => [s.id, s.shopName, productNameBySku(snapshot.products, s.productSku), s.quantity, s.deliveryMode, s.status])} /></Panel>
       <Panel title="Payment Verification" eyebrow="Accounts"><DataTable headers={["Payment","Side","Order","Mode","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.verificationStatus])} /></Panel>
       <Panel title="Stock Snapshot" eyebrow="Warehouse"><DataTable headers={["Warehouse","Product","Avail","Reserved","Blocked"]} rows={snapshot.stockSummary.map((s) => [s.warehouseName, s.productName, s.availableQuantity, s.reservedQuantity, s.blockedQuantity])} /></Panel>
     </section>
@@ -12482,7 +12658,7 @@ function ReturnsWorkspace({
           <label className="wide-field">Note<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Return note" /></label>
           {mode === "Planned" ? <div className="payment-card-actions wide-field"><button className="ghost-button" type="button" onClick={addPlannedLine} disabled={!partyId || filteredPlannedProducts.length === 0}>Add product</button></div> : null}
           {mode === "Adhoc" && selectedGroup ? <div className="stack-list wide-field">
-            {filteredSelectedGroupLines.length === 0 ? <div className="empty-card">No matching products in this {side === "Purchase" ? "PO" : "SO"}.</div> : filteredSelectedGroupLines.map((line) => <article className="list-card" key={line.id}><div className="payment-update-head"><div><strong>{line.productSku}</strong><p>{side === "Purchase" ? (line as PurchaseOrder).supplierName : (line as SalesOrder).shopName}</p></div><button className="ghost-button" type="button" onClick={() => addAdhocLine(line)}>Select item</button></div></article>)}
+            {filteredSelectedGroupLines.length === 0 ? <div className="empty-card">No matching products in this {side === "Purchase" ? "PO" : "SO"}.</div> : filteredSelectedGroupLines.map((line) => <article className="list-card" key={line.id}><div className="payment-update-head"><div><strong>{productNameBySku(products, line.productSku)}</strong><p>{side === "Purchase" ? (line as PurchaseOrder).supplierName : (line as SalesOrder).shopName}</p></div><button className="ghost-button" type="button" onClick={() => addAdhocLine(line)}>Select item</button></div></article>)}
           </div> : null}
           <div className="stack-list wide-field">
             {lines.length === 0 ? <div className="empty-card">No return items selected.</div> : lines.map((line) => <article className="list-card" key={line.clientKey}>
@@ -12509,6 +12685,16 @@ function ReturnsWorkspace({
 }
 
 type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; subCategory: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
+const nonBrandedStaplesWeightOptions = [
+  { value: "1", label: "1KG" },
+  { value: "5", label: "5KG" },
+  { value: "10", label: "10KG" },
+  { value: "30", label: "30KG" }
+] as const;
+
+function isStaplesNonBrandedCategory(category: string, subCategory: string) {
+  return category.trim().toLowerCase() === "staples" && subCategory.trim().toLowerCase() === "non branded";
+}
 
 function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
   const [openId, setOpenId] = useState("");
@@ -13679,6 +13865,7 @@ function ProductAdminView({
   const sectionOptions = uniqueProductFieldOptions(snapshot.products, "section");
   const categoryOptions = uniqueProductFieldOptions(snapshot.products, "category");
   const subCategoryOptions = uniqueProductFieldOptions(snapshot.products, "subCategory");
+  const useStaplesWeightSelection = isStaplesNonBrandedCategory(productForm.category, productForm.subCategory);
 
   function toPayload(form: ProductFormState) {
     return {
@@ -13692,11 +13879,25 @@ function ProductAdminView({
     };
   }
 
+  function normalizeStaplesWeightSelection(nextForm: ProductFormState) {
+    if (!isStaplesNonBrandedCategory(nextForm.category, nextForm.subCategory)) {
+      return nextForm;
+    }
+    if (nonBrandedStaplesWeightOptions.some((option) => option.value === nextForm.defaultWeightKg)) {
+      return nextForm;
+    }
+    return { ...nextForm, defaultWeightKg: "1" };
+  }
+
+  function updateProductForm(mutator: (current: ProductFormState) => ProductFormState) {
+    setProductForm((current) => normalizeStaplesWeightSelection(mutator(current)));
+  }
+
   function loadProduct(sku: string) {
     setSelectedSku(sku);
     const product = snapshot.products.find((item) => item.sku === sku);
     if (!product) return;
-    setProductForm({
+    setProductForm(normalizeStaplesWeightSelection({
       sku: product.sku,
       name: product.name,
       division: product.division,
@@ -13711,7 +13912,7 @@ function ProductAdminView({
       toleranceKg: String(product.toleranceKg),
       tolerancePercent: String(product.tolerancePercent),
       allowedWarehouseIds: product.allowedWarehouseIds
-    });
+    }));
   }
 
   return (
@@ -13720,25 +13921,34 @@ function ProductAdminView({
         <form className="form-grid" onSubmit={(event) => { event.preventDefault(); selectedSku ? onUpdate(selectedSku, toPayload(productForm)) : onCreate(toPayload(productForm)); }}>
           <label>Search SKU / Product<input value={skuSearch} placeholder="Type SKU or product name" onChange={(event) => setSkuSearch(event.target.value)} /></label>
           <label>Select SKU<select value={selectedSku} onChange={(event) => loadProduct(event.target.value)}>{renderProductOptions(filteredProductOptions)}</select></label>
-          <label>SKU<input value={productForm.sku} readOnly={Boolean(selectedSku)} onChange={(event) => setProductForm((current) => ({ ...current, sku: event.target.value }))} /></label>
-          <label>Name<input value={productForm.name} onChange={(event) => setProductForm((current) => ({ ...current, name: event.target.value }))} /></label>
-          <label>Division<input list="product-division-options" value={productForm.division} placeholder="Type or select saved division" onChange={(event) => setProductForm((current) => ({ ...current, division: event.target.value }))} /></label>
-          <label>Department<input list="product-department-options" value={productForm.department} placeholder="Type or select saved department" onChange={(event) => setProductForm((current) => ({ ...current, department: event.target.value }))} /></label>
-          <label>Section<input list="product-section-options" value={productForm.section} placeholder="Type or select saved section" onChange={(event) => setProductForm((current) => ({ ...current, section: event.target.value }))} /></label>
-          <label>Category<input list="product-category-options" value={productForm.category} placeholder="Type or select saved category" onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))} /></label>
-          <label>Subcategory<input list="product-subcategory-options" value={productForm.subCategory} placeholder="Type or select saved subcategory" onChange={(event) => setProductForm((current) => ({ ...current, subCategory: event.target.value }))} /></label>
+          <label>SKU<input value={productForm.sku} readOnly={Boolean(selectedSku)} onChange={(event) => updateProductForm((current) => ({ ...current, sku: event.target.value }))} /></label>
+          <label>Name<input value={productForm.name} onChange={(event) => updateProductForm((current) => ({ ...current, name: event.target.value }))} /></label>
+          <label>Division<input list="product-division-options" value={productForm.division} placeholder="Type or select saved division" onChange={(event) => updateProductForm((current) => ({ ...current, division: event.target.value }))} /></label>
+          <label>Department<input list="product-department-options" value={productForm.department} placeholder="Type or select saved department" onChange={(event) => updateProductForm((current) => ({ ...current, department: event.target.value }))} /></label>
+          <label>Section<input list="product-section-options" value={productForm.section} placeholder="Type or select saved section" onChange={(event) => updateProductForm((current) => ({ ...current, section: event.target.value }))} /></label>
+          <label>Category<input list="product-category-options" value={productForm.category} placeholder="Type or select saved category" onChange={(event) => updateProductForm((current) => ({ ...current, category: event.target.value }))} /></label>
+          <label>Subcategory<input list="product-subcategory-options" value={productForm.subCategory} placeholder="Type or select saved subcategory" onChange={(event) => updateProductForm((current) => ({ ...current, subCategory: event.target.value }))} /></label>
           <datalist id="product-division-options">{divisionOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-department-options">{departmentOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-section-options">{sectionOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-category-options">{categoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-subcategory-options">{subCategoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
-          <label>Unit<input value={productForm.unit} onChange={(event) => setProductForm((current) => ({ ...current, unit: event.target.value }))} /></label>
-          <label>Default GST<select value={productForm.defaultGstRate} onChange={(event) => setProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: event.target.value === "NA" ? "NA" : (current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode) }))}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
-          <label>Default Tax<select value={productForm.defaultTaxMode} onChange={(event) => setProductForm((current) => ({ ...current, defaultTaxMode: event.target.value as TaxModeInput }))} disabled={productForm.defaultGstRate === "NA"}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
-          <label>Per item / bundle weight<input type="number" step="any" value={productForm.defaultWeightKg} onChange={(event) => setProductForm((current) => ({ ...current, defaultWeightKg: event.target.value }))} /></label>
-          <label>Tol. Kg<input type="number" step="any" value={productForm.toleranceKg} onChange={(event) => setProductForm((current) => ({ ...current, toleranceKg: event.target.value }))} /></label>
-          <label>Tol. %<input type="number" step="any" value={productForm.tolerancePercent} onChange={(event) => setProductForm((current) => ({ ...current, tolerancePercent: event.target.value }))} /></label>
-          <label>Warehouses<select multiple value={productForm.allowedWarehouseIds.length > 0 ? productForm.allowedWarehouseIds : prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id))} onChange={(event) => setProductForm((current) => ({ ...current, allowedWarehouseIds: prioritizeWarehouseIds(Array.from(event.target.selectedOptions).map((option) => option.value)) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
+          <label>Unit<input value={productForm.unit} onChange={(event) => updateProductForm((current) => ({ ...current, unit: event.target.value }))} /></label>
+          <label>Default GST<select value={productForm.defaultGstRate} onChange={(event) => updateProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: event.target.value === "NA" ? "NA" : (current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode) }))}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
+          <label>Default Tax<select value={productForm.defaultTaxMode} onChange={(event) => updateProductForm((current) => ({ ...current, defaultTaxMode: event.target.value as TaxModeInput }))} disabled={productForm.defaultGstRate === "NA"}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
+          <label>
+            Per item / bundle weight
+            {useStaplesWeightSelection ? (
+              <select value={productForm.defaultWeightKg} onChange={(event) => updateProductForm((current) => ({ ...current, defaultWeightKg: event.target.value }))}>
+                {nonBrandedStaplesWeightOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            ) : (
+              <input type="number" step="any" value={productForm.defaultWeightKg} onChange={(event) => updateProductForm((current) => ({ ...current, defaultWeightKg: event.target.value }))} />
+            )}
+          </label>
+          <label>Tol. Kg<input type="number" step="any" value={productForm.toleranceKg} onChange={(event) => updateProductForm((current) => ({ ...current, toleranceKg: event.target.value }))} /></label>
+          <label>Tol. %<input type="number" step="any" value={productForm.tolerancePercent} onChange={(event) => updateProductForm((current) => ({ ...current, tolerancePercent: event.target.value }))} /></label>
+          <label>Warehouses<select multiple value={productForm.allowedWarehouseIds.length > 0 ? productForm.allowedWarehouseIds : prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id))} onChange={(event) => updateProductForm((current) => ({ ...current, allowedWarehouseIds: prioritizeWarehouseIds(Array.from(event.target.selectedOptions).map((option) => option.value)) }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
           <div className="payment-card-actions wide-field">
             <button className="primary-button" type="submit">{selectedSku ? "Modify product" : "Create product"}</button>
             <button className="ghost-button" type="button" onClick={() => { setSelectedSku(""); setSkuSearch(""); setProductForm(emptyForm); }}>Clear form</button>

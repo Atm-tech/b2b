@@ -4,6 +4,20 @@ import type { ProductMaster, ProductSlab } from "@aapoorti-b2b/domain";
 
 type ImportRow = Record<string, string>;
 type ProductTaxonomy = Pick<ProductMaster, "division" | "department" | "section" | "category" | "subCategory">;
+const stapleBrandSignals = [
+  "AASHIRWAD",
+  "AMUL",
+  "DALDA",
+  "DHARA",
+  "ENGINE",
+  "FORTUNE",
+  "MADHUR",
+  "PATANJALI",
+  "RAJDHANI",
+  "SAFOLA",
+  "SANCHI",
+  "TATA"
+] as const;
 
 export function parseCsvRows(csv: string, defaultWarehouseIds: string[]) {
   const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean);
@@ -194,6 +208,7 @@ export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
     category: categoryText,
     subCategory: subCategoryText
   });
+  const stapleSubCategory = deriveStaplesSubCategory(raw, row);
 
   if (matchesAny(raw, ["ALL OUT", "ALLOUT", "MOSQUITO", "REPELLENT", "VAPORIZER", "REFILL"])) {
     return exact("Home Care", "Pest Control", "Insect Repellent", "Pest Control", "Liquid Vaporizer Refill");
@@ -206,19 +221,19 @@ export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
     return exact("Home Care", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder");
   }
   if (matchesAny(raw, ["AASHIRWAD", "ATTA", "FLOUR"])) {
-    return exact("Staples & Cooking", "Flour & Atta", "Wheat Flour", "Flour & Atta", "Packaged Atta");
+    return exact("Staples & Cooking", "Flour & Atta", "Wheat Flour", "Staples", stapleSubCategory);
   }
   if (matchesAny(raw, ["BESAN", "GRAM FLOUR", "CHANA FLOUR"])) {
-    return exact("Staples & Cooking", "Flour & Atta", "Gram Flour", "Flour & Atta", "Gram Flour");
+    return exact("Staples & Cooking", "Flour & Atta", "Gram Flour", "Staples", stapleSubCategory);
   }
   if (matchesAny(raw, ["SUGAR"])) {
-    return exact("Staples & Cooking", "Sugar & Sweeteners", "Sugar", "Sugar & Sweeteners", "White Sugar");
+    return exact("Staples & Cooking", "Sugar & Sweeteners", "Sugar", "Staples", stapleSubCategory);
   }
   if (matchesAny(raw, ["GHEE"])) {
-    return exact("Staples & Cooking", "Ghee & Cooking Fats", "Ghee", "Ghee & Cooking Fats", "Cow Ghee");
+    return exact("Staples & Cooking", "Ghee & Cooking Fats", "Ghee", "Staples", stapleSubCategory);
   }
   if (matchesAny(raw, ["SOYA OIL", "SOYABEAN OIL", "REFINED OIL", "MUSTARD OIL", "SUNFLOWER OIL", "EDIBLE OIL"])) {
-    return exact("Staples & Cooking", "Edible Oils", "Cooking Oil", "Edible Oils", matchesAny(raw, ["SOYA", "SOYABEAN"]) ? "Soyabean Oil" : "Refined Oil");
+    return exact("Staples & Cooking", "Edible Oils", "Cooking Oil", "Staples", stapleSubCategory);
   }
   if (matchesAny(raw, ["TATA TEA", "RED LABEL", "TEA", "CHAI"])) {
     return exact("Beverages", "Tea & Infusions", "Leaf Tea", "Tea & Infusions", "Black Tea");
@@ -283,6 +298,20 @@ export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
     readMapped(row, ["category", "CATEGORY"], "General Merchandise"),
     readMapped(row, ["subCategory", "subcategory", "SUB_CATEGORY", "SUBCATEGORY"], readMapped(row, ["section", "SECTION"], "General"))
   );
+}
+
+function deriveStaplesSubCategory(raw: string, row: ImportRow) {
+  const explicitBrand = readMapped(row, ["brand", "BRAND"]).trim().toUpperCase();
+  if (matchesAny(raw, ["NON BRANDED", "NON-BRANDED", "UNBRANDED", "LOOSE", "OPEN"])) {
+    return "Non Branded";
+  }
+  if (explicitBrand) {
+    return "Branded";
+  }
+  if (matchesAny(raw, ["BRANDED", "PACKAGED", "PKD", ...stapleBrandSignals])) {
+    return "Branded";
+  }
+  return "Non Branded";
 }
 
 function matchesAny(haystack: string, needles: string[]) {
