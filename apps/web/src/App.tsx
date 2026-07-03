@@ -524,6 +524,10 @@ function formatLongDateIst(value?: string) {
   });
 }
 
+function sortCounterpartiesAlphabetically(items: Counterparty[]) {
+  return [...items].sort((left, right) => left.name.localeCompare(right.name, "en-IN", { sensitivity: "base" }));
+}
+
 function addOneMonthForVoucherPreview(dateKey: string) {
   const date = new Date(`${dateKey}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return dateKey;
@@ -3910,7 +3914,7 @@ function App() {
   const purchaseOrdersView = applyWarehouseScope ? snapshot.purchaseOrders.filter((item) => warehouseScope.has(item.warehouseId)) : snapshot.purchaseOrders;
   const salesOrdersView = applyWarehouseScope ? snapshot.salesOrders.filter((item) => warehouseScope.has(item.warehouseId)) : snapshot.salesOrders;
   const stockSummaryView = applyWarehouseScope ? snapshot.stockSummary.filter((item) => warehouseScope.has(item.warehouseId)) : snapshot.stockSummary;
-  const counterparties = Array.isArray(snapshot.counterparties) ? snapshot.counterparties : [];
+  const counterparties = sortCounterpartiesAlphabetically(Array.isArray(snapshot.counterparties) ? snapshot.counterparties : []);
   const settings = snapshot.settings && Array.isArray(snapshot.settings.paymentMethods) ? snapshot.settings : { paymentMethods: [], deliveryCharge: { model: "Fixed" as const, amount: 0 } };
   const purchaseSupplierIds = new Set(purchaseOrdersView.map((item) => item.supplierId));
   const salesShopIds = new Set(salesOrdersView.map((item) => item.shopId));
@@ -4139,6 +4143,7 @@ function App() {
     });
   }
 
+  const normalizedAccountsPartySearch = accountsPartySearch.trim().toLowerCase();
   const partyItems = currentUser.role === "Sales" ? shops : suppliers;
   const partyRoleLabel = currentUser.role === "Sales" ? "Customer" : "Supplier";
   const partyFormGstNa = partyForm.gstNumber.trim().toUpperCase() === "N/A";
@@ -4165,8 +4170,7 @@ function App() {
     .filter((item) => item.pendingAmount > 0)
     .sort((left, right) => right.pendingAmount - left.pendingAmount);
   const filteredAccountsParties = counterparties.filter((item) => {
-    const query = accountsPartySearch.trim().toLowerCase();
-    if (!query) return true;
+    if (!normalizedAccountsPartySearch) return true;
     const haystack = [
       item.type,
       item.name,
@@ -4179,19 +4183,44 @@ function App() {
       item.ifscCode,
       item.address
     ].filter(Boolean).join(" ").toLowerCase();
-    return haystack.includes(query);
+    return haystack.includes(normalizedAccountsPartySearch);
+  });
+  const filteredPartyItems = partyItems.filter((item) => {
+    if (!normalizedAccountsPartySearch) return true;
+    const haystack = [
+      item.name,
+      item.contactPerson,
+      item.mobileNumber,
+      item.city,
+      item.gstNumber,
+      item.bankName,
+      item.bankAccountNumber,
+      item.ifscCode,
+      item.address
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(normalizedAccountsPartySearch);
   });
   const partiesView = isAdminUser ? (
     <section className="collapse-stack">
+      <Panel title="Party Search" eyebrow="Admin view">
+        <div className="form-grid">
+          <label className="wide-field">Search party<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Type, name, GST, mobile, bank, city" /></label>
+        </div>
+      </Panel>
       <CollapsiblePanel title="Supplier Master" eyebrow="Admin view" open={openPartyPanel === "supplier-master"} onToggle={() => setOpenPartyPanel((current) => current === "supplier-master" ? "" : "supplier-master")}>
-        <PartyVitalsList snapshot={snapshot} parties={suppliers} type="Supplier" />
+        <PartyVitalsList snapshot={snapshot} parties={filteredAccountsParties.filter((item) => item.type === "Supplier" && (!applyWarehouseScope || purchaseSupplierIds.has(item.id)))} type="Supplier" />
       </CollapsiblePanel>
       <CollapsiblePanel title="Customer Master" eyebrow="Admin view" open={openPartyPanel === "customer-master"} onToggle={() => setOpenPartyPanel((current) => current === "customer-master" ? "" : "customer-master")}>
-        <PartyVitalsList snapshot={snapshot} parties={shops} type="Shop" />
+        <PartyVitalsList snapshot={snapshot} parties={filteredAccountsParties.filter((item) => item.type === "Shop" && (!applyWarehouseScope || salesShopIds.has(item.id)))} type="Shop" />
       </CollapsiblePanel>
     </section>
   ) : isAccountsUser ? (
     <section className="collapse-stack">
+      <Panel title="Party Search" eyebrow="Accounts">
+        <div className="form-grid">
+          <label className="wide-field">Search party<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Type, name, GST, mobile, bank, city" /></label>
+        </div>
+      </Panel>
       <CollapsiblePanel title="Create Party" eyebrow="Accounts" open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
         <form className="form-grid" onSubmit={saveStandaloneParty}>
           <label>Type<select value={partyForm.type} onChange={(e) => setPartyForm((c) => ({ ...c, type: e.target.value as "Supplier" | "Shop" }))}><option value="Supplier">Supplier / Vendor</option><option value="Shop">Customer / Shop</option></select></label>
@@ -4211,10 +4240,7 @@ function App() {
       </CollapsiblePanel>
 
       <Panel title="Party List" eyebrow="Search, update, pay">
-        <div className="form-grid">
-          <label className="wide-field">Search party<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder="Type, name, GST, mobile, bank, city" /></label>
-        </div>
-        <div className="stack-list payment-update-list top-gap">
+        <div className="stack-list payment-update-list">
           {filteredAccountsParties.length === 0 ? <div className="empty-card">No parties match this search.</div> : filteredAccountsParties.map((item) => {
             const pendingOrders = item.type === "Supplier" ? accountsSupplierOrders.filter((order) => order.supplierId === item.id) : [];
             const totalPending = pendingOrders.reduce((sum, order) => sum + order.pendingAmount, 0);
@@ -4315,6 +4341,11 @@ function App() {
     </section>
   ) : (
     <section className="collapse-stack">
+      <Panel title={`Search ${partyRoleLabel}`} eyebrow="Quick filter">
+        <div className="form-grid">
+          <label className="wide-field">Search {partyRoleLabel.toLowerCase()}<input value={accountsPartySearch} onChange={(e) => setAccountsPartySearch(e.target.value)} placeholder={`Type ${partyRoleLabel.toLowerCase()} name, GST, mobile, bank, city`} /></label>
+        </div>
+      </Panel>
       <CollapsiblePanel title={`Register ${partyRoleLabel}`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"} open={openPartyPanel === "register"} onToggle={() => setOpenPartyPanel((current) => current === "register" ? "" : "register")}>
         <form className="form-grid" onSubmit={saveStandaloneParty}>
           <label>Type<input value={currentUser.role === "Sales" ? "Customer / Shop" : "Supplier / Vendor"} readOnly /></label>
@@ -4334,7 +4365,7 @@ function App() {
       </CollapsiblePanel>
       <CollapsiblePanel title={`Update ${partyRoleLabel}`} eyebrow="Edit details" open={openPartyPanel === "update"} onToggle={() => setOpenPartyPanel((current) => current === "update" ? "" : "update")}>
         <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}>
-          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, type: item.type, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(partyItems)}</select></label>
+          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = filteredPartyItems.find((c) => c.id === e.target.value) || partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, type: item.type, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson } : emptyPartyEditForm); }}>{renderOptions(filteredPartyItems)}</select></label>
           <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
           <label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label>
           <label className="checkbox-line"><input type="checkbox" checked={partyEditFormGstNa} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.checked ? "N/A" : "" }))} />GST N/A</label>
@@ -4350,7 +4381,7 @@ function App() {
         </form>
       </CollapsiblePanel>
       <CollapsiblePanel title={`${partyRoleLabel} Database`} eyebrow={currentUser.role === "Sales" ? "Sales only" : "Purchase only"} open={openPartyPanel === "database"} onToggle={() => setOpenPartyPanel((current) => current === "database" ? "" : "database")}>
-        <PartyVitalsList snapshot={snapshot} parties={partyItems} type={currentUser.role === "Sales" ? "Shop" : "Supplier"} />
+        <PartyVitalsList snapshot={snapshot} parties={filteredPartyItems} type={currentUser.role === "Sales" ? "Shop" : "Supplier"} />
       </CollapsiblePanel>
     </section>
   );
@@ -13025,11 +13056,7 @@ function PartyVitalsList({ snapshot, parties, type }: { snapshot: AppSnapshot; p
       contact: party.contactPerson || "N/A",
       address: party.address || "N/A"
     };
-  }).sort((left, right) => {
-    const pendingDiff = right.pending - left.pending;
-    if (pendingDiff !== 0) return pendingDiff;
-    return right.total - left.total;
-  });
+  }).sort((left, right) => left.name.localeCompare(right.name, "en-IN", { sensitivity: "base" }));
 
   return (
     <div className="report-accordion-list">
