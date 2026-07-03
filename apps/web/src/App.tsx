@@ -4742,6 +4742,7 @@ function nonBrandedStaplesFamily(product: AppSnapshot["products"][number]) {
     product.department,
     product.section
   ].join(" ").toUpperCase();
+  if (normalized.includes("ATTA") || normalized.includes("FLOUR")) return "ATTA";
   if (normalized.includes("BESAN")) return "BESAN";
   if (normalized.includes("RAJMA")) return "RAJMA";
   if (normalized.includes("TOOR DAAL") || normalized.includes("TOOR DAL") || normalized.includes("ARHAR")) return "TOOR DAAL";
@@ -12689,6 +12690,7 @@ const nonBrandedStaplesWeightOptions = [
   { value: "1", label: "1KG" },
   { value: "5", label: "5KG" },
   { value: "10", label: "10KG" },
+  { value: "25", label: "25KG" },
   { value: "30", label: "30KG" }
 ] as const;
 
