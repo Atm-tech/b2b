@@ -4727,6 +4727,27 @@ function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
   return product.unit || "Weight";
 }
 
+function staplesVariantSortWeight(product: AppSnapshot["products"][number]) {
+  const weightText = [
+    product.size,
+    product.name,
+    product.sku,
+    product.shortName,
+    product.articleName,
+    product.itemName
+  ].filter(Boolean).join(" ").trim().toUpperCase();
+  const sizeMatch = weightText.match(/(\d+(?:\.\d+)?)\s*(KG|KGS|G|GM|GRAM|L|LTR|LT|ML)\b/);
+  if (sizeMatch) {
+    const value = Number(sizeMatch[1]);
+    const unit = sizeMatch[2];
+    if (["KG", "KGS", "L", "LTR", "LT"].includes(unit)) return value;
+    if (["G", "GM", "GRAM"].includes(unit)) return value / 1000;
+    if (unit === "ML") return value / 1000;
+  }
+  const weight = Number(product.defaultWeightKg || 0);
+  return weight > 0 ? weight : Number.POSITIVE_INFINITY;
+}
+
 function nonBrandedStaplesFamily(product: AppSnapshot["products"][number]) {
   const isStaplesLike =
     product.category.trim().toLowerCase() === "staples"
@@ -4778,7 +4799,7 @@ function buildCatalogDisplayProducts(items: AppSnapshot["products"]) {
 
   for (const [family, variants] of grouped.entries()) {
     const sortedVariants = [...variants].sort((left, right) => {
-      const weightDiff = left.defaultWeightKg - right.defaultWeightKg;
+      const weightDiff = staplesVariantSortWeight(left) - staplesVariantSortWeight(right);
       if (weightDiff !== 0) return weightDiff;
       return left.name.localeCompare(right.name, "en-IN");
     });
