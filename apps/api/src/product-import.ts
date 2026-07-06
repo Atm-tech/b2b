@@ -210,49 +210,6 @@ export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
   });
   const stapleSubCategory = deriveStaplesSubCategory(raw, row);
 
-  if (matchesAny(raw, ["ALL OUT", "ALLOUT", "MOSQUITO", "REPELLENT", "VAPORIZER", "REFILL"])) {
-    return exact("Home Care", "Pest Control", "Insect Repellent", "Pest Control", "Liquid Vaporizer Refill");
-  }
-  if (matchesAny(raw, ["FIAMA", "BATH SOAP", "SOAP", "BATHING BAR"])) {
-    return exact("Personal Care", "Bath & Body", "Bath Soap", "Bath & Body", "Bathing Bar");
-  }
-  if (matchesAny(raw, ["SURF EXCEL", "GHADI", "RIN", "DETERGENT", "WASHING POWDER", "LAUNDRY"])) {
-    const isBar = matchesAny(raw, ["BAR", "SOAP"]);
-    return exact("Home Care", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder");
-  }
-  if (matchesAny(raw, ["AASHIRWAD", "ATTA", "FLOUR"])) {
-    return exact("Staples & Cooking", "Flour & Atta", "Wheat Flour", "Staples", stapleSubCategory);
-  }
-  if (matchesAny(raw, ["BESAN", "GRAM FLOUR", "CHANA FLOUR"])) {
-    return exact("Staples & Cooking", "Flour & Atta", "Gram Flour", "Staples", stapleSubCategory);
-  }
-  if (matchesAny(raw, ["SUGAR"])) {
-    return exact("Staples & Cooking", "Sugar & Sweeteners", "Sugar", "Staples", stapleSubCategory);
-  }
-  if (matchesAny(raw, ["GHEE"])) {
-    return exact("Staples & Cooking", "Ghee & Cooking Fats", "Ghee", "Staples", stapleSubCategory);
-  }
-  if (matchesAny(raw, ["SOYA OIL", "SOYABEAN OIL", "REFINED OIL", "MUSTARD OIL", "SUNFLOWER OIL", "EDIBLE OIL"])) {
-    return exact("Staples & Cooking", "Edible Oils", "Cooking Oil", "Staples", stapleSubCategory);
-  }
-  if (matchesAny(raw, ["TATA TEA", "RED LABEL", "TEA", "CHAI"])) {
-    return exact("Beverages", "Tea & Infusions", "Leaf Tea", "Tea & Infusions", "Black Tea");
-  }
-  if (matchesAny(raw, ["HEALTH PLUS", "PACKAGED WATER", "DRINKING WATER", "WATER BOTTLE"])) {
-    return exact("Beverages", "Water", "Packaged Drinking Water", "Water", "Packaged Drinking Water");
-  }
-  if (matchesAny(raw, ["STING"])) {
-    return exact("Beverages", "Energy Drinks", "Energy Drinks", "Energy Drinks", "Energy Drink");
-  }
-  if (matchesAny(raw, ["AMUL LASSI"])) {
-    return exact("Dairy & Breakfast", "Dairy Drinks", "Lassi", "Dairy Drinks", "Lassi");
-  }
-  if (matchesAny(raw, ["CHACH", "BUTTERMILK"])) {
-    return exact("Dairy & Breakfast", "Dairy Drinks", "Buttermilk", "Dairy Drinks", "Buttermilk");
-  }
-  if (matchesAny(raw, ["APPY FIZZ"])) {
-    return exact("Beverages", "Soft Drinks", "Sparkling Juice Drinks", "Soft Drinks", "Fruit Plus Fizz");
-  }
   if (matchesAny(raw, ["COCA COLA", "THUMS UP", "THUMP UP"])) {
     return exact("Beverages", "Soft Drinks", "Carbonated Soft Drinks", "Soft Drinks", "Cola");
   }
@@ -277,8 +234,117 @@ export function deriveRetailTaxonomy(row: ImportRow): ProductTaxonomy {
   if (matchesAny(raw, ["COCONUT WATER", "COCONAT WATER"])) {
     return exact("Beverages", "Juices & Fruit Drinks", "Coconut Water", "Juices & Fruit Drinks", "Coconut Water");
   }
+  if (matchesAny(raw, ["HEALTH PLUS", "PACKAGED WATER", "DRINKING WATER", "WATER BOTTLE"])) {
+    return exact("Beverages", "Water", "Packaged Drinking Water", "Water", "Packaged Drinking Water");
+  }
   if (matchesAny(raw, ["PAPER BOAT", "PAPAR BOAT", "MIXED FRUIT", "FRUIT DRINK", "JUICE"])) {
     return exact("Beverages", "Juices & Fruit Drinks", "Mixed Fruit Drinks", "Juices & Fruit Drinks", "Mixed Fruit Drink");
+  }
+  if (matchesAny(raw, ["PAPAD"])) {
+    return exact("Snacks & Confectionery", "Biscuits & Cookies", "Crackers", "Biscuits & Cookies", "Salted Crackers");
+  }
+  if (matchesAny(raw, ["NOODLES", "MAGGI"])) {
+    return exact("Snacks & Confectionery", "Instant Food", "Noodles", "Packaged Food", "Noodles");
+  }
+  if (matchesAny(raw, ["COLGATE", "CLGATE", "TOT P G H", "TOOTH PASTE", "TOOTHPASTE", "TOOTHPAST", "TOOTH PWDR", "TOOTH POWDER", "PASTE SALT", "DENTAL", "ORAL CARE", "VICCO TOOTH"])) {
+    return exact("Personal Care", "Oral Care", "Toothpaste", "Personal Care", "Toothpaste");
+  }
+  if (matchesAny(raw, ["SHAMPOO", "SHEMPOO"])) {
+    return exact("Personal Care", "Hair Care", "Shampoo", "Personal Care", "Shampoo");
+  }
+  if (matchesAny(raw, ["CONDITIONER"])) {
+    return exact("Personal Care", "Hair Care", "Conditioner", "Personal Care", "Conditioner");
+  }
+  if (matchesAny(raw, ["COLOR PACKET", "HAIR COLOR", "HAIR COLOUR", "BLACK NATURAL"])) {
+    return exact("Personal Care", "Hair Care", "Hair Color", "Personal Care", "Hair Color");
+  }
+  if (matchesAny(raw, ["HAIR OIL", "AMLA OIL", "ALMOND OIL", "COCONUT OIL", "JASMINE OIL"])) {
+    return exact("Personal Care", "Hair Care", "Hair Oil", "Personal Care", "Hair Oil");
+  }
+  if (matchesAny(raw, ["FACE WASH"])) {
+    return exact("Personal Care", "Skin Care", "Face Wash", "Personal Care", "Face Wash");
+  }
+  if (matchesAny(raw, ["FACE SCRUB", " WALNUT FS ", "SCRUB"])) {
+    return exact("Personal Care", "Skin Care", "Face Scrub", "Personal Care", "Face Scrub");
+  }
+  if (matchesAny(raw, ["GULABARI", "GULABJAL", "ROSE WATER", "KEWRA WATER"])) {
+    return exact("Personal Care", "Skin Care", "Rose Water", "Personal Care", "Rose Water");
+  }
+  if (matchesAny(raw, ["BODY LOTION", "LOTION", "BODY MILK"])) {
+    return exact("Personal Care", "Skin Care", "Body Lotion", "Personal Care", "Body Lotion");
+  }
+  if (matchesAny(raw, ["BLEACH"])) {
+    return exact("Personal Care", "Skin Care", "Bleach", "Personal Care", "Bleach");
+  }
+  if (matchesAny(raw, ["FACE POWDER", "POWDER"])) {
+    return exact("Personal Care", "Skin Care", "Powder", "Personal Care", "Powder");
+  }
+  if (matchesAny(raw, ["CREAM", "MOISTURIZER", "MOISTURISER"])) {
+    return exact("Personal Care", "Skin Care", "Cream", "Personal Care", "Cream");
+  }
+  if (matchesAny(raw, ["HANDWASH", "HAND WASH"])) {
+    return exact("Personal Care", "Bath & Body", "Hand Wash", "Bath & Body", "Hand Wash");
+  }
+  if (matchesAny(raw, ["BLADE", "GILLETTE", "RAZOR"])) {
+    return exact("Personal Care", "Grooming", "Razors & Blades", "Personal Care", "Razors & Blades");
+  }
+  if (matchesAny(raw, ["STAYFREE", "PAD"])) {
+    return exact("Personal Care", "Feminine Care", "Sanitary Pads", "Personal Care", "Sanitary Pads");
+  }
+  if (matchesAny(raw, ["DURACELL", "BATTERY", "AA ", "AAA "])) {
+    return exact("Home Care", "Batteries", "Dry Cells", "Home Care", "Batteries");
+  }
+  if (matchesAny(raw, ["ALL OUT", "ALLOUT", "MOSQUITO", "REPELLENT", "VAPORIZER", "REFILL"])) {
+    return exact("Home Care", "Pest Control", "Insect Repellent", "Pest Control", "Liquid Vaporizer Refill");
+  }
+  if (matchesAny(raw, ["FIAMA", "BATH SOAP", "SOAP", "BATHING BAR"])) {
+    return exact("Personal Care", "Bath & Body", "Bath Soap", "Bath & Body", "Bathing Bar");
+  }
+  if (matchesAny(raw, ["SURF EXCEL", "GHADI", "RIN", "DETERGENT", "WASHING POWDER", "LAUNDRY"])) {
+    const isBar = matchesAny(raw, ["BAR", "SOAP"]);
+    return exact("Home Care", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder", "Laundry Care", isBar ? "Detergent Bar" : "Detergent Powder");
+  }
+  if (matchesAny(raw, ["DUBRAJ", "DUBRAJ RICE", "SORTEX"])) {
+    return exact("Staples & Cooking", "Rice & Grains", "Rice", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["POHA"])) {
+    return exact("Staples & Cooking", "Rice & Grains", "Poha", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["RAJMA"])) {
+    return exact("Staples & Cooking", "Pulses & Dals", "Rajma", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["TOOR DAAL", "TOOR DAL", "ARHAR"])) {
+    return exact("Staples & Cooking", "Pulses & Dals", "Toor Daal", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["BESAN", "GRAM FLOUR", "CHANA FLOUR"])) {
+    return exact("Staples & Cooking", "Flour & Atta", "Gram Flour", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["AASHIRWAD", "ATTA", "WHEAT FLOUR"]) || (matchesAny(raw, ["FLOUR"]) && !matchesAny(raw, ["GRAM FLOUR", "CHANA FLOUR"]))) {
+    return exact("Staples & Cooking", "Flour & Atta", "Wheat Flour", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["SUGAR"])) {
+    return exact("Staples & Cooking", "Sugar & Sweeteners", "Sugar", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["GHEE"])) {
+    return exact("Staples & Cooking", "Ghee & Cooking Fats", "Ghee", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["SOYA OIL", "SOYABEAN OIL", "REFINED OIL", "MUSTARD OIL", "SUNFLOWER OIL", "EDIBLE OIL"])) {
+    return exact("Staples & Cooking", "Edible Oils", "Cooking Oil", "Staples", stapleSubCategory);
+  }
+  if (matchesAny(raw, ["TATA TEA", "RED LABEL", "TEA", "CHAI"])) {
+    return exact("Beverages", "Tea & Infusions", "Leaf Tea", "Tea & Infusions", "Black Tea");
+  }
+  if (matchesAny(raw, ["STING"])) {
+    return exact("Beverages", "Energy Drinks", "Energy Drinks", "Energy Drinks", "Energy Drink");
+  }
+  if (matchesAny(raw, ["AMUL LASSI"])) {
+    return exact("Dairy & Breakfast", "Dairy Drinks", "Lassi", "Dairy Drinks", "Lassi");
+  }
+  if (matchesAny(raw, ["CHACH", "BUTTERMILK"])) {
+    return exact("Dairy & Breakfast", "Dairy Drinks", "Buttermilk", "Dairy Drinks", "Buttermilk");
+  }
+  if (matchesAny(raw, ["APPY FIZZ"])) {
+    return exact("Beverages", "Soft Drinks", "Sparkling Juice Drinks", "Soft Drinks", "Fruit Plus Fizz");
   }
   if (matchesAny(raw, ["GOODAY", "GOOD DAY", "BISCUIT", "COOKIE", "MONACO"])) {
     const isCracker = matchesAny(raw, ["MONACO", "CRACKER"]);

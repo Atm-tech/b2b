@@ -35,6 +35,7 @@ import type {
   UserRole,
   Warehouse
 } from "@aapoorti-b2b/domain";
+import { deriveRetailTaxonomy } from "./product-import.js";
 
 type CurrentUser = {
   id: number;
@@ -84,7 +85,7 @@ const ready = initializeDatabase();
 async function initializeDatabase() {
   await pool.query(schemaSql);
   await ensureCompatibilityColumns();
-  await normalizeStaplesProducts();
+  await normalizeProductTaxonomy();
   await pool.query(`
     DELETE FROM delivery_dockets duplicate
     USING delivery_dockets keeper
@@ -355,83 +356,41 @@ function matchesAny(text: string, patterns: readonly string[]) {
   return patterns.some((pattern) => text.includes(pattern));
 }
 
-function deriveStaplesCategoryFields(row: Record<string, unknown>) {
-  const normalized = normalizeProductText(
-    row.name,
-    row.division,
-    row.department,
-    row.section_name,
-    row.category,
-    row.sub_category,
-    row.brand,
-    row.article_name,
-    row.item_name,
-    row.remarks
-  );
-
-  const stapleSignals = [
-    "ATTA",
-    "FLOUR",
-    "BESAN",
-    "GRAM FLOUR",
-    "CHANA FLOUR",
-    "SUGAR",
-    "GHEE",
-    "SOYA OIL",
-    "SOYABEAN OIL",
-    "REFINED OIL",
-    "MUSTARD OIL",
-    "SUNFLOWER OIL",
-    "EDIBLE OIL",
-    "FMCG-STAPLES"
-  ] as const;
-  if (!matchesAny(normalized, stapleSignals)) {
-    return null;
-  }
-
-  if (stringValue(row.category).trim() === "Staples" && ["Branded", "Non Branded"].includes(stringValue(row.sub_category).trim())) {
-    return null;
-  }
-
-  const brandedSignals = [
-    "AASHIRWAD",
-    "AMUL",
-    "BRANDED",
-    "DALDA",
-    "DHARA",
-    "ENGINE",
-    "FORTUNE",
-    "MADHUR",
-    "PACKAGED",
-    "PATANJALI",
-    "PKD",
-    "RAJDHANI",
-    "SAFOLA",
-    "SANCHI",
-    "TATA"
-  ] as const;
-  const nonBrandedSignals = ["NON BRANDED", "NON-BRANDED", "UNBRANDED", "LOOSE", "OPEN"] as const;
-  const branded = stringValue(row.brand).trim() || matchesAny(normalized, brandedSignals);
-  const nonBranded = matchesAny(normalized, nonBrandedSignals);
-
+function importRowFromProductRecord(row: Record<string, unknown>) {
   return {
-    category: "Staples",
-    subCategory: nonBranded ? "Non Branded" : branded ? "Branded" : "Non Branded"
+    sku: stringValue(row.sku),
+    name: stringValue(row.name),
+    division: stringValue(row.division),
+    department: stringValue(row.department),
+    section: stringValue(row.section_name),
+    category: stringValue(row.category),
+    subCategory: stringValue(row.sub_category),
+    BRAND: stringValue(row.brand),
+    ARTICLE_NAME: stringValue(row.article_name),
+    "ITEM NAME": stringValue(row.item_name),
+    REMARKS: stringValue(row.remarks),
+    "CATEGORY 6": stringValue(row.category_6),
+    SIZE: stringValue(row.size)
   };
 }
 
-async function normalizeStaplesProducts() {
+async function normalizeProductTaxonomy() {
   const rows = await query<Record<string, unknown>>(
-    `SELECT sku, name, division, department, section_name, category, sub_category, brand, article_name, item_name, remarks
+    `SELECT sku, name, division, department, section_name, category, sub_category, brand, article_name, item_name, remarks, category_6, size
      FROM products`
   );
 
   for (const row of rows.rows) {
-    const normalized = deriveStaplesCategoryFields(row);
-    if (!normalized) continue;
+    const normalized = deriveRetailTaxonomy(importRowFromProductRecord(row));
     await query(
-      "UPDATE products SET category = $1, sub_category = $2 WHERE sku = $3",
-      [normalized.category, normalized.subCategory, stringValue(row.sku)]
+      `UPDATE products
+       SET division = $1,
+           department = $2,
+           section_name = $3,
+           category = $4,
+           sub_category = $5
+       WHERE sku = $6`,
+      [normalized.division, normalized.department, normalized.section, normalized.category, normalized.subCategory, stringValue(row.sku)]
     );
   }
 }

@@ -1902,7 +1902,8 @@ function findSalesOrderByPublicId(orders: SalesOrder[], orderId: string) {
 }
 
 function productNameBySku(products: AppSnapshot["products"], sku: string) {
-  return products.find((product) => product.sku === sku)?.name || sku;
+  const product = products.find((item) => item.sku === sku);
+  return product ? productDisplayLabel(product) : sku;
 }
 
 function productNamesSummary(products: AppSnapshot["products"], skus: string[], separator = ", ") {
@@ -4731,6 +4732,10 @@ type CatalogDisplayProduct = {
   familyKey?: string;
 };
 
+function catalogCardTitle(item: CatalogDisplayProduct, product: AppSnapshot["products"][number]) {
+  return item.familyKey ? item.displayName : productDisplayLabel(product);
+}
+
 function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
   const weightText = [
     product.size,
@@ -4779,55 +4784,35 @@ function staplesVariantSortWeight(product: AppSnapshot["products"][number]) {
   return weight > 0 ? weight : Number.POSITIVE_INFINITY;
 }
 
-function nonBrandedStaplesFamily(product: AppSnapshot["products"][number]) {
-  const isStaplesLike =
-    product.category.trim().toLowerCase() === "staples"
-    || product.division.trim().toLowerCase() === "staples & cooking";
-  if (!isStaplesLike) {
-    return null;
-  }
-  const normalized = [
-    product.name,
-    product.shortName,
-    product.itemName,
-    product.articleName,
-    product.department,
-    product.section
-  ].join(" ").toUpperCase();
-  if (normalized.includes("ATTA") || normalized.includes("FLOUR")) return "ATTA";
-  if (normalized.includes("BESAN")) return "BESAN";
-  if (normalized.includes("RAJMA")) return "RAJMA";
-  if (normalized.includes("TOOR DAAL") || normalized.includes("TOOR DAL") || normalized.includes("ARHAR")) return "TOOR DAAL";
-  if (normalized.includes("POHA")) return "POHA";
-  if (
-    normalized.includes("DUBRAJ")
-    || normalized.includes("DUBRAJ RICE")
-    || normalized.includes("NAVRATAN")
-    || normalized.includes("SORTEX")
-  ) return "DUBRAJ RICE";
-  return null;
+function normalizeCatalogFamilyLabel(product: AppSnapshot["products"][number]) {
+  const primaryLabel = (
+    product.name
+    || product.shortName
+    || product.itemName
+    || product.articleName
+    || product.sku
+  ).toUpperCase();
+  const cleaned = primaryLabel
+    .replace(/[_/]+/g, " ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:KG|KGS|KILOGRAM|G|GM|GRAM|L|LTR|LT|LITRE|ML)\b/g, " ")
+    .replace(/\b(?:PKD|PACK|PCK|JAR|FMCG|J)\b/g, " ")
+    .replace(/\s*-\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || primaryLabel.trim();
 }
 
 function buildCatalogDisplayProducts(items: AppSnapshot["products"]) {
   const grouped = new Map<string, AppSnapshot["products"]>();
-  const display: CatalogDisplayProduct[] = [];
-
   for (const product of items) {
-    const family = nonBrandedStaplesFamily(product);
-    if (!family) {
-      display.push({
-        key: product.sku,
-        displayName: product.name,
-        product,
-        variants: [product]
-      });
-      continue;
-    }
+    const family = normalizeCatalogFamilyLabel(product);
     const current = grouped.get(family) || [];
     current.push(product);
     grouped.set(family, current);
   }
 
+  const display: CatalogDisplayProduct[] = [];
   for (const [family, variants] of grouped.entries()) {
     const sortedVariants = [...variants].sort((left, right) => {
       const weightDiff = staplesVariantSortWeight(left) - staplesVariantSortWeight(right);
@@ -4842,21 +4827,31 @@ function buildCatalogDisplayProducts(items: AppSnapshot["products"]) {
           map.set(label, variant);
           return map;
         }
-        const currentScore =
-          (current.defaultWeightKg > 0 ? 10 : 0)
-          + (/LOOSE/i.test(current.name) ? 0 : 5)
-          + (/LOOSE/i.test(current.sku) ? 0 : 2);
-        const nextScore =
-          (variant.defaultWeightKg > 0 ? 10 : 0)
-          + (/LOOSE/i.test(variant.name) ? 0 : 5)
-          + (/LOOSE/i.test(variant.sku) ? 0 : 2);
-        if (nextScore > currentScore) {
+        const variantName = `${variant.name} ${variant.shortName || ""} ${variant.articleName || ""} ${variant.itemName || ""}`.toUpperCase();
+        const currentName = `${current.name} ${current.shortName || ""} ${current.articleName || ""} ${current.itemName || ""}`.toUpperCase();
+        const score = (value: string, product: AppSnapshot["products"][number]) =>
+          (product.size ? 10 : 0)
+          + (Number(product.defaultWeightKg || 0) > 0 ? 8 : 0)
+          + (/\bJAR\b|\bFMCG\b|\(J\)|\b J \b/.test(` ${value} `) ? -6 : 0)
+          + (/\b\d+(?:\.\d+)?\s*(?:KG|KGS|G|GM|GRAM|L|LTR|LT|ML)\b/.test(value) ? 4 : 0)
+          + (value.length > 0 ? Math.min(value.length, 40) / 100 : 0);
+        if (score(variantName, variant) > score(currentName, current)) {
           map.set(label, variant);
         }
         return map;
       }, new Map<string, AppSnapshot["products"][number]>())
       .values()
     );
+    if (uniqueVariants.length === 1) {
+      const [product] = uniqueVariants;
+      display.push({
+        key: product.sku,
+        displayName: product.name,
+        product,
+        variants: [product]
+      });
+      continue;
+    }
     display.push({
       key: `family-${family}`,
       displayName: family,
@@ -4867,6 +4862,23 @@ function buildCatalogDisplayProducts(items: AppSnapshot["products"]) {
   }
 
   return display.sort((left, right) => left.displayName.localeCompare(right.displayName, "en-IN"));
+}
+
+function catalogVariantOptionLabel(
+  variant: AppSnapshot["products"][number],
+  variants: AppSnapshot["products"]
+) {
+  const baseLabel = normalizeStaplesWeightLabel(variant);
+  const sameWeightVariants = variants.filter((item) => normalizeStaplesWeightLabel(item) === baseLabel);
+  if (sameWeightVariants.length <= 1) return baseLabel;
+  const detail = variant.shortName || variant.articleName || variant.itemName || variant.name || variant.sku;
+  return `${baseLabel} - ${detail}`;
+}
+
+function productDisplayLabel(product: AppSnapshot["products"][number]) {
+  const family = normalizeCatalogFamilyLabel(product);
+  if (!family) return product.name;
+  return `${family} - ${catalogVariantOptionLabel(product, [product])}`;
 }
 
 function CatalogOrderView(props: CatalogOrderViewProps) {
@@ -5291,16 +5303,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       cartLine.stockApprovalRequested = nextQuantity > availableStockAtOrder;
     }
     setCartLines((lines) => {
-      const family = nonBrandedStaplesFamily(popup.product);
-      const comparableLines = family
-        ? lines.filter((line) => {
-            const lineProduct = products.find((product) => product.sku === line.productSku);
-            return !lineProduct || nonBrandedStaplesFamily(lineProduct) !== family;
-          })
-        : lines;
-      const exists = comparableLines.some((line) => line.productSku === cartLine.productSku);
-      const baseLines = comparableLines.filter((line) => line.productSku !== cartLine.productSku);
-      return exists ? [...baseLines, cartLine] : [...comparableLines, cartLine];
+      const exists = lines.some((line) => line.productSku === cartLine.productSku);
+      const baseLines = lines.filter((line) => line.productSku !== cartLine.productSku);
+      return exists ? [...baseLines, cartLine] : [...lines, cartLine];
     });
     setOrderForm((current: any) => ({
       ...current,
@@ -5682,8 +5687,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     />
                     {suggestionOpen && search.trim() ? <div className="search-suggestion-list">
                       {searchSuggestions.length > 0 ? searchSuggestions.map((product) => <button key={product.sku} type="button" className="search-suggestion-item" onMouseDown={() => applySearchSuggestion(product)}>
-                        <strong>{product.name}</strong>
-                        <span>{productCategoryLabel(product)} / {product.section || "General"} / {product.brand || product.sku}</span>
+                        <strong>{productDisplayLabel(product)}</strong>
+                        <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
                       </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved product found</strong><span>Create product first from Products.</span></div>}
                     </div> : null}
                   </div>
@@ -5777,7 +5782,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="product-card-copy">
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
-                      <strong>{item.displayName}</strong>
+                      <strong>{catalogCardTitle(item, product)}</strong>
                       <p>{product.department} / {product.section}</p>
                     </div>
                     <div className="product-meta compact">
@@ -5792,7 +5797,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                           onClick={(event) => event.stopPropagation()}
                           onChange={(event) => { event.stopPropagation(); setCatalogFamilyVariant(item.familyKey || "", event.target.value); }}
                         >
-                          {item.variants.map((variant) => <option key={variant.sku} value={variant.sku}>{normalizeStaplesWeightLabel(variant)}</option>)}
+                          {item.variants.map((variant) => <option key={variant.sku} value={variant.sku}>{catalogVariantOptionLabel(variant, item.variants)}</option>)}
                         </select>
                       </label>
                     </div> : null}
@@ -5838,7 +5843,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <div className="cart-head">
                   <div>
                     <span className="eyebrow">Rate Entry</span>
-                    <h3>{ratePopup.product.name}</h3>
+                    <h3>{productDisplayLabel(ratePopup.product)}</h3>
                   </div>
                   <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Close</button>
                 </div>
@@ -5942,7 +5947,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <div className="stack-list">
                   {cartProducts.map(({ line, product }) => <article className="list-card cart-product-line" key={line.productSku}>
                     <div className="payment-update-head">
-                      <div><strong>{product.name}</strong><p>{product.division} / {product.section}</p></div>
+                      <div><strong>{productDisplayLabel(product)}</strong><p>{product.division} / {product.section}</p></div>
                       <button type="button" className="ghost-button danger-button" onClick={() => setCartLines((current) => current.filter((item) => item.productSku !== line.productSku))}>Remove</button>
                     </div>
                     <div className="payment-meta-grid">
@@ -6223,7 +6228,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 </div>
                 <div className="stack-list top-gap">
                   {cartProducts.map(({ line, product }) => <article className="list-card cart-summary-line" key={line.productSku}>
-                    <strong>{product.name}</strong>
+                    <strong>{productDisplayLabel(product)}</strong>
                     <p>{line.quantity} x {Number(line.rate || 0).toFixed(2)} = {getCartLineTotal(line).toFixed(2)} · {line.gstRate === "NA" ? "Non GST / Final Amount" : `${line.gstRate}% / ${line.taxMode}`}</p>
                   </article>)}
                 </div>
@@ -6869,8 +6874,8 @@ function PurchaseCartEditor({
                     </div>
                     <div className="compact-order-editor-product">
                       {!line.id ? <select value={line.productSku} onChange={(e) => updateDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>
-                        {snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}
-                      </select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}
+                        {snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{productDisplayLabel(product) || product.sku}</option>)}
+                      </select> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}
                     </div>
                     <input type="number" step="any" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.clientKey, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
                     <input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} />
@@ -7452,7 +7457,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
               <span>Qty</span>
               <span>Rate</span>
             </div>
-            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name || product.sku}</option>)}</select> : <strong>{snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
+            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{productDisplayLabel(product) || product.sku}</option>)}</select> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
           </> : <div className="empty-card">No sales order lines available.</div>}</div>
           <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={() => {
             if (!confirmDiscardChanges()) return;
@@ -14017,7 +14022,7 @@ function ProductAdminView({
             <button className="primary-button" type="submit">Upload product file</button>
           </form>
         </Panel>
-        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section","Category","Subcategory","Default GST","Per item/bundle weight"]} rows={snapshot.products.map((product) => [product.sku, product.name, product.division, product.department, product.section, product.category, product.subCategory, product.defaultGstRate === "NA" ? "NA / Final" : `${product.defaultGstRate}% / ${product.defaultTaxMode}`, product.defaultWeightKg])} /></Panel>
+        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section","Category","Subcategory","Default GST","Per item/bundle weight"]} rows={snapshot.products.map((product) => [product.sku, productDisplayLabel(product), product.division, product.department, product.section, product.category, product.subCategory, product.defaultGstRate === "NA" ? "NA / Final" : `${product.defaultGstRate}% / ${product.defaultTaxMode}`, product.defaultWeightKg])} /></Panel>
       </>}
     />
   );
@@ -14025,7 +14030,7 @@ function ProductAdminView({
 
 function renderOptions(items: Counterparty[]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)]; }
 function renderWarehouseOptions(items: AppSnapshot["warehouses"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)]; }
-function renderProductOptions(items: AppSnapshot["products"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.sku} value={item.sku}>{`${item.sku} - ${item.name} (${item.division} > ${item.department} > ${item.section})`}</option>)]; }
+function renderProductOptions(items: AppSnapshot["products"]) { return [<option key="blank" value="">Select</option>, ...items.map((item) => <option key={item.sku} value={item.sku}>{`${item.sku} - ${productDisplayLabel(item)} (${item.division} > ${item.department} > ${item.section})`}</option>)]; }
 function uniqueProductFieldOptions(items: AppSnapshot["products"], field: "division" | "department" | "section" | "category" | "subCategory") { return Array.from(new Set(items.map((item) => item[field].trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right)); }
 function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, subCategory: row.subCategory || "", defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
 
