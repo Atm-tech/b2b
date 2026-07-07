@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { SidebarVectorIcon } from "./components/navigation";
 import { CollapsiblePanel, DataTable, LabelWithBadge, MetricCard, Panel, PendingBadge, TwoCol } from "./components/ui";
+import appLogo from "./assets/group60.svg";
 import { downloadExcelTextWorkbook, downloadExcelWorkbook } from "./utils/excel";
 import type {
   AppSnapshot,
@@ -3648,21 +3649,6 @@ function App() {
     return true;
   }
 
-  function openCatalogSearchFromNav() {
-    const targetView: ViewKey = activeView === "Purchase" || activeView === "Sales"
-      ? activeView
-      : currentRoles.includes("Sales") && safeVisibleViews.includes("Sales")
-        ? "Sales"
-        : "Purchase";
-    const changed = activeView === targetView ? true : navigateToView(targetView);
-    if (!changed) return;
-    if (targetView === "Sales") {
-      setSalesCatalogSearchToken((current) => current + 1);
-      return;
-    }
-    setPurchaseCatalogSearchToken((current) => current + 1);
-  }
-
   useEffect(() => {
     const target = readOrderQrTargetFromLocation();
     if (target) setPendingQrTarget(target);
@@ -3891,18 +3877,42 @@ function App() {
   if (!currentUser || !snapshot) {
     return (
       <main className="login-shell">
-        <section className="login-card panel">
-          <div className="login-copy">
-            <span className="eyebrow">B2B Supply Management</span>
-            <h1>Operations Console</h1>
-            <p>Manage supplier purchase, warehouse receipt, accounts settlement, sales dispatch, and delivery tracking.</p>
-          </div>
-          <form className="form-shell" onSubmit={doLogin}>
-            <label>Username<input value={login.username} onChange={(e) => setLogin((c) => ({ ...c, username: e.target.value }))} /></label>
-            <label>Password<input type="password" value={login.password} onChange={(e) => setLogin((c) => ({ ...c, password: e.target.value }))} /></label>
-            {error ? <p className="message error">{error}</p> : null}
-            <button className="primary-button" type="submit" disabled={loading}>{loading ? "Signing in..." : "Login"}</button>
-          </form>
+        <section className="login-landing">
+          <header className="login-hero-bar glass-surface">
+            <div className="login-brand-lockup">
+              <div className="login-brand-badge">
+                <img src={appLogo} alt="Aapoorti" className="login-brand-logo" />
+              </div>
+              <div className="login-brand-copy">
+                <span className="eyebrow">Aapoorti B2B</span>
+                <strong>Supply Commerce Console</strong>
+              </div>
+            </div>
+            <div className="login-hero-chip">Live Operations</div>
+          </header>
+          <section className="login-card panel glass-panel">
+            <div className="login-copy">
+              <span className="eyebrow">Wholesale Workflow</span>
+              <h1>Fast booking, dispatch, settlement, and stock control.</h1>
+              <p>One control room for purchase, sales, warehouse, delivery, and accounts teams.</p>
+              <div className="login-feature-strip">
+                <div className="login-feature-pill">Orders</div>
+                <div className="login-feature-pill">Inventory</div>
+                <div className="login-feature-pill">Collections</div>
+              </div>
+            </div>
+            <form className="form-shell glass-form-shell" onSubmit={doLogin}>
+              <div className="login-form-head">
+                <span className="eyebrow">Secure Sign In</span>
+                <strong>Enter your operator credentials</strong>
+              </div>
+              <label>Username<input value={login.username} onChange={(e) => setLogin((c) => ({ ...c, username: e.target.value }))} /></label>
+              <label>Password<input type="password" value={login.password} onChange={(e) => setLogin((c) => ({ ...c, password: e.target.value }))} /></label>
+              {error ? <p className="message error">{error}</p> : null}
+              <button className="primary-button" type="submit" disabled={loading}>{loading ? "Signing in..." : "Login"}</button>
+            </form>
+          </section>
+          <footer className="login-footer">Powered by OPAS</footer>
         </section>
       </main>
     );
@@ -3935,7 +3945,6 @@ function App() {
         : currentRoles.includes("Accounts")
           ? accountsBottomViews.filter((view) => safeVisibleViews.includes(view))
           : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
-  const canOpenCatalogSearch = safeVisibleViews.includes("Purchase") || safeVisibleViews.includes("Sales");
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
 
