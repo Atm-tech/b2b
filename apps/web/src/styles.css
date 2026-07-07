@@ -689,14 +689,6 @@ textarea {
   box-shadow: 0 0 0 7px rgba(99, 102, 241, 0.14), 0 20px 30px rgba(22, 78, 75, 0.34), inset 0 9px 15px rgba(255, 255, 255, 0.36), inset 0 -13px 18px rgba(22, 78, 75, 0.3);
 }
 
-.simple-tab-bar .catalog-search-tab {
-  flex: 0 0 58px;
-  min-width: 58px;
-  width: 58px;
-  padding: 0;
-  justify-content: center;
-}
-
 .module-stack {
   display: grid;
   gap: var(--space-3);
@@ -1144,7 +1136,7 @@ textarea {
 
 .catalog-search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(56px, auto) minmax(72px, auto);
   gap: 10px;
   align-items: stretch;
 }
@@ -1176,6 +1168,18 @@ textarea {
   min-height: 100%;
   border-radius: 16px;
   font-weight: 800;
+}
+
+.catalog-search-launch {
+  padding: 0;
+  min-width: 56px;
+  display: grid;
+  place-items: center;
+}
+
+.catalog-search-launch .sidebar-vector-icon {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .search-suggestion-list {
@@ -3307,20 +3311,6 @@ textarea {
     box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12), 0 12px 18px rgba(22, 78, 75, 0.22), inset 0 6px 10px rgba(255, 255, 255, 0.34), inset 0 -10px 14px rgba(22, 78, 75, 0.26);
   }
 
-  .mobile-tab-bar .catalog-search-tab {
-    flex: 0 0 34px;
-    min-width: 34px;
-    width: 34px;
-    padding: 0;
-    display: grid;
-    place-items: center;
-  }
-
-  .mobile-tab-bar .catalog-search-tab .sidebar-vector-icon {
-    width: 1rem;
-    height: 1rem;
-  }
-
   .purchase-module-tab-bar {
     display: flex;
     gap: clamp(4px, 1.4vw, 8px);
@@ -3664,7 +3654,7 @@ textarea {
 
   .catalog-search-row {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(50px, auto) minmax(72px, auto);
   }
 
   .catalog-search-row .ghost-button {

@@ -4803,7 +4803,7 @@ function App() {
             : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
         return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
-      })}{canOpenCatalogSearch ? <button type="button" className="tab-button catalog-search-tab" onClick={openCatalogSearchFromNav} title="Search products" aria-label="Search products"><SidebarVectorIcon view="Search" /></button> : null}</nav>}
+      })}</nav>}
     </main>
   );
 }
@@ -5913,8 +5913,11 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                           <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
                         </button>;
                       }) : <div className="search-suggestion-item empty-suggestion"><strong>No saved product found</strong><span>Create product first from Products.</span></div>}
-                    </div> : null}
+                      </div> : null}
                   </div>
+                  <button className="ghost-button catalog-search-launch" type="button" onClick={() => setSearchSheetOpen(true)} title="Open search page" aria-label="Open search page">
+                    <SidebarVectorIcon view="Search" />
+                  </button>
                   <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
                 </div>
               </label>
