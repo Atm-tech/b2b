@@ -858,6 +858,9 @@ function displayOrderNote(note?: string) {
   if (/Imported from\s+/i.test(text)) {
     return "";
   }
+  if (/Probationary shortage recorded:/i.test(text)) {
+    return "";
+  }
   const warehouseSourceMatch = text.match(/Warehouse source\s+([^|]+)/i);
   if (warehouseSourceMatch) {
     return `Fulfillment Source: ${warehouseSourceMatch[1].trim()}`;
@@ -1267,13 +1270,17 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
     })),
     totals: nonGst
       ? [
-        { label: "Items", value: group.lines.reduce((sum, line) => sum + line.totalAmount, 0) },
+        { label: "Items", value: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0) },
+        { label: "CD", value: group.lines.reduce((sum, line) => sum + (line.cdAmount || 0), 0) },
+        { label: "TOD", value: group.lines.reduce((sum, line) => sum + (line.todAmount || 0), 0) },
         { label: "Delivery", value: group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0) },
         { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }
       ]
       : [
         { label: "Taxable", value: group.lines.reduce((sum, line) => sum + line.taxableAmount, 0) },
         { label: "GST", value: group.lines.reduce((sum, line) => sum + line.gstAmount, 0) },
+        { label: "CD", value: group.lines.reduce((sum, line) => sum + (line.cdAmount || 0), 0) },
+        { label: "TOD", value: group.lines.reduce((sum, line) => sum + (line.todAmount || 0), 0) },
         { label: "Delivery", value: group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0) },
         { label: "Grand Total", value: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0) }
       ],
@@ -1440,6 +1447,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
+  const cd = group.lines.reduce((sum, line) => sum + (line.cdAmount || 0), 0);
+  const tod = group.lines.reduce((sum, line) => sum + (line.todAmount || 0), 0);
   const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
   const nonGstBill = isNonGstInvoice(group.lines);
@@ -1449,6 +1458,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantity}</td>
       <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.cdAmount || 0)}</td>
+      <td>${formatMoney(line.todAmount || 0)}</td>
       <td>${formatMoney(line.totalAmount)}</td>
     </tr>
   ` : `
@@ -1459,6 +1470,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${formatMoney(line.rate)}</td>
       <td>${formatMoney(line.taxableAmount)}</td>
       <td>${formatMoney(line.gstAmount)}</td>
+      <td>${formatMoney(line.cdAmount || 0)}</td>
+      <td>${formatMoney(line.todAmount || 0)}</td>
       <td>${formatMoney(line.totalAmount)}</td>
     </tr>
   `).join("");
@@ -1493,6 +1506,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
                 <th>Product</th>
                 <th>Qty</th>
                 <th>Rate</th>
+                <th>CD</th>
+                <th>TOD</th>
                 <th>Amount</th>
               </tr>
             </thead>
@@ -1500,6 +1515,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           </table>
           <div class="invoice-kachcha-total">
             <div><span>Items Total</span><strong>${formatMoney(taxable)}</strong></div>
+            <div><span>CD</span><strong>${formatMoney(cd)}</strong></div>
+            <div><span>TOD</span><strong>${formatMoney(tod)}</strong></div>
             <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
             <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
           </div>
@@ -1544,6 +1561,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
               <th>Rate</th>
               <th>Taxable</th>
               <th>GST</th>
+              <th>CD</th>
+              <th>TOD</th>
               <th>Total</th>
             </tr>
           </thead>
@@ -1552,6 +1571,8 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
         <div class="invoice-totals">
           <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
           <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
+          <div><span>CD</span><strong>${formatMoney(cd)}</strong></div>
+          <div><span>TOD</span><strong>${formatMoney(tod)}</strong></div>
           <div><span>Delivery</span><strong>${formatMoney(delivery)}</strong></div>
           <div><span>Grand Total</span><strong>${formatMoney(total)}</strong></div>
         </div>
@@ -1599,6 +1620,8 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
   const nonGstBill = isNonGstInvoice(group.lines);
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);
   const gst = group.lines.reduce((sum, line) => sum + line.gstAmount, 0);
+  const cd = group.lines.reduce((sum, line) => sum + (line.cdAmount || 0), 0);
+  const tod = group.lines.reduce((sum, line) => sum + (line.todAmount || 0), 0);
   const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
   const lines = nonGstBill
@@ -1609,7 +1632,9 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Amount ${formatMoney(line.totalAmount)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | CD ${formatMoney(line.cdAmount || 0)} | TOD ${formatMoney(line.todAmount || 0)} | Amount ${formatMoney(line.totalAmount)}`),
+      `CD Total: ${formatMoney(cd)}`,
+      `TOD Total: ${formatMoney(tod)}`,
       `Delivery: ${formatMoney(delivery)}`,
       `Grand Total: ${formatMoney(total)}`
     ]
@@ -1620,9 +1645,11 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | CD ${formatMoney(line.cdAmount || 0)} | TOD ${formatMoney(line.todAmount || 0)} | Total ${formatMoney(line.totalAmount)}`),
       `Taxable Total: ${formatMoney(taxable)}`,
       `GST Total: ${formatMoney(gst)}`,
+      `CD Total: ${formatMoney(cd)}`,
+      `TOD Total: ${formatMoney(tod)}`,
       `Delivery: ${formatMoney(delivery)}`,
       `Grand Total: ${formatMoney(total)}`
     ];
@@ -4513,7 +4540,7 @@ function App() {
             persistKey={workspaceStorageKey(currentUser.id, "sales-catalog")}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines, options) => post("/sales-orders/cart", { ...salesForm, allowProbationarySale: Boolean(options?.allowProbationarySale), lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
+            onSubmit={(advancePayment, operationDate, lines, options) => post("/sales-orders/cart", { ...salesForm, allowProbationarySale: Boolean(options?.allowProbationarySale), lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), cdTodRate: Number(line.cdTodRate || 0), cdAmount: Number(line.cdAmount || 0), todAmount: Number(line.todAmount || 0), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
             rightPanel={null}
           />)) : null}
           {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
@@ -4712,6 +4739,9 @@ type CartLine = {
   productSku: string;
   quantity: string;
   rate: string;
+  cdTodRate?: string;
+  cdAmount?: string;
+  todAmount?: string;
   previousRate: string;
   taxableAmount: string;
   gstRate: GstRateInput;
@@ -4737,6 +4767,10 @@ function catalogCardTitle(item: CatalogDisplayProduct, product: AppSnapshot["pro
 }
 
 function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
+  const explicitVariant = (product.weightVariant || "").trim().toUpperCase();
+  if (explicitVariant && explicitVariant !== "WRONG") {
+    return explicitVariant;
+  }
   const weightText = [
     product.size,
     product.name,
@@ -4785,6 +4819,8 @@ function staplesVariantSortWeight(product: AppSnapshot["products"][number]) {
 }
 
 function normalizeCatalogFamilyLabel(product: AppSnapshot["products"][number]) {
+  const explicitBase = (product.baseProduct || "").trim();
+  if (explicitBase) return explicitBase.toUpperCase();
   const primaryLabel = (
     product.name
     || product.shortName
@@ -4889,7 +4925,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     activeDivision: "",
     activeDepartment: "",
     activeSection: "",
-    flowStep: "catalog" as "landing" | "existing" | "new" | "catalog",
+    flowStep: (mode === "sales" ? "landing" : "catalog") as "landing" | "existing" | "new" | "catalog",
     cartOpen: false,
     cartStep: "cart" as "cart" | "payment" | "summary",
     billTaxOverride: { enabled: false, gstRate: "0" as GstRateInput, taxMode: "Exclusive" as TaxModeInput },
@@ -4908,7 +4944,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [partySuggestionOpen, setPartySuggestionOpen] = useState(false);
-  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || "catalog");
+  const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || (mode === "sales" ? "landing" : "catalog"));
   const [cartOpen, setCartOpen] = useState(Boolean(persisted?.cartOpen));
   const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">(persisted?.cartStep || "cart");
   const [cartToast, setCartToast] = useState("");
@@ -4921,6 +4957,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     product: AppSnapshot["products"][number];
     quantity: string;
     rate: string;
+    cdTodRate: string;
     lastRate: number;
     gstRate: GstRateInput;
     taxMode: TaxModeInput;
@@ -5008,12 +5045,15 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const catalogProducts = buildCatalogDisplayProducts(filteredProducts);
   const searchSuggestions = search.trim() === ""
     ? []
-    : products
-        .map((product) => ({ product, score: productMatchScore(product, search) }))
-        .filter((item) => item.score > 0)
-        .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name, "en-IN"))
-        .map((item) => item.product)
-        .slice(0, 6);
+    : buildCatalogDisplayProducts(
+        products
+          .filter((product) => productMatchScore(product, search) > 0)
+          .sort((left, right) => {
+            const scoreDiff = productMatchScore(right, search) - productMatchScore(left, search);
+            if (scoreDiff !== 0) return scoreDiff;
+            return left.name.localeCompare(right.name, "en-IN");
+          })
+      ).slice(0, 6);
   const partySuggestions = parties
     .filter((party) => {
       const query = partySearch.trim().toLowerCase();
@@ -5022,15 +5062,21 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     })
     .slice(0, 8);
 
-  function applySearchSuggestion(product: AppSnapshot["products"][number]) {
-    setSearch(product.name);
+  function applySearchSuggestion(item: CatalogDisplayProduct) {
+    const product = resolveCatalogProduct(item);
+    setSearch(item.displayName);
     setActiveDivision("");
     setActiveDepartment("");
     setActiveSection("");
     setSuggestionOpen(false);
+    selectProduct(product);
   }
 
   function selectSavedParty(party: Counterparty) {
+    if (!isPurchase && cartLines.length > 0 && selectedPartyId && selectedPartyId !== party.id) {
+      showCartToast("This cart is locked to the selected customer. Clear cart to change customer.");
+      return;
+    }
     setPartySearch(party.name);
     setPartySuggestionOpen(false);
     setCartErrors((current) => ({ ...current, supplierId: false }));
@@ -5106,12 +5152,18 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   function selectProduct(product: AppSnapshot["products"][number]) {
+      if (!isPurchase && !selectedPartyId && cartLines.length === 0) {
+        setFlowStep("existing");
+        showCartToast("Select customer first");
+        return false;
+      }
       const lastRate = getLastPurchaseRate(product);
       const existingLine = cartLines.find((line) => line.productSku === product.sku);
       setRatePopup({
         product,
         quantity: existingLine?.quantity || "1",
         rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : (product.mrp ?? lastRate ?? 0)),
+        cdTodRate: existingLine?.cdTodRate || existingLine?.rate || String(product.mrp ?? lastRate ?? 0),
         lastRate,
         gstRate: existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : (product.defaultGstRate === "NA" ? "NA" : String(product.defaultGstRate || 0) as GstRateInput)),
         taxMode: existingLine?.taxMode || (billTaxOverride.enabled ? billTaxOverride.taxMode : (product.defaultTaxMode || "Exclusive")),
@@ -5134,10 +5186,25 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     return calculateTax(String(lineAmount), gstRate, taxMode);
   }
 
+  function calculateCdTodBreakdown(quantity: string, rate: string, cdTodRate: string) {
+    const qty = Math.max(0, Number(quantity || 0));
+    const grossRate = Math.max(0, Number(rate || 0));
+    const subsidyRate = Math.max(0, Number(cdTodRate || 0));
+    const differencePerUnit = Math.max(0, grossRate - subsidyRate);
+    const totalDifference = differencePerUnit * qty;
+    const cdAmount = totalDifference / 2;
+    const todAmount = totalDifference - cdAmount;
+    return {
+      cdAmount: cdAmount.toFixed(2),
+      todAmount: todAmount.toFixed(2)
+    };
+  }
+
   function updateCartLineQuantity(productSku: string, quantity: string) {
     setCartLines((current) => current.map((line) => {
       if (line.productSku !== productSku) return line;
       const totals = calculateLineTotals(quantity, line.rate, line.gstRate, line.taxMode);
+      const subsidyBreakdown = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(quantity, line.rate, line.cdTodRate || line.rate);
       if (isPurchase) {
         return { ...line, quantity, taxableAmount: totals.taxableAmount, gstAmount: totals.gstAmount };
       }
@@ -5145,6 +5212,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       return {
         ...line,
         quantity,
+        cdAmount: subsidyBreakdown.cdAmount,
+        todAmount: subsidyBreakdown.todAmount,
         taxableAmount: totals.taxableAmount,
         gstAmount: totals.gstAmount,
         availableStockAtOrder: String(availableStockAtOrder),
@@ -5176,7 +5245,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   function getCartLineTotal(line: CartLine) {
-    return Number(line.taxableAmount || 0) + Number(line.gstAmount || 0);
+    return Math.max(0, Number(line.taxableAmount || 0) + Number(line.gstAmount || 0) - getCartLineCdAmount(line) - getCartLineTodAmount(line));
   }
 
   function setOrderQuantity(quantity: number | string) {
@@ -5262,6 +5331,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       showCartToast("Enter product rate");
       return;
     }
+    if (!isPurchase && Number(popup.cdTodRate || 0) > nextRate) {
+      showCartToast("CD/TOD rate cannot be higher than sale rate");
+      return;
+    }
     if (!Number.isFinite(nextQuantity) || nextQuantity <= 0) {
       showCartToast("Enter quantity");
       return;
@@ -5282,10 +5355,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     const lineNote = !isPurchase && popup.lastRate > 0 && nextRate < popup.lastRate
       ? `Rate below last purchase price: sales rate ${nextRate}, last purchase ${popup.lastRate} for ${popup.product.sku}.`
       : orderForm.note;
+    const subsidyBreakdown = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(popup.quantity, popup.rate, popup.cdTodRate);
     const cartLine: CartLine = {
       productSku: popup.product.sku,
       quantity: quantityText,
       rate: String(nextRate),
+      cdTodRate: isPurchase ? "0" : popup.cdTodRate,
+      cdAmount: subsidyBreakdown.cdAmount,
+      todAmount: subsidyBreakdown.todAmount,
       previousRate: String(popup.lastRate || 0),
       taxableAmount: lineTotals.taxableAmount,
       gstRate: popup.gstRate,
@@ -5333,6 +5410,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
 
   function getSuggestedRate(product: AppSnapshot["products"][number]) {
     return product.rsp ?? product.slabs[0]?.purchaseRate ?? 0;
+  }
+
+  function getCartLineCdAmount(line: CartLine) {
+    return Number(line.cdAmount || 0);
+  }
+
+  function getCartLineTodAmount(line: CartLine) {
+    return Number(line.todAmount || 0);
   }
 
   function resetCurrentOrder() {
@@ -5385,6 +5470,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     setActiveSection("");
     setSearch("");
     setPartySearch("");
+    setFlowStep(isPurchase ? "catalog" : "landing");
     setCartOpen(false);
     setCartStep("cart");
     setCartErrors({});
@@ -5615,7 +5701,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const cartProducts = cartLines.map((line) => ({ line, product: products.find((item) => item.sku === line.productSku) })).filter((item): item is { line: CartLine; product: AppSnapshot["products"][number] } => Boolean(item.product));
   const cartTaxable = cartLines.reduce((sum, line) => sum + Number(line.taxableAmount || 0), 0);
   const cartGstAmount = cartLines.reduce((sum, line) => sum + Number(line.gstAmount || 0), 0);
-  const cartTotal = cartTaxable + cartGstAmount;
+  const cartCdAmount = cartLines.reduce((sum, line) => sum + getCartLineCdAmount(line), 0);
+  const cartTodAmount = cartLines.reduce((sum, line) => sum + getCartLineTodAmount(line), 0);
+  const cartTotal = Math.max(0, cartTaxable + cartGstAmount - cartCdAmount - cartTodAmount);
   const totalWeightKg = cartProducts.reduce((sum, item) => sum + item.product.defaultWeightKg * Number(item.line.quantity || 0), 0);
   const cartStepTitle = cartStep === "cart" ? "Cart" : cartStep === "payment" ? "Payment" : "Bill Summary";
   const checkoutSteps = [
@@ -5623,6 +5711,12 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     { key: "payment", label: "Payment" },
     { key: "summary", label: "Summary" }
   ] as const;
+
+  useEffect(() => {
+    if (!isPurchase && cartLines.length === 0 && !selectedPartyId && flowStep === "catalog") {
+      setFlowStep("landing");
+    }
+  }, [cartLines.length, flowStep, isPurchase, selectedPartyId]);
 
   const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
@@ -5686,22 +5780,25 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                       placeholder="Type saved product name, barcode, brand, or division"
                     />
                     {suggestionOpen && search.trim() ? <div className="search-suggestion-list">
-                      {searchSuggestions.length > 0 ? searchSuggestions.map((product) => <button key={product.sku} type="button" className="search-suggestion-item" onMouseDown={() => applySearchSuggestion(product)}>
-                        <strong>{productDisplayLabel(product)}</strong>
-                        <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
-                      </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved product found</strong><span>Create product first from Products.</span></div>}
+                      {searchSuggestions.length > 0 ? searchSuggestions.map((item) => {
+                        const product = resolveCatalogProduct(item);
+                        return <button key={item.key} type="button" className="search-suggestion-item" onMouseDown={() => applySearchSuggestion(item)}>
+                          <strong>{item.displayName}</strong>
+                          <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
+                        </button>;
+                      }) : <div className="search-suggestion-item empty-suggestion"><strong>No saved product found</strong><span>Create product first from Products.</span></div>}
                     </div> : null}
                   </div>
                   <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
                 </div>
               </label>
-              {(!isPurchase || !selectedPartyId) ? <div className="selected-party-bar">
+              {(!isPurchase || !selectedPartyId || cartLines.length === 0) ? <div className="selected-party-bar">
                 <span className="small-label">{isPurchase ? "Selected supplier" : "Selected customer"}</span>
                 <strong>{parties.find((item) => item.id === selectedPartyId)?.name || "Not selected"}</strong>
                 {isPurchase ? <div className="selected-party-actions">
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("existing")}>Select supplier</button>
                   <button className="ghost-button" type="button" onClick={() => setFlowStep("new")}>New supplier</button>
-                </div> : <button className="ghost-button" type="button" onClick={() => setCartOpen(true)}>Choose in cart</button>}
+                </div> : cartLines.length === 0 ? <button className="ghost-button" type="button" onClick={() => setFlowStep("existing")}>{selectedPartyId ? "Change customer" : "Select customer"}</button> : <span className="small-label">Cart locked to this customer</span>}
               </div> : null}
             </div>
 
@@ -5783,24 +5880,25 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
                       <strong>{catalogCardTitle(item, product)}</strong>
-                      <p>{product.department} / {product.section}</p>
                     </div>
                     <div className="product-meta compact">
                       <span>{metaLabel}</span>
                       <span>{normalizeStaplesWeightLabel(product)}</span>
                     </div>
-                    {item.familyKey ? <div className="product-meta compact">
-                      <label className="wide-field">
-                        <span className="small-label">Weight</span>
-                        <select
-                          value={product.sku}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(event) => { event.stopPropagation(); setCatalogFamilyVariant(item.familyKey || "", event.target.value); }}
-                        >
-                          {item.variants.map((variant) => <option key={variant.sku} value={variant.sku}>{catalogVariantOptionLabel(variant, item.variants)}</option>)}
-                        </select>
-                      </label>
-                    </div> : null}
+                    <div className={item.familyKey ? "product-variant-slot" : "product-variant-slot empty"} aria-hidden={!item.familyKey}>
+                      {item.familyKey ? <div className="product-meta compact">
+                        <label className="wide-field">
+                          <span className="small-label">Weight</span>
+                          <select
+                            value={product.sku}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => { event.stopPropagation(); setCatalogFamilyVariant(item.familyKey || "", event.target.value); }}
+                          >
+                            {item.variants.map((variant) => <option key={variant.sku} value={variant.sku}>{catalogVariantOptionLabel(variant, item.variants)}</option>)}
+                          </select>
+                        </label>
+                      </div> : null}
+                    </div>
                     <div className="product-pricing compact">
                       <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Min sell ${getLastPurchaseRate(product)}`}</strong>
                       <span>{`MRP ${product.mrp ?? 0}`}</span>
@@ -5839,6 +5937,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
               <div className="cart-sheet rate-popup-sheet" onClick={(e) => e.stopPropagation()}>
                 {(() => {
                   const taxPreview = calculateLineTotals(ratePopup.quantity, ratePopup.rate, ratePopup.gstRate, ratePopup.taxMode);
+                  const subsidyPreview = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(ratePopup.quantity, ratePopup.rate, ratePopup.cdTodRate);
+                  const finalPreviewAmount = (Math.max(0, Number(taxPreview.totalAmount || 0) - Number(subsidyPreview.cdAmount || 0) - Number(subsidyPreview.todAmount || 0))).toFixed(2);
                   return <>
                 <div className="cart-head">
                   <div>
@@ -5870,6 +5970,10 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     Enter Rate
                     <input type="number" step="any" value={ratePopup.rate} onChange={(e) => setRatePopup((current) => current ? { ...current, rate: e.target.value, confirmHighRate: false } : current)} />
                   </label>
+                  {!isPurchase ? <label className={Number(ratePopup.cdTodRate || 0) > Number(ratePopup.rate || 0) ? "field-error" : ""}>
+                    CD/TOD Rate
+                    <input type="number" step="any" value={ratePopup.cdTodRate} onChange={(e) => setRatePopup((current) => current ? { ...current, cdTodRate: e.target.value } : current)} />
+                  </label> : null}
                 </div>
                 <div className="cart-edit-grid">
                   <label>
@@ -5906,7 +6010,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Taxable</span><strong>{taxPreview.taxableAmount}</strong></div>
                   <div><span className="small-label">GST</span><strong>{taxPreview.gstAmount}</strong></div>
-                  <div><span className="small-label">Final Amount</span><strong>{taxPreview.totalAmount}</strong></div>
+                  {!isPurchase ? <div><span className="small-label">CD</span><strong>{subsidyPreview.cdAmount}</strong></div> : null}
+                  {!isPurchase ? <div><span className="small-label">TOD</span><strong>{subsidyPreview.todAmount}</strong></div> : null}
+                  <div><span className="small-label">Final Amount</span><strong>{isPurchase ? taxPreview.totalAmount : finalPreviewAmount}</strong></div>
                 </div>
                 {isPurchase && ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate ? <div className="rate-warning-box">
                   Entered rate is higher than the last purchase rate. This will be reported to admin and added to the purchase-order notes for warehouse and accounts.
@@ -5915,6 +6021,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   Entered sales rate is below the last purchase price. You can still book it now after confirmation.
                 </div> : null}
                 <div className="cart-actions">
+                  <button type="button" className="ghost-button" onClick={() => { setRatePopup(null); setCartOpen(false); }}>Continue shopping</button>
                   <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Cancel</button>
                   <button type="button" className="primary-button" onClick={confirmProductRate}>
                     {isPurchase
@@ -5953,11 +6060,14 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="payment-meta-grid">
                       <label>Qty<input type="number" step="any" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
                       <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
+                      {!isPurchase ? <div><span className="small-label">CD/TOD Rate</span><strong>{Number(line.cdTodRate || 0).toFixed(2)}</strong></div> : null}
                       <label>Bill Type<select value={line.gstRate === "NA" ? "NA" : "GST"} onChange={(e) => updateCartLineTax(line.productSku, e.target.value === "NA" ? { gstRate: "NA", taxMode: "NA" } : { gstRate: line.gstRate === "NA" ? "0" : line.gstRate, taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode })} disabled={billTaxOverride.enabled}><option value="GST">GST Bill</option><option value="NA">Non GST Bill</option></select></label>
                       <label>GST<select value={line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput, taxMode: e.target.value === "NA" ? "NA" : (line.taxMode === "NA" ? "Exclusive" : line.taxMode) })} disabled={billTaxOverride.enabled}><option value="NA">NA</option><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
                       <label>Calculation<select value={line.taxMode} onChange={(e) => updateCartLineTax(line.productSku, { taxMode: e.target.value as TaxModeInput })} disabled={line.gstRate === "NA" || billTaxOverride.enabled}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option><option value="NA">Final Amount</option></select></label>
                       <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
                       <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
+                      {!isPurchase ? <div><span className="small-label">CD</span><strong>{getCartLineCdAmount(line).toFixed(2)}</strong></div> : null}
+                      {!isPurchase ? <div><span className="small-label">TOD</span><strong>{getCartLineTodAmount(line).toFixed(2)}</strong></div> : null}
                       <div><span className="small-label">Line total</span><strong>{getCartLineTotal(line).toFixed(2)}</strong></div>
                     </div>
                     {!isPurchase ? <div className="cart-line top-gap">
@@ -5977,30 +6087,36 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   </article>)}
                 </div>
                 <div className="cart-edit-grid">
+                  {isPurchase ? <>
                   <label className="wide-field supplier-search-field">
-                    Search Saved {isPurchase ? "Supplier" : "Customer"}
+                    Search Saved Supplier
                     <div className="search-box">
                       <input
                         value={partySearch}
                         onChange={(e) => { setPartySearch(e.target.value); setPartySuggestionOpen(true); }}
                         onFocus={() => setPartySuggestionOpen(true)}
                         onBlur={() => window.setTimeout(() => setPartySuggestionOpen(false), 120)}
-                        placeholder={`Type saved ${isPurchase ? "supplier" : "customer"} name, GST, city, or mobile`}
+                        placeholder="Type saved supplier name, GST, city, or mobile"
                       />
                       {partySuggestionOpen ? <div className="search-suggestion-list">
                         {partySuggestions.length > 0 ? partySuggestions.map((party) => <button key={party.id} type="button" className="search-suggestion-item" onMouseDown={() => selectSavedParty(party)}>
                           <strong>{party.name}</strong>
                           <span>{party.gstNumber || "GST pending"} / {party.mobileNumber || "Mobile pending"} / {party.city || "City pending"}</span>
-                        </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved {isPurchase ? "supplier" : "customer"} found</strong><span>Create {isPurchase ? "supplier" : "customer"} first from Parties.</span></div>}
+                        </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved supplier found</strong><span>Create supplier first from Parties.</span></div>}
                       </div> : null}
                     </div>
                   </label>
                   <label className={cartErrors.supplierId ? "field-error" : ""}>
-                    {isPurchase ? "Supplier" : "Customer"}
-                    <select value={isPurchase ? orderForm.supplierId : orderForm.shopId} onChange={(e) => { setCartErrors((current) => ({ ...current, supplierId: false })); const selected = parties.find((party) => party.id === e.target.value); if (selected) setPartySearch(selected.name); setOrderForm((current: any) => isPurchase ? ({ ...current, supplierId: e.target.value, locationAddress: selected?.deliveryAddress || selected?.address || "", locationCity: selected?.deliveryCity || selected?.city || "" }) : ({ ...current, shopId: e.target.value, locationAddress: selected?.deliveryAddress || selected?.address || "", locationCity: selected?.deliveryCity || selected?.city || "" })); }}>
+                    Supplier
+                    <select value={orderForm.supplierId} onChange={(e) => { setCartErrors((current) => ({ ...current, supplierId: false })); const selected = parties.find((party) => party.id === e.target.value); if (selected) setPartySearch(selected.name); setOrderForm((current: any) => ({ ...current, supplierId: e.target.value, locationAddress: selected?.deliveryAddress || selected?.address || "", locationCity: selected?.deliveryCity || selected?.city || "" })); }}>
                       {renderOptions(parties)}
                     </select>
                   </label>
+                  </> : <div className="list-card">
+                    <span className="small-label">Customer</span>
+                    <strong>{selectedParty?.name || "Not selected"}</strong>
+                    <span>{selectedParty?.gstNumber || "GST pending"} / {selectedParty?.mobileNumber || "Mobile pending"} / {selectedParty?.city || "City pending"}</span>
+                  </div>}
                   <label className={cartErrors.warehouseId ? "field-error" : ""}>
                     {isPurchase ? "Delivery To" : "Dispatch From"}
                     <select value={orderForm.warehouseId} onChange={(e) => { const nextWarehouseId = e.target.value; setCartErrors((current) => ({ ...current, warehouseId: false })); setOrderForm((current: any) => isPurchase ? ({ ...current, warehouseId: nextWarehouseId }) : ({ ...current, warehouseId: nextWarehouseId, stockApprovalRequested: false, availableStockAtOrder: "0" })); if (!isPurchase) updateSalesCartStockState(nextWarehouseId); }}>
@@ -6032,7 +6148,6 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 </div>
                 <div className="cart-actions">
                   <button type="button" className="ghost-button danger-button" onClick={clearCartDraft}>Clear cart</button>
-                  <button type="button" className="ghost-button" onClick={() => setCartOpen(false)}>Continue shopping</button>
                   <button type="button" className="primary-button" onClick={() => { if (validateCartStep()) setCartStep("payment"); }}>Proceed</button>
                 </div>
                 </> : cartStep === "payment" ? <>
@@ -6218,6 +6333,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                   <div><span className="small-label">Total weight</span><strong>{totalWeightKg.toFixed(2)} kg</strong></div>
                   <div><span className="small-label">Taxable</span><strong>{cartTaxable.toFixed(2)}</strong></div>
                   <div><span className="small-label">{isPurchase ? "Input GST" : "Output GST"}</span><strong>{cartGstAmount.toFixed(2)}</strong></div>
+                  {!isPurchase ? <div><span className="small-label">CD</span><strong>{cartCdAmount.toFixed(2)}</strong></div> : null}
+                  {!isPurchase ? <div><span className="small-label">TOD</span><strong>{cartTodAmount.toFixed(2)}</strong></div> : null}
                   <div><span className="small-label">Bill total</span><strong>{cartTotal.toFixed(2)}</strong></div>
                   <div><span className="small-label">Entry date</span><strong>{checkoutDate || "Today"}</strong></div>
                   <div><span className="small-label">Payment</span><strong>{orderForm.paymentMode}{orderForm.paymentMode === "Cash" && orderForm.cashTiming ? ` / ${orderForm.cashTiming}` : ""}</strong></div>
@@ -6229,7 +6346,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 <div className="stack-list top-gap">
                   {cartProducts.map(({ line, product }) => <article className="list-card cart-summary-line" key={line.productSku}>
                     <strong>{productDisplayLabel(product)}</strong>
-                    <p>{line.quantity} x {Number(line.rate || 0).toFixed(2)} = {getCartLineTotal(line).toFixed(2)} · {line.gstRate === "NA" ? "Non GST / Final Amount" : `${line.gstRate}% / ${line.taxMode}`}</p>
+                    <p>{line.quantity} x {Number(line.rate || 0).toFixed(2)} = {getCartLineTotal(line).toFixed(2)} · {line.gstRate === "NA" ? "Non GST / Final Amount" : `${line.gstRate}% / ${line.taxMode}`}{!isPurchase ? ` · CD ${getCartLineCdAmount(line).toFixed(2)} · TOD ${getCartLineTodAmount(line).toFixed(2)}` : ""}</p>
                   </article>)}
                 </div>
                 {orderForm.note ? <div className="cart-line"><div><span className="small-label">Note</span><strong>{orderForm.note}</strong></div></div> : null}

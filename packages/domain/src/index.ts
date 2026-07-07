@@ -31,6 +31,8 @@ export type ProductSlab = {
 export type ProductMaster = {
   sku: string;
   name: string;
+  baseProduct?: string;
+  weightVariant?: string;
   division: string;
   department: string;
   section: string;
@@ -182,6 +184,9 @@ export type SalesOrder = {
   warehouseId: string;
   quantity: number;
   rate: number;
+  cdTodRate?: number;
+  cdAmount?: number;
+  todAmount?: number;
   taxableAmount: number;
   gstRate: GstRate;
   gstAmount: number;

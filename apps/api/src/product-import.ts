@@ -73,6 +73,8 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
     products.push({
       sku: requiredString(barcode || makeSkuFromName(name), "SKU"),
       name: requiredString(name, "Product name"),
+      baseProduct: readMapped(row, ["baseProduct", "BASE_PRODUCT", "base", "BASE"]),
+      weightVariant: readMapped(row, ["weightVariant", "WEIGHT_VARIANT", "WEIGHT VARIANT", "WHEIGT VARIANT"]),
       division: requiredString(taxonomy.division, "Division"),
       department: requiredString(taxonomy.department, "Department"),
       section: requiredString(taxonomy.section, "Section"),
