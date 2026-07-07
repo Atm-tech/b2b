@@ -37,6 +37,8 @@ export function SidebarVectorIcon({ view }: { view: SidebarView }) {
     case "Stock":
     case "Products":
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path {...common} d="M12 3.8 4.5 7.5 12 11.2l7.5-3.7L12 3.8Z" /><path {...common} d="M4.5 12 12 15.7 19.5 12" /><path {...common} d="M4.5 16.5 12 20.2l7.5-3.7" /></svg></span>;
+    case "Search":
+      return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle {...common} cx="11" cy="11" r="6.5" /><path {...common} d="m16 16 4 4" /></svg></span>;
     default:
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle {...common} cx="12" cy="12" r="8" /></svg></span>;
   }

@@ -3501,6 +3501,8 @@ function App() {
   const [scanOverlayOpen, setScanOverlayOpen] = useState(false);
   const [orderStatusTarget, setOrderStatusTarget] = useState<OrderQrTarget | null>(null);
   const [pendingQrTarget, setPendingQrTarget] = useState<OrderQrTarget | null>(() => readOrderQrTargetFromLocation());
+  const [purchaseCatalogSearchToken, setPurchaseCatalogSearchToken] = useState(0);
+  const [salesCatalogSearchToken, setSalesCatalogSearchToken] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
@@ -3556,6 +3558,34 @@ function App() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    let lastTouchEnd = 0;
+    const preventGesture = (event: Event) => event.preventDefault();
+    const preventCtrlZoom = (event: WheelEvent) => {
+      if (event.ctrlKey) event.preventDefault();
+    };
+    const preventDoubleTapZoom = (event: TouchEvent) => {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 300) {
+        event.preventDefault();
+      }
+      lastTouchEnd = now;
+    };
+    document.addEventListener("gesturestart", preventGesture as EventListener, { passive: false });
+    document.addEventListener("gesturechange", preventGesture as EventListener, { passive: false });
+    document.addEventListener("gestureend", preventGesture as EventListener, { passive: false });
+    document.addEventListener("wheel", preventCtrlZoom, { passive: false });
+    document.addEventListener("touchend", preventDoubleTapZoom, { passive: false });
+    return () => {
+      document.removeEventListener("gesturestart", preventGesture as EventListener);
+      document.removeEventListener("gesturechange", preventGesture as EventListener);
+      document.removeEventListener("gestureend", preventGesture as EventListener);
+      document.removeEventListener("wheel", preventCtrlZoom);
+      document.removeEventListener("touchend", preventDoubleTapZoom);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!currentUser) return;
     writeStoredJson(workspaceStorageKey(currentUser.id, "app"), {
       activeView,
@@ -3606,15 +3636,31 @@ function App() {
 
   function navigateToView(nextView: ViewKey) {
     if (activeView === "Purchase" && purchaseUpdateOrderId && nextView !== "Purchase") {
-      if (!confirmPurchaseEditorDiscard()) return;
+      if (!confirmPurchaseEditorDiscard()) return false;
       closePurchaseEditor();
     }
     if (activeView === "Sales" && salesUpdateOrderId && nextView !== "Sales") {
-      if (!confirmSalesEditorDiscard()) return;
+      if (!confirmSalesEditorDiscard()) return false;
       closeSalesEditor();
     }
     if (nextView === "Sales" && activeView !== "Sales") setSalesUpdateOrderId("");
     setActiveView(nextView);
+    return true;
+  }
+
+  function openCatalogSearchFromNav() {
+    const targetView: ViewKey = activeView === "Purchase" || activeView === "Sales"
+      ? activeView
+      : currentRoles.includes("Sales") && safeVisibleViews.includes("Sales")
+        ? "Sales"
+        : "Purchase";
+    const changed = activeView === targetView ? true : navigateToView(targetView);
+    if (!changed) return;
+    if (targetView === "Sales") {
+      setSalesCatalogSearchToken((current) => current + 1);
+      return;
+    }
+    setPurchaseCatalogSearchToken((current) => current + 1);
   }
 
   useEffect(() => {
@@ -3886,9 +3932,10 @@ function App() {
       ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
       : currentRoles.includes("Collection Agent")
         ? collectionBottomViews.filter((view) => safeVisibleViews.includes(view))
-      : currentRoles.includes("Accounts")
-        ? accountsBottomViews.filter((view) => safeVisibleViews.includes(view))
-        : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
+        : currentRoles.includes("Accounts")
+          ? accountsBottomViews.filter((view) => safeVisibleViews.includes(view))
+          : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
+  const canOpenCatalogSearch = safeVisibleViews.includes("Purchase") || safeVisibleViews.includes("Sales");
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
 
@@ -4505,9 +4552,31 @@ function App() {
               purchaseOrders={purchaseOrdersView}
               orderForm={purchaseForm}
               setOrderForm={setPurchaseForm}
+              searchRequestToken={purchaseCatalogSearchToken}
               onCreateParty={createPartyRecord}
               onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-              onSubmit={(advancePayment, operationDate, lines) => post("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Purchase cart created.")}
+              onSubmit={async (advancePayment, operationDate, lines) => {
+                if (!currentUser || !sessionToken) return false;
+                setLoading(true);
+                setError("");
+                setMessage("");
+                try {
+                  const previousIds = new Set(groupPurchaseOrders(snapshot.purchaseOrders).map((group) => group.id));
+                  const { data } = await api.post<AppSnapshot>("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, {
+                    headers: { authorization: `Bearer ${sessionToken}` }
+                  });
+                  setSnapshot(data);
+                  setMessage("Purchase cart created.");
+                  const nextGroups = groupPurchaseOrders(data.purchaseOrders);
+                  const created = nextGroups.find((group) => !previousIds.has(group.id)) || nextGroups.sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines))[0];
+                  return created ? { orderId: created.id, kind: "purchase" as const } : true;
+                } catch (submitError) {
+                  setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Action failed.") : "Action failed.");
+                  return false;
+                } finally {
+                  setLoading(false);
+                }
+              }}
               onUpdateCart={(orderId, body) => patch(`/purchase-orders/${encodeURIComponent(orderId)}`, body, "Purchase cart updated.")}
               initialUpdateOrderId={purchaseUpdateOrderId}
               onExitEditor={closePurchaseEditor}
@@ -4526,6 +4595,7 @@ function App() {
             onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
           /> : null}
           {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
+            snapshot={snapshot}
             mode="sales"
             title="Salesman Order Booking"
             eyebrow="Customer order booking"
@@ -4538,9 +4608,31 @@ function App() {
             orderForm={salesForm}
             setOrderForm={setSalesForm}
             persistKey={workspaceStorageKey(currentUser.id, "sales-catalog")}
+            searchRequestToken={salesCatalogSearchToken}
             onCreateParty={createPartyRecord}
             onUploadProof={(file) => uploadFile("/payments/upload-proof", "proof", file, "Advance proof uploaded.")}
-            onSubmit={(advancePayment, operationDate, lines, options) => post("/sales-orders/cart", { ...salesForm, allowProbationarySale: Boolean(options?.allowProbationarySale), lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), cdTodRate: Number(line.cdTodRate || 0), cdAmount: Number(line.cdAmount || 0), todAmount: Number(line.todAmount || 0), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, "Sales cart created.")}
+            onSubmit={async (advancePayment, operationDate, lines, options) => {
+              if (!currentUser || !sessionToken) return false;
+              setLoading(true);
+              setError("");
+              setMessage("");
+              try {
+                const previousIds = new Set(groupSalesOrders(snapshot.salesOrders).map((group) => group.id));
+                const { data } = await api.post<AppSnapshot>("/sales-orders/cart", { ...salesForm, allowProbationarySale: Boolean(options?.allowProbationarySale), lines: lines.map((line) => ({ productSku: line.productSku, quantity: Number(line.quantity), rate: Number(line.rate), cdTodRate: Number(line.cdTodRate || 0), cdAmount: Number(line.cdAmount || 0), todAmount: Number(line.todAmount || 0), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0), gstAmount: line.gstRate === "NA" ? 0 : Number(line.gstAmount || 0), taxMode: line.gstRate === "NA" ? "NA" : line.taxMode, minimumAllowedRate: Number(line.minimumAllowedRate || 0), availableStockAtOrder: Number(line.availableStockAtOrder || 0), priceApprovalRequested: Boolean(line.priceApprovalRequested), stockApprovalRequested: Boolean(line.stockApprovalRequested), note: line.note || salesForm.note })), cashTiming: salesForm.paymentMode === "Cash" ? salesForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, {
+                  headers: { authorization: `Bearer ${sessionToken}` }
+                });
+                setSnapshot(data);
+                setMessage("Sales cart created.");
+                const nextGroups = groupSalesOrders(data.salesOrders);
+                const created = nextGroups.find((group) => !previousIds.has(group.id)) || nextGroups.sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines))[0];
+                return created ? { orderId: created.id, kind: "sales" as const } : true;
+              } catch (submitError) {
+                setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Action failed.") : "Action failed.");
+                return false;
+              } finally {
+                setLoading(false);
+              }
+            }}
             rightPanel={null}
           />)) : null}
           {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
@@ -4711,16 +4803,18 @@ function App() {
             : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
         return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
-      })}</nav>}
+      })}{canOpenCatalogSearch ? <button type="button" className="tab-button catalog-search-tab" onClick={openCatalogSearchFromNav} title="Search products" aria-label="Search products"><SidebarVectorIcon view="Search" /></button> : null}</nav>}
     </main>
   );
 }
 
 type CatalogOrderViewProps = {
+  snapshot: AppSnapshot;
   mode: "purchase" | "sales";
   title: string;
   eyebrow: string;
   persistKey?: string;
+  searchRequestToken?: number;
   products: AppSnapshot["products"];
   parties: Counterparty[];
   warehouses: AppSnapshot["warehouses"];
@@ -4731,7 +4825,7 @@ type CatalogOrderViewProps = {
   setOrderForm: React.Dispatch<React.SetStateAction<any>>;
   onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
   onUploadProof: (file: File) => Promise<unknown>;
-  onSubmit: (advancePayment: { amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber?: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationNote?: string } | undefined, operationDate: string | undefined, lines: CartLine[], options?: { allowProbationarySale?: boolean }) => Promise<boolean | void> | boolean | void;
+  onSubmit: (advancePayment: { amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber?: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationNote?: string } | undefined, operationDate: string | undefined, lines: CartLine[], options?: { allowProbationarySale?: boolean }) => Promise<boolean | { orderId: string; kind: "purchase" | "sales" } | void> | boolean | { orderId: string; kind: "purchase" | "sales" } | void;
   rightPanel: React.ReactNode;
 };
 
@@ -4918,9 +5012,8 @@ function productDisplayLabel(product: AppSnapshot["products"][number]) {
 }
 
 function CatalogOrderView(props: CatalogOrderViewProps) {
-  const { mode, title, eyebrow, persistKey, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onUploadProof, onSubmit, rightPanel } = props;
+  const { snapshot, mode, title, eyebrow, persistKey, searchRequestToken = 0, products, parties, warehouses, paymentMethods, stockSummary, purchaseOrders = [], orderForm, setOrderForm, onCreateParty, onUploadProof, onSubmit, rightPanel } = props;
   const persisted = persistKey ? readStoredJson(persistKey, {
-    search: "",
     partySearch: "",
     activeDivision: "",
     activeDepartment: "",
@@ -4936,7 +5029,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     checkoutDate: "",
     partyDraftErrors: { name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false }
   }) : null;
-  const [search, setSearch] = useState(persisted?.search || "");
+  const [search, setSearch] = useState("");
   const [partySearch, setPartySearch] = useState(persisted?.partySearch || "");
   const [activeDivision, setActiveDivision] = useState(persisted?.activeDivision || "");
   const [activeDepartment, setActiveDepartment] = useState(persisted?.activeDepartment || "");
@@ -4944,6 +5037,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [partySuggestionOpen, setPartySuggestionOpen] = useState(false);
+  const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || (mode === "sales" ? "landing" : "catalog"));
   const [cartOpen, setCartOpen] = useState(Boolean(persisted?.cartOpen));
   const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">(persisted?.cartStep || "cart");
@@ -4968,6 +5062,8 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const [advanceUploading, setAdvanceUploading] = useState(false);
   const [checkoutDate, setCheckoutDate] = useState(persisted?.checkoutDate || "");
   const [partyDraftErrors, setPartyDraftErrors] = useState(persisted?.partyDraftErrors || { name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
+  const catalogSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const [completedOrder, setCompletedOrder] = useState<{ orderId: string; kind: "purchase" | "sales" } | null>(null);
   const isPurchase = mode === "purchase";
   const partyType = isPurchase ? "Supplier" : "Shop";
   const partyLabel = isPurchase ? "supplier / vendor" : "customer / shop";
@@ -4979,7 +5075,6 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   useEffect(() => {
     if (!persistKey) return;
     writeStoredJson(persistKey, {
-      search,
       partySearch,
       activeDivision,
       activeDepartment,
@@ -4995,7 +5090,18 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
       checkoutDate,
       partyDraftErrors
     });
-  }, [persistKey, search, partySearch, activeDivision, activeDepartment, activeSection, flowStep, cartOpen, cartStep, billTaxOverride, cartErrors, cartLines, partyDraft, advancePayment, checkoutDate, partyDraftErrors]);
+  }, [persistKey, partySearch, activeDivision, activeDepartment, activeSection, flowStep, cartOpen, cartStep, billTaxOverride, cartErrors, cartLines, partyDraft, advancePayment, checkoutDate, partyDraftErrors]);
+  useEffect(() => {
+    if (!searchRequestToken) return;
+    setFlowStep("catalog");
+    setSuggestionOpen(false);
+    setSearchSheetOpen(true);
+  }, [searchRequestToken]);
+  useEffect(() => {
+    if (!searchSheetOpen) return;
+    const timeout = window.setTimeout(() => catalogSearchInputRef.current?.focus(), 80);
+    return () => window.clearTimeout(timeout);
+  }, [searchSheetOpen]);
   function productMatchScore(product: AppSnapshot["products"][number], query: string) {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return 0;
@@ -5054,6 +5160,17 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
             return left.name.localeCompare(right.name, "en-IN");
           })
       ).slice(0, 6);
+  const indexedSearchProducts = buildCatalogDisplayProducts(
+    products
+      .filter((product) => normalizedSearch === "" || productMatchScore(product, search) > 0)
+      .sort((left, right) => {
+        if (normalizedSearch) {
+          const scoreDiff = productMatchScore(right, search) - productMatchScore(left, search);
+          if (scoreDiff !== 0) return scoreDiff;
+        }
+        return left.name.localeCompare(right.name, "en-IN");
+      })
+  );
   const partySuggestions = parties
     .filter((party) => {
       const query = partySearch.trim().toLowerCase();
@@ -5063,13 +5180,16 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
     .slice(0, 8);
 
   function applySearchSuggestion(item: CatalogDisplayProduct) {
-    const product = resolveCatalogProduct(item);
     setSearch(item.displayName);
     setActiveDivision("");
     setActiveDepartment("");
     setActiveSection("");
     setSuggestionOpen(false);
-    selectProduct(product);
+  }
+
+  function applyIndexedSearch(item: CatalogDisplayProduct) {
+    applySearchSuggestion(item);
+    setSearchSheetOpen(false);
   }
 
   function selectSavedParty(party: Counterparty) {
@@ -5706,6 +5826,12 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const cartTotal = Math.max(0, cartTaxable + cartGstAmount - cartCdAmount - cartTodAmount);
   const totalWeightKg = cartProducts.reduce((sum, item) => sum + item.product.defaultWeightKg * Number(item.line.quantity || 0), 0);
   const cartStepTitle = cartStep === "cart" ? "Cart" : cartStep === "payment" ? "Payment" : "Bill Summary";
+  const completedPurchaseGroup = completedOrder?.kind === "purchase"
+    ? groupPurchaseOrders(snapshot.purchaseOrders).find((group) => group.id === completedOrder.orderId)
+    : null;
+  const completedSalesGroup = completedOrder?.kind === "sales"
+    ? groupSalesOrders(snapshot.salesOrders).find((group) => group.id === completedOrder.orderId)
+    : null;
   const checkoutSteps = [
     { key: "cart", label: "Cart" },
     { key: "payment", label: "Payment" },
@@ -5801,6 +5927,69 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                 </div> : cartLines.length === 0 ? <button className="ghost-button" type="button" onClick={() => setFlowStep("existing")}>{selectedPartyId ? "Change customer" : "Select customer"}</button> : <span className="small-label">Cart locked to this customer</span>}
               </div> : null}
             </div>
+
+            {searchSheetOpen ? <div className="cart-overlay catalog-search-overlay" onClick={() => setSearchSheetOpen(false)}>
+              <div className="cart-sheet catalog-search-sheet" onClick={(e) => e.stopPropagation()}>
+                <div className="cart-head">
+                  <div>
+                    <span className="eyebrow">Search Index</span>
+                    <h3>{isPurchase ? "Find purchase products" : "Find sales products"}</h3>
+                  </div>
+                  <button type="button" className="ghost-button" onClick={() => setSearchSheetOpen(false)}>Close</button>
+                </div>
+                <label className="catalog-search catalog-search-sheet-field">
+                  <span className="small-label">Best matching to loose</span>
+                  <div className="catalog-search-row">
+                    <div className="search-box">
+                      <input
+                        ref={catalogSearchInputRef}
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Type saved product name, barcode, brand, or division"
+                      />
+                    </div>
+                    <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
+                  </div>
+                </label>
+                <div className="catalog-search-sheet-meta">
+                  <span className="small-label">{normalizedSearch ? "Ranked results" : "Indexed products"}</span>
+                  <strong>{indexedSearchProducts.length} item{indexedSearchProducts.length === 1 ? "" : "s"}</strong>
+                </div>
+                <div className="catalog-search-sheet-results">
+                  {indexedSearchProducts.length > 0 ? indexedSearchProducts.map((item) => {
+                    const product = resolveCatalogProduct(item);
+                    return <button key={`indexed-${item.key}`} type="button" className="search-suggestion-item catalog-search-sheet-item" onClick={() => applyIndexedSearch(item)}>
+                      <strong>{item.displayName}</strong>
+                      <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
+                    </button>;
+                  }) : <div className="search-suggestion-item empty-suggestion"><strong>No matching product found</strong><span>Try a broader name, barcode, or brand.</span></div>}
+                </div>
+              </div>
+            </div> : null}
+
+            {completedOrder ? <div className="cart-overlay" onClick={() => setCompletedOrder(null)}>
+              <div className="cart-sheet" onClick={(e) => e.stopPropagation()}>
+                <div className="cart-head">
+                  <div>
+                    <span className="eyebrow">{completedOrder.kind === "purchase" ? "Purchase Bill" : "Sales Bill"}</span>
+                    <h3>{completedOrder.orderId}</h3>
+                  </div>
+                  <button type="button" className="ghost-button" onClick={() => setCompletedOrder(null)}>Close</button>
+                </div>
+                <div className="payment-meta-grid">
+                  <div><span className="small-label">Document</span><strong>{completedOrder.kind === "purchase" ? "PO / Bill ready" : "SO / Estimate ready"}</strong></div>
+                  <div><span className="small-label">Share</span><strong>WhatsApp or PDF</strong></div>
+                </div>
+                <div className="cart-actions top-gap">
+                  {completedPurchaseGroup ? <button type="button" className="ghost-button" onClick={() => void sharePurchaseInvoicePdf(snapshot, completedPurchaseGroup)}>WhatsApp Share</button> : null}
+                  {completedPurchaseGroup ? <button type="button" className="ghost-button" onClick={() => downloadPurchaseInvoicePdf(snapshot, completedPurchaseGroup)}>Download PDF</button> : null}
+                  {completedPurchaseGroup ? <button type="button" className="primary-button" onClick={() => void printPurchaseInvoice(snapshot, completedPurchaseGroup)}>Open Bill</button> : null}
+                  {completedSalesGroup ? <button type="button" className="ghost-button" onClick={() => void shareSalesInvoicePdf(snapshot, completedSalesGroup)}>WhatsApp Share</button> : null}
+                  {completedSalesGroup ? <button type="button" className="ghost-button" onClick={() => downloadSalesInvoicePdf(snapshot, completedSalesGroup)}>Download PDF</button> : null}
+                  {completedSalesGroup ? <button type="button" className="primary-button" onClick={() => void printSalesInvoice(snapshot, completedSalesGroup)}>Open Estimate</button> : null}
+                </div>
+              </div>
+            </div> : null}
 
             {showingCategoryLanding ? <div className="category-section">
               <div className="category-section-head">
@@ -6375,6 +6564,9 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
                         setSubmittingCart(false);
                         return;
                       }
+                      if (success && typeof success === "object" && "orderId" in success) {
+                        setCompletedOrder({ orderId: success.orderId, kind: success.kind });
+                      }
                       resetCurrentOrder();
                     }}
                   >
@@ -6406,6 +6598,7 @@ function PurchaserPurchaseWorkspace({
   onCreateParty,
   onUploadProof,
   onSubmit,
+  searchRequestToken,
   initialUpdateOrderId,
   onUpdateCart,
   onExitEditor,
@@ -6424,6 +6617,7 @@ function PurchaserPurchaseWorkspace({
   onCreateParty: (body: Omit<Counterparty, "id" | "createdBy" | "createdAt">) => Promise<Counterparty | null>;
   onUploadProof: (file: File) => Promise<unknown>;
   onSubmit: CatalogOrderViewProps["onSubmit"];
+  searchRequestToken?: number;
   initialUpdateOrderId?: string;
   onExitEditor: () => void;
   onEditorDirtyChange: (dirty: boolean) => void;
@@ -6460,6 +6654,7 @@ function PurchaserPurchaseWorkspace({
         onExit={onExitEditor}
         onDirtyChange={onEditorDirtyChange}
       /> : <CatalogOrderView
+        snapshot={snapshot}
         mode="purchase"
         title="New Purchase"
         eyebrow="Create supplier order"
@@ -6472,6 +6667,7 @@ function PurchaserPurchaseWorkspace({
         orderForm={orderForm}
         setOrderForm={setOrderForm}
         persistKey={workspaceStorageKey(currentUser.id, "purchase-catalog")}
+        searchRequestToken={searchRequestToken}
         onCreateParty={onCreateParty}
         onUploadProof={onUploadProof}
         onSubmit={onSubmit}
