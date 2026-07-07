@@ -3456,7 +3456,7 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
-  const [login, setLogin] = useState({ username: "admin", password: "1234" });
+  const [login, setLogin] = useState({ username: "", password: "" });
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
   const [warehouseForm, setWarehouseForm] = useState({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" as "Warehouse" | "Yard" });
