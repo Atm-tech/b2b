@@ -34,6 +34,11 @@
   --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.86), inset 0 -1px 0 rgba(255, 255, 255, 0.26);
   --glass-border: 1px solid rgba(255, 255, 255, 0.56);
   --emboss-line: inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 -1px 0 rgba(132, 160, 187, 0.18);
+  --brand-orb:
+    radial-gradient(circle at 26% 24%, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
+    radial-gradient(circle at 84% 24%, rgba(103, 232, 249, 0.18), rgba(103, 232, 249, 0) 36%),
+    linear-gradient(135deg, rgba(9, 67, 64, 0.98), rgba(14, 103, 99, 0.97) 54%, rgba(32, 170, 194, 0.92));
+  --brand-orb-shadow: 0 18px 34px rgba(7, 47, 55, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 * {
@@ -172,10 +177,8 @@ th {
   gap: var(--space-3);
   padding: clamp(1rem, 1.2vw, 1.35rem) clamp(1rem, 1.5vw, 1.5rem);
   border-radius: clamp(22px, 2vw, 28px);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
-    radial-gradient(circle at top right, rgba(125, 211, 252, 0.2), rgba(125, 211, 252, 0) 34%),
-    linear-gradient(135deg, rgba(22, 103, 118, 0.96), rgba(25, 142, 156, 0.94) 52%, rgba(53, 183, 197, 0.9));
+  background: var(--brand-orb);
+  box-shadow: var(--brand-orb-shadow);
 }
 
 .topbar-brand-block {
@@ -197,11 +200,9 @@ th {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background:
-    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 35%),
-    linear-gradient(135deg, rgba(11, 85, 79, 0.98), rgba(15, 103, 98, 0.96) 56%, rgba(22, 163, 180, 0.82));
-  border: 1px solid rgba(210, 246, 248, 0.48);
-  box-shadow: 0 20px 34px rgba(8, 47, 73, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   justify-self: center;
 }
 
@@ -231,9 +232,9 @@ th {
   padding: 0.72rem 1rem;
   border-radius: 999px;
   border: var(--glass-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(236, 246, 252, 0.64));
-  box-shadow: 0 14px 24px rgba(20, 54, 91, 0.08), var(--glass-inset);
-  color: #1b4f6b;
+  background: linear-gradient(180deg, rgba(236, 255, 255, 0.9), rgba(207, 240, 242, 0.72));
+  box-shadow: 0 14px 24px rgba(7, 47, 55, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: #0b4e54;
   font-weight: 800;
 }
 
@@ -304,10 +305,8 @@ th {
   gap: var(--space-2);
   padding: 0.9rem 1rem;
   border-radius: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
-    radial-gradient(circle at top right, rgba(125, 211, 252, 0.2), rgba(125, 211, 252, 0) 34%),
-    linear-gradient(135deg, rgba(22, 103, 118, 0.96), rgba(25, 142, 156, 0.94) 52%, rgba(53, 183, 197, 0.9));
+  background: var(--brand-orb);
+  box-shadow: var(--brand-orb-shadow);
 }
 
 .boot-topbar-logo {
@@ -323,9 +322,9 @@ th {
   padding: 0.72rem 1rem;
   border-radius: 999px;
   border: var(--glass-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(236, 246, 252, 0.64));
-  box-shadow: 0 14px 24px rgba(20, 54, 91, 0.08), var(--glass-inset);
-  color: #1b4f6b;
+  background: linear-gradient(180deg, rgba(236, 255, 255, 0.9), rgba(207, 240, 242, 0.72));
+  box-shadow: 0 14px 24px rgba(7, 47, 55, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  color: #0b4e54;
   font-weight: 800;
 }
 
@@ -479,14 +478,9 @@ textarea {
   padding: clamp(0.75rem, 0.6rem + 0.5vw, 1rem) clamp(0.9rem, 0.75rem + 0.7vw, 1.15rem);
   border-radius: 0;
   border: var(--glass-border);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
-    radial-gradient(circle at top right, rgba(125, 211, 252, 0.24), rgba(125, 211, 252, 0) 34%),
-    linear-gradient(135deg, rgba(12, 95, 109, 0.96), rgba(20, 129, 145, 0.94) 52%, rgba(14, 165, 169, 0.9));
+  background: var(--brand-orb);
   backdrop-filter: blur(18px);
-  box-shadow:
-    0 18px 42px rgba(8, 47, 73, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  box-shadow: var(--brand-orb-shadow);
 }
 
 .app-topbar-copy {
@@ -1799,10 +1793,10 @@ textarea {
 
 .add-button {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0)),
-    linear-gradient(135deg, #0c7b66, #14938a 54%, #216fb6);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0)),
+    var(--brand-orb);
   color: #fff;
-  box-shadow: 0 14px 24px rgba(15, 118, 110, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.26), inset 0 -10px 16px rgba(18, 63, 92, 0.18);
+  box-shadow: 0 14px 24px rgba(7, 47, 55, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -10px 16px rgba(9, 67, 64, 0.22);
 }
 
 .checkout-sheet {
@@ -2285,10 +2279,10 @@ textarea {
 .tab-button.active,
 .primary-button {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
-    linear-gradient(135deg, #0f766e, #1496a2 58%, #1b6ea6);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0)),
+    var(--brand-orb);
   color: white;
-  box-shadow: 0 16px 28px rgba(15, 118, 110, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -8px 16px rgba(10, 76, 74, 0.22);
+  box-shadow: 0 16px 28px rgba(7, 47, 55, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -8px 16px rgba(9, 67, 64, 0.22);
 }
 
 .ghost-button {
