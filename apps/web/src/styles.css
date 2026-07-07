@@ -35,10 +35,8 @@
   --glass-border: 1px solid rgba(255, 255, 255, 0.56);
   --emboss-line: inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 -1px 0 rgba(132, 160, 187, 0.18);
   --brand-orb:
-    radial-gradient(circle at 26% 24%, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
-    radial-gradient(circle at 84% 24%, rgba(103, 232, 249, 0.18), rgba(103, 232, 249, 0) 36%),
-    linear-gradient(135deg, rgba(9, 67, 64, 0.98), rgba(14, 103, 99, 0.97) 54%, rgba(32, 170, 194, 0.92));
-  --brand-orb-shadow: 0 18px 34px rgba(7, 47, 55, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    linear-gradient(135deg, rgba(12, 79, 76, 0.98), rgba(18, 109, 106, 0.96) 56%, rgba(44, 166, 185, 0.92));
+  --brand-orb-shadow: 0 14px 28px rgba(7, 47, 55, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 * {
