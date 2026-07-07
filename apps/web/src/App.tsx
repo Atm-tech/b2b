@@ -12899,6 +12899,7 @@ function BootLoader() {
         </div>
         <div className="boot-loader-track"><span /></div>
       </section>
+      <footer className="boot-loader-footer">Powered by OPAS</footer>
     </main>
   );
 }

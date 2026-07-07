@@ -292,7 +292,7 @@ th {
 .boot-loader-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   align-content: start;
   gap: clamp(1rem, 1.8vw, 1.5rem);
   padding: clamp(0.9rem, 1vw, 1.4rem) clamp(0.8rem, 0.9vw, 1.15rem) clamp(1rem, 3vw, 2rem);
@@ -312,6 +312,17 @@ th {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), var(--glass-inset);
   justify-self: center;
   align-self: center;
+}
+
+.boot-loader-footer {
+  justify-self: center;
+  align-self: end;
+  padding: 0.2rem 0 0;
+  color: #36586b;
+  font-size: var(--text-sm);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .boot-loader-header {
@@ -891,12 +902,14 @@ textarea {
   border-radius: 999px;
   transform: translateY(-12px);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.96) 0 11%, rgba(216, 247, 246, 0.62) 19%, rgba(255, 255, 255, 0) 36%),
+    radial-gradient(circle at 68% 76%, rgba(6, 44, 43, 0.28), rgba(6, 44, 43, 0) 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0)),
     var(--brand-orb);
   color: #fff;
   font-weight: 900;
   font-size: 1.08rem;
-  box-shadow: 0 18px 28px rgba(7, 47, 55, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -10px 16px rgba(9, 67, 64, 0.24);
+  box-shadow: 0 18px 28px rgba(7, 47, 55, 0.22), inset 0 10px 16px rgba(255, 255, 255, 0.14), inset 0 -12px 18px rgba(9, 67, 64, 0.28);
   text-shadow: 0 1px 4px rgba(15, 23, 42, 0.26);
 }
 
@@ -904,9 +917,11 @@ textarea {
   outline: 2px solid rgba(140, 160, 255, 0.5);
   outline-offset: 3px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.98) 0 11%, rgba(226, 251, 248, 0.68) 19%, rgba(255, 255, 255, 0) 36%),
+    radial-gradient(circle at 68% 76%, rgba(6, 44, 43, 0.24), rgba(6, 44, 43, 0) 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0)),
     var(--brand-orb);
-  box-shadow: 0 0 0 6px rgba(140, 160, 255, 0.1), 0 20px 30px rgba(7, 47, 55, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -10px 16px rgba(9, 67, 64, 0.26);
+  box-shadow: 0 0 0 6px rgba(140, 160, 255, 0.1), 0 20px 30px rgba(7, 47, 55, 0.24), inset 0 10px 16px rgba(255, 255, 255, 0.16), inset 0 -12px 18px rgba(9, 67, 64, 0.3);
 }
 
 .module-stack {
@@ -3547,12 +3562,14 @@ textarea {
     border-radius: 999px;
     transform: translateY(-9px);
     background:
+      radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.96) 0 11%, rgba(216, 247, 246, 0.62) 19%, rgba(255, 255, 255, 0) 36%),
+      radial-gradient(circle at 68% 76%, rgba(6, 44, 43, 0.28), rgba(6, 44, 43, 0) 48%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0)),
       var(--brand-orb);
     color: #fff;
     font-size: 0.98rem;
     font-weight: 900;
-    box-shadow: 0 12px 20px rgba(7, 47, 55, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -8px 14px rgba(9, 67, 64, 0.22);
+    box-shadow: 0 12px 20px rgba(7, 47, 55, 0.18), inset 0 8px 14px rgba(255, 255, 255, 0.14), inset 0 -10px 14px rgba(9, 67, 64, 0.24);
     text-shadow: 0 1px 3px rgba(15, 23, 42, 0.24);
   }
 
@@ -3560,9 +3577,11 @@ textarea {
     outline: 2px solid rgba(140, 160, 255, 0.46);
     outline-offset: 2px;
     background:
+      radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.98) 0 11%, rgba(226, 251, 248, 0.68) 19%, rgba(255, 255, 255, 0) 36%),
+      radial-gradient(circle at 68% 76%, rgba(6, 44, 43, 0.24), rgba(6, 44, 43, 0) 48%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0)),
       var(--brand-orb);
-    box-shadow: 0 0 0 4px rgba(140, 160, 255, 0.1), 0 14px 22px rgba(7, 47, 55, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -8px 14px rgba(9, 67, 64, 0.24);
+    box-shadow: 0 0 0 4px rgba(140, 160, 255, 0.1), 0 14px 22px rgba(7, 47, 55, 0.2), inset 0 8px 14px rgba(255, 255, 255, 0.16), inset 0 -10px 14px rgba(9, 67, 64, 0.26);
   }
 
   .mobile-tab-bar .button-badge-label,
