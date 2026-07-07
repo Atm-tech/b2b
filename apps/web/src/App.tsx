@@ -3879,22 +3879,22 @@ function App() {
       <main className="login-shell">
         <section className="login-landing">
           <header className="login-hero-bar glass-surface">
-            <div className="login-brand-lockup">
-              <div className="login-brand-badge">
-                <img src={appLogo} alt="Aapoorti" className="login-brand-logo" />
-              </div>
-              <div className="login-brand-copy">
-                <span className="eyebrow">Aapoorti B2B</span>
-                <strong>Supply Commerce Console</strong>
-              </div>
+            <div className="topbar-brand-block">
+              <span className="small-label">Aapoorti B2B</span>
+              <strong>Internal Portal</strong>
             </div>
-            <div className="login-hero-chip">Live Operations</div>
+            <div className="topbar-logo-orb login-topbar-logo">
+              <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
+            </div>
+            <div className="topbar-side-slot">
+              <div className="login-hero-chip">B2B Internal Use</div>
+            </div>
           </header>
           <section className="login-card panel glass-panel">
             <div className="login-copy">
-              <span className="eyebrow">Wholesale Workflow</span>
-              <h1>Fast booking, dispatch, settlement, and stock control.</h1>
-              <p>One control room for purchase, sales, warehouse, delivery, and accounts teams.</p>
+              <span className="eyebrow">Internal Operations</span>
+              <h1>Aapoorti B2B operations workspace.</h1>
+              <p>This system is for internal booking, stock, delivery, and accounts workflows only.</p>
               <div className="login-feature-strip">
                 <div className="login-feature-pill">Orders</div>
                 <div className="login-feature-pill">Inventory</div>
@@ -4477,6 +4477,9 @@ function App() {
           <span className="small-label">Aapoorti B2B</span>
           <strong>{displayLabel(activeView, currentUser)}</strong>
           <p>{effectiveSimpleMode ? "Quick operations mode." : "Detailed operations mode."}</p>
+        </div>
+        <div className="topbar-logo-orb app-topbar-logo">
+          <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
         </div>
         <div className="hero-side hero-top-actions">
           {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
@@ -12872,6 +12875,18 @@ function BootLoader() {
   return (
     <main className="boot-loader-shell">
       <section className="boot-loader-card">
+        <header className="boot-loader-header glass-surface">
+          <div className="topbar-brand-block">
+            <span className="small-label">Aapoorti B2B</span>
+            <strong>Workspace Restore</strong>
+          </div>
+          <div className="topbar-logo-orb boot-topbar-logo">
+            <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
+          </div>
+          <div className="topbar-side-slot">
+            <span className="boot-loader-chip">Syncing</span>
+          </div>
+        </header>
         <div className="boot-loader-mark" aria-hidden="true">
           <span />
           <span />

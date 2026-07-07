@@ -166,47 +166,61 @@ th {
 }
 
 .login-hero-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   padding: clamp(1rem, 1.2vw, 1.35rem) clamp(1rem, 1.5vw, 1.5rem);
   border-radius: clamp(22px, 2vw, 28px);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
+    radial-gradient(circle at top right, rgba(125, 211, 252, 0.2), rgba(125, 211, 252, 0) 34%),
+    linear-gradient(135deg, rgba(22, 103, 118, 0.96), rgba(25, 142, 156, 0.94) 52%, rgba(53, 183, 197, 0.9));
 }
 
-.login-brand-lockup {
-  display: flex;
-  align-items: center;
-  gap: clamp(0.9rem, 1vw, 1.2rem);
+.topbar-brand-block {
+  display: grid;
+  gap: 0.25rem;
   min-width: 0;
+  justify-self: start;
 }
 
-.login-brand-badge {
-  width: clamp(86px, 9vw, 112px);
-  height: clamp(52px, 5vw, 68px);
-  border-radius: 22px;
+.topbar-brand-block strong {
+  font-size: clamp(1.08rem, 0.98rem + 0.35vw, 1.34rem);
+  color: #ffffff;
+}
+
+.topbar-logo-orb {
+  width: clamp(140px, 14vw, 190px);
+  min-width: clamp(140px, 14vw, 190px);
+  height: clamp(64px, 6vw, 82px);
+  border-radius: 999px;
   display: grid;
   place-items: center;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(235, 247, 253, 0.6));
-  box-shadow: 0 18px 30px rgba(15, 23, 42, 0.08), var(--glass-inset);
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 35%),
+    linear-gradient(135deg, rgba(11, 85, 79, 0.98), rgba(15, 103, 98, 0.96) 56%, rgba(22, 163, 180, 0.82));
+  border: 1px solid rgba(210, 246, 248, 0.48);
+  box-shadow: 0 20px 34px rgba(8, 47, 73, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  justify-self: center;
 }
 
-.login-brand-logo {
-  width: 100%;
+.topbar-logo-image {
+  width: 78%;
   height: auto;
   display: block;
   filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.12));
 }
 
-.login-brand-copy {
-  display: grid;
-  gap: 0.2rem;
+.topbar-side-slot {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
-.login-brand-copy strong {
-  font-size: clamp(1.08rem, 0.98rem + 0.35vw, 1.34rem);
-  color: #17324d;
+.login-topbar-logo {
+  margin-top: clamp(0.1rem, 0.2vw, 0.25rem);
 }
 
 .login-hero-chip,
@@ -221,6 +235,11 @@ th {
   box-shadow: 0 14px 24px rgba(20, 54, 91, 0.08), var(--glass-inset);
   color: #1b4f6b;
   font-weight: 800;
+}
+
+.login-hero-chip,
+.boot-loader-chip {
+  white-space: nowrap;
 }
 
 .login-feature-strip {
@@ -272,10 +291,42 @@ th {
   display: grid;
   gap: 1.25rem;
   padding: clamp(1.4rem, 4vw, 2.2rem);
-  border: 1px solid rgba(31, 41, 55, 0.08);
+  border: var(--glass-border);
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.8));
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), var(--glass-inset);
+}
+
+.boot-loader-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.9rem 1rem;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 32%),
+    radial-gradient(circle at top right, rgba(125, 211, 252, 0.2), rgba(125, 211, 252, 0) 34%),
+    linear-gradient(135deg, rgba(22, 103, 118, 0.96), rgba(25, 142, 156, 0.94) 52%, rgba(53, 183, 197, 0.9));
+}
+
+.boot-topbar-logo {
+  width: clamp(132px, 13vw, 168px);
+  min-width: clamp(132px, 13vw, 168px);
+  height: clamp(58px, 5.6vw, 72px);
+}
+
+.boot-loader-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.72rem 1rem;
+  border-radius: 999px;
+  border: var(--glass-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(236, 246, 252, 0.64));
+  box-shadow: 0 14px 24px rgba(20, 54, 91, 0.08), var(--glass-inset);
+  color: #1b4f6b;
+  font-weight: 800;
 }
 
 .boot-loader-mark {
@@ -422,7 +473,7 @@ textarea {
   top: 0;
   z-index: 90;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
   padding: clamp(0.75rem, 0.6rem + 0.5vw, 1rem) clamp(0.9rem, 0.75rem + 0.7vw, 1.15rem);
@@ -441,6 +492,7 @@ textarea {
 .app-topbar-copy {
   display: grid;
   gap: 4px;
+  justify-self: start;
 }
 
 .app-topbar-copy strong {
@@ -458,6 +510,10 @@ textarea {
   background: rgba(255, 255, 255, 0.14);
   color: rgba(236, 254, 255, 0.92);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.app-topbar-logo {
+  margin-top: clamp(0.1rem, 0.2vw, 0.25rem);
 }
 
 .workspace-shell {
@@ -3651,6 +3707,12 @@ textarea {
     border-radius: 0 0 20px 20px;
   }
 
+  .login-hero-bar,
+  .boot-loader-header,
+  .app-topbar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
   .form-shell,
   .panel {
     padding: 14px;
@@ -3973,6 +4035,30 @@ textarea {
 
   .app-topbar {
     padding: 10px 12px;
+  }
+
+  .login-hero-bar,
+  .boot-loader-header,
+  .app-topbar {
+    gap: 0.5rem;
+  }
+
+  .topbar-logo-orb {
+    width: 122px;
+    min-width: 122px;
+    height: 54px;
+  }
+
+  .topbar-brand-block strong,
+  .app-topbar-copy strong {
+    font-size: 0.95rem;
+  }
+
+  .topbar-side-slot .ghost-button,
+  .topbar-side-slot .login-hero-chip,
+  .topbar-side-slot .boot-loader-chip,
+  .app-topbar-copy p {
+    display: none;
   }
 
   .form-shell,
