@@ -1567,6 +1567,11 @@ textarea {
   min-height: 100%;
 }
 
+.product-card-top {
+  min-height: 100%;
+  align-content: center;
+}
+
 .product-variant-slot {
   min-height: 46px;
   display: grid;
@@ -1584,11 +1589,13 @@ textarea {
 }
 
 .product-card-top strong {
-  line-height: 1.34;
-  min-height: calc(1.34em * 3);
+  display: grid;
+  align-content: center;
+  line-height: 1.3;
+  min-height: calc(1.3em * 3);
   color: #17324d;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.92);
-  font-size: clamp(1.12rem, 1rem + 0.32vw, 1.34rem);
+  font-size: 1.3rem;
   letter-spacing: -0.02em;
   padding: 0.38rem 0.52rem 0.42rem;
   border-radius: 14px;
@@ -3834,10 +3841,6 @@ textarea {
     gap: 0;
   }
 
-  .product-card-top strong {
-    font-size: 0.95rem;
-  }
-
   .product-card-top p,
   .product-meta.compact span,
   .product-pricing.compact span,
@@ -4011,10 +4014,6 @@ textarea {
     height: 42px;
     border-radius: 12px;
     font-size: 0.84rem;
-  }
-
-  .product-card-top strong {
-    font-size: 0.9rem;
   }
 
   .product-card-top p,
