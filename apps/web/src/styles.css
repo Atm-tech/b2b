@@ -292,8 +292,10 @@ th {
 .boot-loader-shell {
   min-height: 100vh;
   display: grid;
-  place-items: center;
-  padding: clamp(1rem, 3vw, 2rem);
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  gap: clamp(1rem, 1.8vw, 1.5rem);
+  padding: clamp(0.9rem, 1vw, 1.4rem) clamp(0.8rem, 0.9vw, 1.15rem) clamp(1rem, 3vw, 2rem);
   background:
     linear-gradient(135deg, rgba(79, 148, 148, 0.18), rgba(255, 255, 255, 0.92) 42%, rgba(245, 158, 11, 0.12)),
     #eef6ff;
@@ -308,6 +310,8 @@ th {
   border-radius: 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.8));
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), var(--glass-inset);
+  justify-self: center;
+  align-self: center;
 }
 
 .boot-loader-header {
@@ -315,8 +319,11 @@ th {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
-  padding: 0.9rem 1rem;
-  border-radius: 24px;
+  width: 100%;
+  max-width: 1720px;
+  justify-self: center;
+  padding: clamp(1rem, 1.2vw, 1.35rem) clamp(1rem, 1.5vw, 1.5rem);
+  border-radius: clamp(22px, 2vw, 28px);
   background: var(--brand-orb);
   box-shadow: var(--brand-orb-shadow);
 }

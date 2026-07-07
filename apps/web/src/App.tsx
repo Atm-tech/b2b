@@ -12874,19 +12874,19 @@ function AccountsOverview({
 function BootLoader() {
   return (
     <main className="boot-loader-shell">
+      <header className="boot-loader-header glass-surface">
+        <div className="topbar-brand-block">
+          <span className="small-label">Aapoorti B2B</span>
+          <strong>Workspace Restore</strong>
+        </div>
+        <div className="topbar-logo-orb boot-topbar-logo">
+          <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
+        </div>
+        <div className="topbar-side-slot">
+          <span className="boot-loader-chip">Syncing</span>
+        </div>
+      </header>
       <section className="boot-loader-card">
-        <header className="boot-loader-header glass-surface">
-          <div className="topbar-brand-block">
-            <span className="small-label">Aapoorti B2B</span>
-            <strong>Workspace Restore</strong>
-          </div>
-          <div className="topbar-logo-orb boot-topbar-logo">
-            <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
-          </div>
-          <div className="topbar-side-slot">
-            <span className="boot-loader-chip">Syncing</span>
-          </div>
-        </header>
         <div className="boot-loader-mark" aria-hidden="true">
           <span />
           <span />
