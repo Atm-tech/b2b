@@ -843,34 +843,36 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(31, 41, 55, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.74);
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.94);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(232, 246, 248, 0.84));
   backdrop-filter: blur(18px);
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 16px 34px rgba(7, 47, 55, 0.14), var(--glass-inset);
 }
 
 .simple-tab-bar .tab-button {
-  min-height: 58px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  border: 1px solid rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.82);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0)),
-    linear-gradient(135deg, #fbffff, #e5f5f4 52%, #cfe9e8);
-  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  color: #143737;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0.04)),
+    linear-gradient(160deg, #feffff, #eef8f8 58%, #dcefee);
+  box-shadow: 0 12px 20px rgba(7, 47, 55, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.96), inset 0 -8px 12px rgba(180, 212, 214, 0.18);
+  color: #123b40;
   font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
 }
 
 .simple-tab-bar .tab-button.active {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0)),
-    linear-gradient(135deg, #63adad, #3d7f7f);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+    var(--brand-orb);
   color: #fff;
-  box-shadow: 0 14px 24px rgba(35, 93, 93, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  box-shadow: 0 16px 26px rgba(7, 47, 55, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -10px 14px rgba(9, 67, 64, 0.2);
 }
 
 .delivery-manager-tab-bar {
@@ -880,32 +882,31 @@ textarea {
 .simple-tab-bar .purchaser-po-tab {
   position: relative;
   justify-self: center;
-  width: clamp(66px, 18vw, 86px);
-  min-width: clamp(66px, 18vw, 86px);
-  height: clamp(66px, 18vw, 86px);
-  min-height: clamp(66px, 18vw, 86px);
+  width: clamp(74px, 18vw, 92px);
+  min-width: clamp(74px, 18vw, 92px);
+  height: clamp(74px, 18vw, 92px);
+  min-height: clamp(74px, 18vw, 92px);
   padding: 0;
-  border: 1px solid rgba(209, 250, 246, 0.82);
+  border: 1px solid rgba(209, 250, 246, 0.9);
   border-radius: 999px;
-  transform: translateY(-10px);
+  transform: translateY(-12px);
   background:
-    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.95) 0 9%, rgba(196, 241, 236, 0.54) 18%, rgba(255, 255, 255, 0) 36%),
-    radial-gradient(circle at 72% 78%, rgba(22, 78, 75, 0.62), rgba(22, 78, 75, 0) 42%),
-    linear-gradient(145deg, #9bc9c4 0%, #5d9893 50%, #2f6965 100%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0)),
+    var(--brand-orb);
   color: #fff;
   font-weight: 900;
-  box-shadow: 0 18px 28px rgba(22, 78, 75, 0.3), inset 0 9px 15px rgba(255, 255, 255, 0.32), inset 0 -13px 18px rgba(22, 78, 75, 0.32);
-  text-shadow: 0 1px 4px rgba(15, 23, 42, 0.32);
+  font-size: 1.08rem;
+  box-shadow: 0 18px 28px rgba(7, 47, 55, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -10px 16px rgba(9, 67, 64, 0.24);
+  text-shadow: 0 1px 4px rgba(15, 23, 42, 0.26);
 }
 
 .simple-tab-bar .purchaser-po-tab.active {
-  outline: 3px solid rgba(99, 102, 241, 0.72);
+  outline: 2px solid rgba(140, 160, 255, 0.5);
   outline-offset: 3px;
   background:
-    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.96) 0 9%, rgba(211, 250, 246, 0.6) 18%, rgba(255, 255, 255, 0) 36%),
-    radial-gradient(circle at 72% 78%, rgba(22, 78, 75, 0.56), rgba(22, 78, 75, 0) 42%),
-    linear-gradient(145deg, #a8d8d3 0%, #6aa9a4 50%, #377a75 100%);
-  box-shadow: 0 0 0 7px rgba(99, 102, 241, 0.14), 0 20px 30px rgba(22, 78, 75, 0.34), inset 0 9px 15px rgba(255, 255, 255, 0.36), inset 0 -13px 18px rgba(22, 78, 75, 0.3);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0)),
+    var(--brand-orb);
+  box-shadow: 0 0 0 6px rgba(140, 160, 255, 0.1), 0 20px 30px rgba(7, 47, 55, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -10px 16px rgba(9, 67, 64, 0.26);
 }
 
 .module-stack {
@@ -4051,19 +4052,19 @@ textarea {
   }
 
   .mobile-tab-bar .tab-button {
-    min-height: 34px;
-    padding: 5px 4px;
-    font-size: 0.62rem;
+    min-height: 40px;
+    padding: 7px 6px;
+    font-size: 0.82rem;
     border-radius: 12px;
   }
 
   .mobile-tab-bar .purchaser-po-tab {
-    flex-basis: 52px;
-    width: 52px;
-    min-width: 52px;
-    height: 52px;
-    min-height: 52px;
-    font-size: 0.74rem;
+    flex-basis: 58px;
+    width: 58px;
+    min-width: 58px;
+    height: 58px;
+    min-height: 58px;
+    font-size: 0.94rem;
     transform: translateY(-8px);
   }
 
