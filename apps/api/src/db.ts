@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
 import type {
   AppSnapshot,
   AppUser,
@@ -96,6 +97,29 @@ async function initializeDatabase() {
   `);
   await pool.query(indexSql);
   await seedDatabase();
+  await backfillProductWeights();
+}
+
+async function backfillProductWeights() {
+  const products = await pool.query<Record<string, unknown>>(
+    `SELECT sku, name, size, short_name, article_name, item_name, remarks
+     FROM products
+     WHERE default_weight_kg <= 0`
+  );
+  for (const product of products.rows) {
+    const inferredWeight = inferProductWeightKg([
+      product.size,
+      product.name,
+      product.sku,
+      product.short_name,
+      product.article_name,
+      product.item_name,
+      product.remarks
+    ].filter(Boolean).join(" "));
+    if (inferredWeight > 0) {
+      await pool.query("UPDATE products SET default_weight_kg = $1 WHERE sku = $2 AND default_weight_kg <= 0", [inferredWeight, product.sku]);
+    }
+  }
 }
 
 async function ensureCompatibilityColumns() {
@@ -1544,6 +1568,9 @@ export async function createWarehouse(payload: { id: string; name: string; city:
 
 async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "createdAt"> & { createdBy: string; createdAt: string }, currentUser: CurrentUser) {
   const allowedWarehouseIds = payload.allowedWarehouseIds.length > 0 ? payload.allowedWarehouseIds : await getDefaultWarehouseIds();
+  const defaultWeightKg = payload.defaultWeightKg > 0
+    ? payload.defaultWeightKg
+    : inferProductWeightKg(productWeightSearchText(payload));
   await query(
     `INSERT INTO products (
       sku, name, division, department, section_name, category, sub_category, unit, default_gst_rate, default_tax_mode, default_weight_kg, tolerance_kg, tolerance_percent,
@@ -1594,7 +1621,7 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       payload.unit.trim(),
       payload.defaultGstRate === "NA" ? 0 : payload.defaultGstRate,
       payload.defaultTaxMode,
-      payload.defaultWeightKg,
+      defaultWeightKg,
       payload.toleranceKg,
       payload.tolerancePercent,
       JSON.stringify(allowedWarehouseIds),

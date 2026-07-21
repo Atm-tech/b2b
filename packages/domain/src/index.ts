@@ -61,6 +61,40 @@ export type ProductMaster = {
   createdAt: string;
 };
 
+export function inferProductWeightKg(text: string) {
+  const normalized = text
+    .toUpperCase()
+    .replace(/×/g, "X")
+    .replace(/[()]/g, " ")
+    .replace(/\bLTRS\b/g, "LTR")
+    .replace(/\bLITRES\b/g, "LITRE")
+    .replace(/\bLTS\b/g, "LT")
+    .replace(/\bGMS\b/g, "GM")
+    .replace(/\bGRAMS\b/g, "GRAM");
+  const units = "KG|KGS|KILOGRAM|G|GM|GRAM|LTR|LITRE|LT|L|ML";
+  const convert = (value: number, unit: string) => {
+    if (["KG", "KGS", "KILOGRAM"].includes(unit)) return value;
+    if (["G", "GM", "GRAM"].includes(unit)) return value / 1000;
+    if (["LTR", "LITRE", "LT", "L"].includes(unit)) return value;
+    if (unit === "ML") return value / 1000;
+    return 0;
+  };
+  const freePack = normalized.match(new RegExp(`(\\d+)\\s*\\+\\s*(\\d+)\\s*(?:X|\\*)?\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
+  if (freePack) return (Number(freePack[1]) + Number(freePack[2])) * convert(Number(freePack[3]), freePack[4]);
+  const packFirst = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:X|\\*)\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
+  if (packFirst) return Number(packFirst[1]) * convert(Number(packFirst[2]), packFirst[3]);
+  const unitFirst = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${units})\\s*(?:X|\\*)\\s*(\\d+(?:\\.\\d+)?)`));
+  if (unitFirst) return convert(Number(unitFirst[1]), unitFirst[2]) * Number(unitFirst[3]);
+  const single = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
+  return single ? convert(Number(single[1]), single[2]) : 0;
+}
+
+export function productWeightSearchText(product: Pick<ProductMaster, "name" | "sku" | "size" | "shortName" | "articleName" | "itemName" | "remarks">) {
+  return [product.size, product.name, product.sku, product.shortName, product.articleName, product.itemName, product.remarks]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export type CounterpartyType = "Supplier" | "Shop";
 
 export type Counterparty = {

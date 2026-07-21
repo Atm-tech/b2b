@@ -31,7 +31,7 @@ import type {
   TaxMode,
   UserRole
 } from "@aapoorti-b2b/domain";
-import { userRoles } from "@aapoorti-b2b/domain";
+import { inferProductWeightKg, productWeightSearchText, userRoles } from "@aapoorti-b2b/domain";
 
 const configuredApiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
 const browserOriginFallback = typeof window !== "undefined" && window.location.hostname === "localhost"
@@ -968,6 +968,23 @@ function salesLineTodAmount(line: SalesOrder) {
   return Number((line as SalesOrder & { todAmount?: number }).todAmount || 0);
 }
 
+function formatWeightKg(value: number) {
+  return `${Math.max(0, value).toFixed(3)} kg`;
+}
+
+function salesLineUnitWeightKg(snapshot: AppSnapshot, line: SalesOrder) {
+  const product = snapshot.products.find((item) => item.sku === line.productSku);
+  return product ? productUnitWeightKg(product) : inferProductWeightKg(line.productSku);
+}
+
+function salesLineWeightKg(snapshot: AppSnapshot, line: SalesOrder) {
+  return salesLineUnitWeightKg(snapshot, line) * Number(line.quantity || 0);
+}
+
+function salesInvoiceWeightKg(snapshot: AppSnapshot, group: { lines: SalesOrder[] }) {
+  return group.lines.reduce((sum, line) => sum + salesLineWeightKg(snapshot, line), 0);
+}
+
 function openChequePrintWindow(payload: { partyName: string; amount: number; date: string; referenceNumber: string; note: string; }) {
   if (typeof window === "undefined") return;
   const printWindow = window.open("", "_blank", "width=900,height=600");
@@ -1249,6 +1266,8 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const nonGst = isNonGstInvoice(group.lines);
   const customer = salesInvoiceCounterparty(snapshot, group);
+  const totalWeight = salesInvoiceWeightKg(snapshot, group);
+  const orderNote = displayOrderNote(first?.note);
   const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Sales", orderId: group.id }), { width: 180, margin: 1 });
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-${nonGst ? "estimate" : "sales-tax-invoice"}.pdf`),
@@ -1262,7 +1281,8 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
     createdAt: first?.createdAt,
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
     qrDataUrl,
-    note: nonGst ? displayOrderNote(first?.note) : [
+    note: nonGst ? [orderNote, `Total Weight: ${formatWeightKg(totalWeight)}`].filter(Boolean).join(" | ") : [
+      `Total Weight: ${formatWeightKg(totalWeight)}`,
       `Salesman: ${invoiceValue(first?.salesmanName)}`,
       `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
       `Contact: ${invoiceValue(customer?.contactPerson)}`,
@@ -1271,7 +1291,7 @@ async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; 
       `City: ${invoiceValue(customer?.deliveryCity || customer?.city)}`
     ].join(" | "),
     rows: group.lines.map((line) => ({
-      product: line.productSku,
+      product: `${line.productSku}\nUnit wt ${formatWeightKg(salesLineUnitWeightKg(snapshot, line))} | Line wt ${formatWeightKg(salesLineWeightKg(snapshot, line))}`,
       quantity: line.quantity,
       rate: line.rate,
       taxableAmount: line.taxableAmount,
@@ -1461,12 +1481,14 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
   const tod = group.lines.reduce((sum, line) => sum + salesLineTodAmount(line), 0);
   const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
+  const totalWeight = salesInvoiceWeightKg(snapshot, group);
   const nonGstBill = isNonGstInvoice(group.lines);
   const rows = group.lines.map((line, index) => nonGstBill ? `
     <tr>
       <td>${index + 1}</td>
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantity}</td>
+      <td>${formatWeightKg(salesLineWeightKg(snapshot, line))}<br><small>${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit</small></td>
       <td>${formatMoney(line.rate)}</td>
       <td>${formatMoney(salesLineCdAmount(line))}</td>
       <td>${formatMoney(salesLineTodAmount(line))}</td>
@@ -1477,6 +1499,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
       <td>${index + 1}</td>
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantity}</td>
+      <td>${formatWeightKg(salesLineWeightKg(snapshot, line))}<br><small>${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit</small></td>
       <td>${formatMoney(line.rate)}</td>
       <td>${formatMoney(line.taxableAmount)}</td>
       <td>${formatMoney(line.gstAmount)}</td>
@@ -1515,6 +1538,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
                 <th>#</th>
                 <th>Product</th>
                 <th>Qty</th>
+                <th>Weight</th>
                 <th>Rate</th>
                 <th>CD</th>
                 <th>TOD</th>
@@ -1524,6 +1548,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
             <tbody>${rows}</tbody>
           </table>
           <div class="invoice-kachcha-total">
+            <div><span>Total Weight</span><strong>${formatWeightKg(totalWeight)}</strong></div>
             <div><span>Items Total</span><strong>${formatMoney(taxable)}</strong></div>
             <div><span>CD</span><strong>${formatMoney(cd)}</strong></div>
             <div><span>TOD</span><strong>${formatMoney(tod)}</strong></div>
@@ -1568,6 +1593,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
               <th>#</th>
               <th>Product</th>
               <th>Qty</th>
+              <th>Weight</th>
               <th>Rate</th>
               <th>Taxable</th>
               <th>GST</th>
@@ -1579,6 +1605,7 @@ function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: Sal
           <tbody>${rows}</tbody>
         </table>
         <div class="invoice-totals">
+          <div><span>Total Weight</span><strong>${formatWeightKg(totalWeight)}</strong></div>
           <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
           <div><span>GST</span><strong>${formatMoney(gst)}</strong></div>
           <div><span>CD</span><strong>${formatMoney(cd)}</strong></div>
@@ -1634,6 +1661,7 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
   const tod = group.lines.reduce((sum, line) => sum + salesLineTodAmount(line), 0);
   const delivery = group.lines.reduce((sum, line) => sum + line.deliveryCharge, 0);
   const total = group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
+  const totalWeight = salesInvoiceWeightKg(snapshot, group);
   const lines = nonGstBill
     ? [
       "AAPOORTI B2B",
@@ -1642,7 +1670,8 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | CD ${formatMoney(salesLineCdAmount(line))} | TOD ${formatMoney(salesLineTodAmount(line))} | Amount ${formatMoney(line.totalAmount)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Weight ${formatWeightKg(salesLineWeightKg(snapshot, line))} (${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit) | Rate ${formatMoney(line.rate)} | CD ${formatMoney(salesLineCdAmount(line))} | TOD ${formatMoney(salesLineTodAmount(line))} | Amount ${formatMoney(line.totalAmount)}`),
+      `Total Weight: ${formatWeightKg(totalWeight)}`,
       `CD Total: ${formatMoney(cd)}`,
       `TOD Total: ${formatMoney(tod)}`,
       `Delivery: ${formatMoney(delivery)}`,
@@ -1655,7 +1684,8 @@ function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; li
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
-      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | CD ${formatMoney(salesLineCdAmount(line))} | TOD ${formatMoney(salesLineTodAmount(line))} | Total ${formatMoney(line.totalAmount)}`),
+      ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Weight ${formatWeightKg(salesLineWeightKg(snapshot, line))} (${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit) | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | CD ${formatMoney(salesLineCdAmount(line))} | TOD ${formatMoney(salesLineTodAmount(line))} | Total ${formatMoney(line.totalAmount)}`),
+      `Total Weight: ${formatWeightKg(totalWeight)}`,
       `Taxable Total: ${formatMoney(taxable)}`,
       `GST Total: ${formatMoney(gst)}`,
       `CD Total: ${formatMoney(cd)}`,
@@ -4887,6 +4917,11 @@ function catalogCardTitle(item: CatalogDisplayProduct, product: AppSnapshot["pro
   return item.familyKey ? item.displayName : productDisplayLabel(product);
 }
 
+function productUnitWeightKg(product: AppSnapshot["products"][number]) {
+  const explicitWeight = Number(product.defaultWeightKg || 0);
+  return explicitWeight > 0 ? explicitWeight : inferProductWeightKg(productWeightSearchText(product));
+}
+
 function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
   const explicitVariant = String((product as AppSnapshot["products"][number] & { weightVariant?: string }).weightVariant || "").trim().toUpperCase();
   if (explicitVariant && explicitVariant !== "WRONG") {
@@ -4909,7 +4944,7 @@ function normalizeStaplesWeightLabel(product: AppSnapshot["products"][number]) {
     if (["L", "LTR", "LT"].includes(unit)) return `${value}L`;
     if (unit === "ML") return `${value}ML`;
   }
-  const weight = Number(product.defaultWeightKg || 0);
+  const weight = productUnitWeightKg(product);
   if (weight > 0) {
     if (weight >= 1) return `${weight}KG`;
     return `${Math.round(weight * 1000)}GM`;
@@ -4935,7 +4970,7 @@ function staplesVariantSortWeight(product: AppSnapshot["products"][number]) {
     if (["G", "GM", "GRAM"].includes(unit)) return value / 1000;
     if (unit === "ML") return value / 1000;
   }
-  const weight = Number(product.defaultWeightKg || 0);
+  const weight = productUnitWeightKg(product);
   return weight > 0 ? weight : Number.POSITIVE_INFINITY;
 }
 
@@ -5892,7 +5927,7 @@ function CatalogOrderView(props: CatalogOrderViewProps) {
   const cartCdAmount = cartLines.reduce((sum, line) => sum + getCartLineCdAmount(line), 0);
   const cartTodAmount = cartLines.reduce((sum, line) => sum + getCartLineTodAmount(line), 0);
   const cartTotal = Math.max(0, cartTaxable + cartGstAmount - cartCdAmount - cartTodAmount);
-  const totalWeightKg = cartProducts.reduce((sum, item) => sum + item.product.defaultWeightKg * Number(item.line.quantity || 0), 0);
+  const totalWeightKg = cartProducts.reduce((sum, item) => sum + productUnitWeightKg(item.product) * Number(item.line.quantity || 0), 0);
   const cartStepTitle = cartStep === "cart" ? "Cart" : cartStep === "payment" ? "Payment" : "Bill Summary";
   const completedPurchaseGroup = completedOrder?.kind === "purchase"
     ? groupPurchaseOrders(snapshot.purchaseOrders).find((group) => group.id === completedOrder.orderId)

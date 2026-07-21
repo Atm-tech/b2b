@@ -1,6 +1,6 @@
 import path from "node:path";
 import XLSX from "xlsx";
-import type { ProductMaster, ProductSlab } from "@aapoorti-b2b/domain";
+import { inferProductWeightKg, type ProductMaster, type ProductSlab } from "@aapoorti-b2b/domain";
 
 type ImportRow = Record<string, string>;
 type ProductTaxonomy = Pick<ProductMaster, "division" | "department" | "section" | "category" | "subCategory">;
@@ -105,7 +105,7 @@ function parseProductWeightKg(row: ImportRow) {
     readMapped(row, ["remarks", "REMARKS"])
   ].join(" ");
 
-  return inferWeightKg(searchableText);
+  return inferProductWeightKg(searchableText);
 }
 
 function inferWeightKg(text: string) {
