@@ -79,6 +79,12 @@ export function inferProductWeightKg(text: string) {
     if (unit === "ML") return value / 1000;
     return 0;
   };
+  const mixedAdditivePack = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${units})\\s*\\+\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
+  if (mixedAdditivePack) {
+    return convert(Number(mixedAdditivePack[1]), mixedAdditivePack[2]) + convert(Number(mixedAdditivePack[3]), mixedAdditivePack[4]);
+  }
+  const additivePack = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*\\+\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
+  if (additivePack) return convert(Number(additivePack[1]) + Number(additivePack[2]), additivePack[3]);
   const freePack = normalized.match(new RegExp(`(\\d+)\\s*\\+\\s*(\\d+)\\s*(?:X|\\*)?\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
   if (freePack) return (Number(freePack[1]) + Number(freePack[2])) * convert(Number(freePack[3]), freePack[4]);
   const packFirst = normalized.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:X|\\*)\\s*(\\d+(?:\\.\\d+)?)\\s*(${units})\\b`));
