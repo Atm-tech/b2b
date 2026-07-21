@@ -49,6 +49,7 @@ import {
   verifyPayment
 } from "./db.js";
 import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
+import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from "./object-storage.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -72,16 +73,51 @@ mkdirSync(deliveryDir, { recursive: true });
 mkdirSync(receiptDir, { recursive: true });
 mkdirSync(returnDir, { recursive: true });
 
-const upload = multer({
+const csvUpload = multer({
   storage: multer.diskStorage({
-    destination: (_req, file, cb) => {
-      cb(null, file.fieldname === "csv" ? csvDir : file.fieldname === "deliveryProof" ? deliveryDir : file.fieldname === "receiptProof" ? receiptDir : file.fieldname === "returnProof" ? returnDir : paymentDir);
-    },
+    destination: (_req, _file, cb) => cb(null, csvDir),
     filename: (_req, file, cb) => {
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
       cb(null, `${Date.now()}-${safeName}`);
     }
   }),
+  limits: {
+    fileSize: Number(process.env.MAX_UPLOAD_BYTES || 8 * 1024 * 1024)
+  }
+});
+
+const proofDirectories: Record<ProofCategory, string> = {
+  "payment-proofs": paymentDir,
+  "delivery-proofs": deliveryDir,
+  "receipt-proofs": receiptDir,
+  "return-proofs": returnDir
+};
+
+const proofFieldCategories: Record<string, ProofCategory> = {
+  proof: "payment-proofs",
+  deliveryProof: "delivery-proofs",
+  receiptProof: "receipt-proofs",
+  returnProof: "return-proofs"
+};
+
+const allowedProofMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+const proofUpload = multer({
+  storage: r2Enabled
+    ? multer.memoryStorage()
+    : multer.diskStorage({
+        destination: (_req, file, cb) => cb(null, proofDirectories[proofFieldCategories[file.fieldname] || "payment-proofs"]),
+        filename: (_req, file, cb) => {
+          const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
+          cb(null, `${Date.now()}-${safeName}`);
+        }
+      }),
+  fileFilter: (_req, file, cb) => {
+    if (!allowedProofMimeTypes.has(file.mimetype)) {
+      cb(new Error("Only JPEG, PNG, WebP, or PDF proof files are allowed."));
+      return;
+    }
+    cb(null, true);
+  },
   limits: {
     fileSize: Number(process.env.MAX_UPLOAD_BYTES || 8 * 1024 * 1024)
   }
@@ -110,6 +146,39 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: requestBodyLimit }));
+if (r2Enabled) {
+  app.get("/uploads/:category/:fileName", async (req, res) => {
+    const category = req.params.category as ProofCategory;
+    if (!(category in proofDirectories) || !/^[a-zA-Z0-9._-]+$/.test(req.params.fileName)) {
+      res.status(404).json({ message: "Proof file not found." });
+      return;
+    }
+
+    const localPath = path.join(proofDirectories[category], req.params.fileName);
+    if (existsSync(localPath)) {
+      res.sendFile(localPath);
+      return;
+    }
+
+    try {
+      const object = await getProofObject(category, req.params.fileName);
+      res.setHeader("Content-Type", object.contentType);
+      res.setHeader("Content-Length", String(object.contentLength ?? object.body.length));
+      res.setHeader("Cache-Control", "private, max-age=300");
+      if (object.etag) res.setHeader("ETag", object.etag);
+      res.send(object.body);
+    } catch (error) {
+      const statusCode = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (statusCode === 404 || (error as { name?: string })?.name === "NoSuchKey") {
+        res.status(404).json({ message: "Proof file not found." });
+        return;
+      }
+      console.error("R2 proof read failed", error);
+      res.status(502).json({ message: "Proof storage is temporarily unavailable." });
+    }
+  });
+}
+
 app.use("/uploads", express.static(uploadsDir, {
   fallthrough: false,
   maxAge: isProduction ? "7d" : 0
@@ -130,7 +199,8 @@ app.get("/health", (_req, res) => {
     service: "api",
     environment: process.env.NODE_ENV || "development",
     timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round(process.uptime())
+    uptimeSeconds: Math.round(process.uptime()),
+    proofStorage: r2Enabled ? "cloudflare-r2" : "local-filesystem"
   });
 });
 
@@ -278,7 +348,7 @@ app.post("/products/bulk", async (req, res) => wrap(res, async () => {
   );
 }));
 
-app.post("/products/bulk-upload", upload.single("csv"), async (req, res) => wrap(res, async () => {
+app.post("/products/bulk-upload", csvUpload.single("csv"), async (req, res) => wrap(res, async () => {
   const currentUser = await requireRole(req, ["Admin"]);
   if (!req.file) {
     throw new Error("CSV file is required.");
@@ -611,51 +681,55 @@ app.patch("/payments/:id", async (req, res) => wrap(res, async () => {
   }, currentUser);
 }));
 
-app.post("/payments/upload-proof", upload.single("proof"), async (req, res) => wrap(res, async () => {
+app.post("/payments/upload-proof", proofUpload.single("proof"), async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent"]);
   if (!req.file) {
     throw new Error("Proof file is required.");
   }
+  const fileName = await storeProofFile("payment-proofs", req.file);
   return {
-    fileName: req.file.filename,
+    fileName,
     originalName: req.file.originalname,
-    fileUrl: `/uploads/payment-proofs/${req.file.filename}`
+    fileUrl: `/uploads/payment-proofs/${fileName}`
   };
 }));
 
-app.post("/delivery-tasks/upload-proof", upload.single("deliveryProof"), async (req, res) => wrap(res, async () => {
+app.post("/delivery-tasks/upload-proof", proofUpload.single("deliveryProof"), async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Delivery Manager", "In Delivery", "Out Delivery", "Delivery"]);
   if (!req.file) {
     throw new Error("Delivery proof file is required.");
   }
+  const fileName = await storeProofFile("delivery-proofs", req.file);
   return {
-    fileName: req.file.filename,
+    fileName,
     originalName: req.file.originalname,
-    fileUrl: `/uploads/delivery-proofs/${req.file.filename}`
+    fileUrl: `/uploads/delivery-proofs/${fileName}`
   };
 }));
 
-app.post("/receipt-checks/upload-proof", upload.single("receiptProof"), async (req, res) => wrap(res, async () => {
+app.post("/receipt-checks/upload-proof", proofUpload.single("receiptProof"), async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Warehouse Manager"]);
   if (!req.file) {
     throw new Error("Weighing proof file is required.");
   }
+  const fileName = await storeProofFile("receipt-proofs", req.file);
   return {
-    fileName: req.file.filename,
+    fileName,
     originalName: req.file.originalname,
-    fileUrl: `/uploads/receipt-proofs/${req.file.filename}`
+    fileUrl: `/uploads/receipt-proofs/${fileName}`
   };
 }));
 
-app.post("/returns/upload-proof", upload.single("returnProof"), async (req, res) => wrap(res, async () => {
+app.post("/returns/upload-proof", proofUpload.single("returnProof"), async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Purchaser", "Sales"]);
   if (!req.file) {
     throw new Error("Return proof file is required.");
   }
+  const fileName = await storeProofFile("return-proofs", req.file);
   return {
-    fileName: req.file.filename,
+    fileName,
     originalName: req.file.originalname,
-    fileUrl: `/uploads/return-proofs/${req.file.filename}`
+    fileUrl: `/uploads/return-proofs/${fileName}`
   };
 }));
 
@@ -912,9 +986,31 @@ app.post("/notes", async (req, res) => wrap(res, async () => {
   );
 }));
 
-app.listen(port, () => {
-  console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"})`);
+app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof multer.MulterError) {
+    const message = error.code === "LIMIT_FILE_SIZE"
+      ? `Proof file is too large. Maximum size is ${Number(process.env.MAX_UPLOAD_BYTES || 8 * 1024 * 1024)} bytes.`
+      : error.message;
+    res.status(400).json({ message });
+    return;
+  }
+  if (error instanceof Error && error.message.includes("proof files are allowed")) {
+    res.status(400).json({ message: error.message });
+    return;
+  }
+  console.error("Unhandled API error", error);
+  res.status(500).json({ message: "Unexpected server error." });
 });
+
+app.listen(port, () => {
+  console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"}); proof storage: ${r2Enabled ? "Cloudflare R2" : "local filesystem"}`);
+});
+
+async function storeProofFile(category: ProofCategory, file: Express.Multer.File) {
+  if (r2Enabled) return putProofObject(category, file);
+  if (!file.filename) throw new Error("Local proof upload did not produce a file name.");
+  return file.filename;
+}
 
 async function wrap(res: express.Response, run: () => Promise<unknown>) {
   try {

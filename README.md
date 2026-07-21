@@ -58,14 +58,20 @@ Copy `.env.example` and set:
 - `ALLOWED_ORIGINS`
 - `REQUEST_BODY_LIMIT`
 - `MAX_UPLOAD_BYTES`
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME`
+- `R2_OBJECT_PREFIX` (optional, defaults to `proofs`)
 - `VITE_API_BASE_URL`
 
 ## Deployment Notes
 
 - This app now uses PostgreSQL, not SQLite.
 - In production, point `DATABASE_URL` to your Render Postgres instance.
-- In production set `UPLOADS_DIR` to a persistent disk path.
-- backend serves uploaded payment and delivery proof files from `/uploads/...`
+- In production, configure Cloudflare R2 for durable payment, receipt, delivery, and return proofs.
+- The backend keeps serving proof files from `/uploads/...`, so existing records and frontend links remain compatible.
+- Without all four required R2 credentials, proof storage falls back to `UPLOADS_DIR`.
 - for Render backend use:
 
 ```bash
@@ -85,6 +91,10 @@ DATABASE_URL=<render-postgres-connection-string>
 UPLOADS_DIR=/var/data/uploads
 ALLOWED_ORIGINS=https://your-frontend.example.com
 NODE_ENV=production
+R2_ACCOUNT_ID=<cloudflare-account-id>
+R2_ACCESS_KEY_ID=<r2-access-key-id>
+R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
+R2_BUCKET_NAME=aapoorti-proofs
 ```
 
 - frontend can be deployed on Render static hosting or Vercel
@@ -105,7 +115,22 @@ UPLOADS_DIR=/var/data/uploads
 ALLOWED_ORIGINS=https://your-frontend.vercel.app
 REQUEST_BODY_LIMIT=2mb
 MAX_UPLOAD_BYTES=8388608
+R2_ACCOUNT_ID=<cloudflare-account-id>
+R2_ACCESS_KEY_ID=<r2-access-key-id>
+R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
+R2_BUCKET_NAME=aapoorti-proofs
+R2_OBJECT_PREFIX=proofs
 ```
+
+### Cloudflare R2 proof storage
+
+1. In Cloudflare, create a private R2 bucket named `aapoorti-proofs`.
+2. Create an R2 API token with Object Read & Write permission scoped only to that bucket.
+3. Add the five `R2_*` values above to the backend service environment.
+4. Redeploy the backend and open `/health`; `proofStorage` should be `cloudflare-r2`.
+5. Upload and open one test proof from each workflow before removing the Render persistent disk.
+
+Do not enable the public `r2.dev` URL for this bucket. Existing files in `UPLOADS_DIR` remain readable during migration; new proof files go to R2 once the credentials are complete. Product CSV uploads remain temporary local files.
 
 ### Vercel dashboard env
 
@@ -155,8 +180,4 @@ Schema files:
 - [postgres/init/001-schema.sql](d:/AAPOORTI/Managment%20system/Sales%20managment/postgres/init/001-schema.sql)
 - [postgres/init/002-indexes.sql](d:/AAPOORTI/Managment%20system/Sales%20managment/postgres/init/002-indexes.sql)
 
-Important:
-
-- the running API still uses SQLite today
-- this Postgres setup is the local server and schema foundation for migration
-- next step would be adding a Postgres-backed repository layer or a data migration script from SQLite to Postgres
+The running API uses PostgreSQL and initializes the schema and compatibility columns on startup.
