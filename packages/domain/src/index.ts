@@ -182,6 +182,9 @@ export type SalesOrder = {
   warehouseId: string;
   quantity: number;
   rate: number;
+  cdTodRate: number;
+  cdAmount: number;
+  todAmount: number;
   taxableAmount: number;
   gstRate: GstRate;
   gstAmount: number;

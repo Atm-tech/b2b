@@ -3408,6 +3408,9 @@ function salesOrderDraftSignature(draft: {
     productSku: string;
     warehouseId: string;
     rate: string;
+    cdTodRate: string;
+    cdAmount: string;
+    todAmount: string;
     quantity: string;
     totalAmount: number;
     gstRate: GstRateInput;
@@ -3427,6 +3430,9 @@ function salesOrderDraftSignature(draft: {
       productSku: line.productSku,
       warehouseId: line.warehouseId,
       rate: line.rate,
+      cdTodRate: line.cdTodRate,
+      cdAmount: line.cdAmount,
+      todAmount: line.todAmount,
       quantity: line.quantity,
       totalAmount: line.totalAmount,
       gstRate: line.gstRate,
@@ -7679,6 +7685,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
       warehouseId?: string;
       quantity: number;
       rate: number;
+      cdTodRate: number;
+      cdAmount: number;
+      todAmount: number;
       taxableAmount: number;
       gstRate: "NA" | 0 | 5 | 12 | 18 | 40;
       gstAmount: number;
@@ -7697,7 +7706,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
-  const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ clientKey: string; id?: string; productSku: string; warehouseId: string; rate: string; quantity: string; totalAmount: number; gstRate: GstRateInput; gstAmount: string; taxableAmount: string; taxMode: TaxModeInput }> } | null>(null);
+  const [draft, setDraft] = useState<{ paymentMode: PaymentMode; cashTiming: string; deliveryMode: "Self Collection" | "Delivery"; note: string; status: SalesStatus; lines: Array<{ clientKey: string; id?: string; productSku: string; warehouseId: string; rate: string; cdTodRate: string; cdAmount: string; todAmount: string; quantity: string; totalAmount: number; gstRate: GstRateInput; gstAmount: string; taxableAmount: string; taxMode: TaxModeInput }> } | null>(null);
   const [initialDraftState, setInitialDraftState] = useState("");
   const draftDirty = Boolean(draft && initialDraftState && salesOrderDraftSignature(draft) !== initialDraftState);
 
@@ -7739,6 +7748,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
         productSku: line.productSku,
         warehouseId: line.warehouseId,
         rate: String(line.rate),
+        cdTodRate: String(line.cdTodRate || Math.max(0, line.rate - ((line.cdAmount + line.todAmount) / Math.max(line.quantity, 1)))),
+        cdAmount: String(line.cdAmount),
+        todAmount: String(line.todAmount),
         quantity: String(line.quantity),
         totalAmount: line.totalAmount + line.deliveryCharge,
         gstRate: line.gstRate === "NA" ? "NA" : String(line.gstRate || 0) as GstRateInput,
@@ -7757,7 +7769,7 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
 
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
-  function updateSalesDraftLine(lineKey: string, updates: Partial<{ productSku: string; quantity: string; rate: string; gstRate: GstRateInput; taxMode: TaxModeInput }>) {
+  function updateSalesDraftLine(lineKey: string, updates: Partial<{ productSku: string; quantity: string; rate: string; cdTodRate: string; gstRate: GstRateInput; taxMode: TaxModeInput }>) {
     onDirtyChange(true);
     setDraft((current) => {
       if (!current) return current;
@@ -7769,20 +7781,27 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
           const product = snapshot.products.find((item) => item.sku === productSku);
           const quantity = updates.quantity ?? line.quantity;
           const rate = updates.rate ?? line.rate;
+          const cdTodRate = updates.cdTodRate ?? (updates.rate !== undefined && Number(line.rate || 0) === 0 && Number(line.cdTodRate || 0) === 0 ? rate : line.cdTodRate);
           const gstRate = updates.gstRate ?? line.gstRate ?? (product?.defaultGstRate === "NA" ? "NA" : String(product?.defaultGstRate || 0) as GstRateInput);
           const fallbackTaxMode = product?.defaultTaxMode === "NA" ? "NA" : (product?.defaultTaxMode || "Exclusive");
           const taxMode = gstRate === "NA" ? "NA" : (updates.taxMode ?? (line.taxMode === "NA" ? fallbackTaxMode : line.taxMode));
           const totals = calculateTaxPreview(String(Math.max(0, Number(quantity || 0)) * Math.max(0, Number(rate || 0))), gstRate, taxMode);
+          const discountDifference = Math.max(0, Number(rate || 0) - Number(cdTodRate || 0)) * Math.max(0, Number(quantity || 0));
+          const cdAmount = discountDifference / 2;
+          const todAmount = discountDifference - cdAmount;
           return {
             ...line,
             productSku,
             quantity,
             rate,
+            cdTodRate,
+            cdAmount: cdAmount.toFixed(2),
+            todAmount: todAmount.toFixed(2),
             gstRate,
             taxMode,
             taxableAmount: totals.taxableAmount,
             gstAmount: totals.gstAmount,
-            totalAmount: Number(totals.taxableAmount || 0) + Number(totals.gstAmount || 0)
+            totalAmount: Math.max(0, Number(totals.taxableAmount || 0) + Number(totals.gstAmount || 0) - cdAmount - todAmount)
           };
         })
       };
@@ -7804,6 +7823,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
         productSku: fallbackProduct.sku,
         warehouseId: selectedGroup.lines[0]?.warehouseId || "",
         rate: "0",
+        cdTodRate: "0",
+        cdAmount: "0.00",
+        todAmount: "0.00",
         quantity: "0",
         totalAmount: 0,
         gstRate,
@@ -7829,6 +7851,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
         warehouseId: line.warehouseId,
         quantity: Number(line.quantity || 0),
         rate: Number(line.rate || 0),
+        cdTodRate: Number(line.cdTodRate || 0),
+        cdAmount: Number(line.cdAmount || 0),
+        todAmount: Number(line.todAmount || 0),
         taxableAmount: Number(line.taxableAmount || 0),
         gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
         gstAmount: Number(line.gstAmount || 0),
@@ -7858,6 +7883,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
             warehouseId: line.warehouseId,
             quantity: Number(line.quantity || 0),
             rate: Number(line.rate || 0),
+            cdTodRate: Number(line.cdTodRate || 0),
+            cdAmount: Number(line.cdAmount || 0),
+            todAmount: Number(line.todAmount || 0),
             taxableAmount: Number(line.taxableAmount || 0),
             gstRate: line.gstRate === "NA" ? "NA" : Number(line.gstRate || 0) as 0 | 5 | 12 | 18 | 40,
             gstAmount: Number(line.gstAmount || 0),
@@ -7897,8 +7925,9 @@ function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewOrder, o
               <span>Product</span>
               <span>Qty</span>
               <span>Rate</span>
+              <span>Net rate</span>
             </div>
-            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{productDisplayLabel(product) || product.sku}</option>)}</select> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /></div>)}
+            {draft.lines.map((line, index) => <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <select value={line.productSku} onChange={(e) => updateSalesDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{productDisplayLabel(product) || product.sku}</option>)}</select> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}</div><input type="number" step="any" min="0" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" max={line.rate || undefined} value={line.cdTodRate} onChange={(e) => updateSalesDraftLine(line.clientKey, { cdTodRate: e.target.value })} disabled={!editState.editable} aria-label="Net rate after CD and TOD" /></div>)}
           </> : <div className="empty-card">No sales order lines available.</div>}</div>
           <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={() => {
             if (!confirmDiscardChanges()) return;

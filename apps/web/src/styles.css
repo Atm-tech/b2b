@@ -2275,7 +2275,7 @@ textarea {
 .compact-order-editor-head,
 .compact-order-editor-row {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1.6fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr);
+  grid-template-columns: 112px minmax(0, 1.6fr) repeat(3, minmax(90px, 0.7fr));
   gap: 0.9rem;
   align-items: center;
 }
@@ -2992,7 +2992,7 @@ textarea {
 
   .compact-order-editor-head,
   .compact-order-editor-row {
-    grid-template-columns: 92px minmax(0, 1fr) minmax(78px, 0.7fr) minmax(78px, 0.7fr);
+    grid-template-columns: 92px minmax(0, 1fr) repeat(3, minmax(78px, 0.7fr));
     gap: 0.65rem;
   }
 }

@@ -149,6 +149,9 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS cart_id TEXT;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS taxable_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cd_tod_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cd_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tod_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
@@ -555,6 +558,9 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     warehouseId: stringValue(row.warehouse_id),
     quantity: numberValue(row.quantity),
     rate: numberValue(row.rate),
+    cdTodRate: numberValue(row.cd_tod_rate),
+    cdAmount: numberValue(row.cd_amount),
+    todAmount: numberValue(row.tod_amount),
     taxableAmount: numberValue(row.taxable_amount),
     gstRate: stringValue(row.tax_mode) === "NA" ? "NA" : numberValue(row.gst_rate) as SalesOrder["gstRate"],
     gstAmount: numberValue(row.gst_amount),
@@ -1910,6 +1916,9 @@ export async function createSalesOrder(payload: {
   warehouseId: string;
   quantity: number;
   rate: number;
+  cdTodRate?: number;
+  cdAmount?: number;
+  todAmount?: number;
   taxableAmount?: number;
   gstRate?: SalesOrder["gstRate"];
   gstAmount?: number;
@@ -1946,7 +1955,11 @@ export async function createSalesOrder(payload: {
     const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
     const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
     const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
-    const totalAmount = taxableAmount + gstAmount;
+    const cdTodRate = payload.cdTodRate ?? payload.rate;
+    const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
+    const cdAmount = Math.min(Math.max(0, payload.cdAmount ?? 0), maximumDiscount);
+    const todAmount = Math.min(Math.max(0, payload.todAmount ?? 0), maximumDiscount - cdAmount);
+    const totalAmount = Math.max(0, taxableAmount + gstAmount - cdAmount - todAmount);
     const availableStock = stock?.availableQuantity ?? 0;
     const probationaryQuantity = Math.max(0, payload.quantity - availableStock);
     const probationaryNote = probationaryQuantity > 0
@@ -1958,10 +1971,10 @@ export async function createSalesOrder(payload: {
     }
     await query(
       `INSERT INTO sales_orders (
-        id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+        id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
-      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, combinedNote, payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, cdTodRate, cdAmount, todAmount, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, combinedNote, payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
       client
     );
     if (probationaryQuantity > 0) {
@@ -2013,8 +2026,8 @@ export async function createSalesOrder(payload: {
   return getSnapshot();
 }
 
-export async function createSalesCart(payload: Omit<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "advancePayment"> & {
-  lines: Array<Pick<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "note">>;
+export async function createSalesCart(payload: Omit<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "cdTodRate" | "cdAmount" | "todAmount" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "advancePayment"> & {
+  lines: Array<Pick<Parameters<typeof createSalesOrder>[0], "productSku" | "quantity" | "rate" | "cdTodRate" | "cdAmount" | "todAmount" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "minimumAllowedRate" | "priceApprovalRequested" | "availableStockAtOrder" | "stockApprovalRequested" | "note">>;
   advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
   await ready;
@@ -3529,7 +3542,12 @@ export async function updateSalesOrder(orderId: string, payload: {
   if (!order) throw new Error("Sales order not found.");
   const settings = await mapSettings();
   const quantity = numberValue(order.quantity);
-  const totalAmount = quantity * payload.rate;
+  const rateChanged = Math.abs(payload.rate - numberValue(order.rate)) > 0.000001;
+  const taxableAmount = rateChanged ? quantity * payload.rate : numberValue(order.taxable_amount);
+  const gstAmount = rateChanged && stringValue(order.tax_mode) === "Exclusive"
+    ? taxableAmount * (numberValue(order.gst_rate) / 100)
+    : numberValue(order.gst_amount);
+  const totalAmount = Math.max(0, taxableAmount + gstAmount - numberValue(order.cd_amount) - numberValue(order.tod_amount));
   const deliveryCharge = payload.deliveryMode === "Delivery"
     ? ((order.cart_id ? numberValue(order.delivery_charge) : settings.deliveryCharge.amount))
     : 0;
@@ -3545,9 +3563,9 @@ export async function updateSalesOrder(orderId: string, payload: {
     }
     await query(
       `UPDATE sales_orders
-       SET rate = $1, total_amount = $2, payment_mode = $3, cash_timing = $4, delivery_mode = $5, delivery_charge = $6, note = $7, status = $8
-       WHERE id = $9`,
-      [payload.rate, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId],
+       SET rate = $1, taxable_amount = $2, gst_amount = $3, total_amount = $4, payment_mode = $5, cash_timing = $6, delivery_mode = $7, delivery_charge = $8, note = $9, status = $10
+       WHERE id = $11`,
+      [payload.rate, taxableAmount, gstAmount, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, payload.note.trim(), payload.status, orderId],
       client
     );
     if (payload.status === "Cancelled") {
@@ -3580,6 +3598,9 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
     warehouseId?: string;
     quantity: number;
     rate: number;
+    cdTodRate?: number;
+    cdAmount?: number;
+    todAmount?: number;
     taxableAmount?: number;
     gstRate?: SalesOrder["gstRate"];
     gstAmount?: number;
@@ -3649,7 +3670,11 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       const gstAmount = isNonGstBill ? 0 : line.gstAmount ?? 0;
       const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
       const taxableAmount = line.taxableAmount ?? (line.quantity * line.rate);
-      const totalAmount = taxableAmount + gstAmount;
+      const cdTodRate = line.cdTodRate ?? (existing && numberValue(existing.cd_tod_rate) > 0 ? numberValue(existing.cd_tod_rate) : line.rate);
+      const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
+      const cdAmount = Math.min(Math.max(0, line.cdAmount ?? (existing ? numberValue(existing.cd_amount) : 0)), maximumDiscount);
+      const todAmount = Math.min(Math.max(0, line.todAmount ?? (existing ? numberValue(existing.tod_amount) : 0)), maximumDiscount - cdAmount);
+      const totalAmount = Math.max(0, taxableAmount + gstAmount - cdAmount - todAmount);
       const deliveryCharge = payload.deliveryMode === "Delivery" ? (index === 0 ? settings.deliveryCharge.amount : 0) : 0;
 
       if (existing) {
@@ -3657,21 +3682,27 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
           `UPDATE sales_orders
            SET quantity = $1,
                rate = $2,
-               taxable_amount = $3,
-               gst_rate = $4,
-               gst_amount = $5,
-               tax_mode = $6,
-               total_amount = $7,
-               payment_mode = $8,
-               cash_timing = $9,
-               delivery_mode = $10,
-               delivery_charge = $11,
-               note = $12,
-               status = $13
-           WHERE id = $14`,
+               cd_tod_rate = $3,
+               cd_amount = $4,
+               tod_amount = $5,
+               taxable_amount = $6,
+               gst_rate = $7,
+               gst_amount = $8,
+               tax_mode = $9,
+               total_amount = $10,
+               payment_mode = $11,
+               cash_timing = $12,
+               delivery_mode = $13,
+               delivery_charge = $14,
+               note = $15,
+               status = $16
+           WHERE id = $17`,
           [
             line.quantity,
             line.rate,
+            cdTodRate,
+            cdAmount,
+            todAmount,
             taxableAmount,
             gstRate,
             gstAmount,
@@ -3690,9 +3721,9 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       } else {
         await query(
           `INSERT INTO sales_orders (
-            id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+            id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
             delivery_mode, delivery_charge, note, status, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
           [
             makeId("SO"),
             editable.publicOrderId,
@@ -3702,6 +3733,9 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
             warehouseId,
             line.quantity,
             line.rate,
+            cdTodRate,
+            cdAmount,
+            todAmount,
             taxableAmount,
             gstRate,
             gstAmount,
