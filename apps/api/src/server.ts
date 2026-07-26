@@ -1,4 +1,5 @@
 import cors from "cors";
+import compression from "compression";
 import express from "express";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -145,6 +146,7 @@ app.use(cors({
   },
   credentials: true
 }));
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: requestBodyLimit }));
 if (r2Enabled) {
   app.get("/uploads/:category/:fileName", async (req, res) => {

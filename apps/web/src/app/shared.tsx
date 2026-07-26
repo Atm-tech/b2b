@@ -19,8 +19,6 @@ UserRole
 } from "@aapoorti-b2b/domain";
 import { inferProductWeightKg } from "@aapoorti-b2b/domain";
 import axios from "axios";
-import { jsPDF } from "jspdf";
-import QRCode from "qrcode";
 import type { ChangeEvent } from "react";
 import { useEffect,useRef,useState } from "react";
 import { productDisplayLabel,productUnitWeightKg } from "../features/catalog/catalogUtils";
@@ -394,7 +392,8 @@ export function gstRateExportValue(gstRate: GstRate) {
   return gstRate === "NA" ? 0 : Number(gstRate || 0);
 }
 
-export function buildTablePdfBlob(title: string, subtitleLines: string[], headers: string[], rows: Array<Array<string | number>>) {
+export async function buildTablePdfBlob(title: string, subtitleLines: string[], headers: string[], rows: Array<Array<string | number>>) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -1036,7 +1035,8 @@ export async function shareInvoicePdfFile(fileName: string, blob: Blob, title: s
   }
 }
 
-export function buildInvoicePdfBlob(config: InvoicePdfConfig) {
+export async function buildInvoicePdfBlob(config: InvoicePdfConfig) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -1192,6 +1192,7 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const supplier = purchaseInvoiceCounterparty(snapshot, group);
+  const { default: QRCode } = await import("qrcode");
   const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Purchase", orderId: group.id }), { width: 180, margin: 1 });
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-purchase-tax-invoice.pdf`),
@@ -1235,6 +1236,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const customer = salesInvoiceCounterparty(snapshot, group);
   const totalWeight = salesInvoiceWeightKg(snapshot, group);
+  const { default: QRCode } = await import("qrcode");
   const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Sales", orderId: group.id }), { width: 180, margin: 1 });
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-sales-tax-invoice.pdf`),
@@ -1298,11 +1300,13 @@ export async function shareSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
 }
 
 export async function printPurchaseInvoice(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
+  const { default: QRCode } = await import("qrcode");
   const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Purchase", orderId: group.id }), { width: 180, margin: 1 });
   printInvoiceDocument(`PO ${group.id}`, purchaseInvoiceHtml(snapshot, group, qrDataUrl));
 }
 
 export async function printSalesInvoice(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const { default: QRCode } = await import("qrcode");
   const qrDataUrl = await QRCode.toDataURL(buildOrderStatusUrl({ side: "Sales", orderId: group.id }), { width: 180, margin: 1 });
   printInvoiceDocument(`SO ${group.id}`, salesInvoiceHtml(snapshot, group, qrDataUrl));
 }
@@ -1545,7 +1549,8 @@ export function dailySalesCollectorLabel(payment?: PaymentRecord, fallback = "Pe
   return payment.createdBy || fallback;
 }
 
-export function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
+export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const margin = 12;
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -1702,8 +1707,8 @@ export function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrd
   return doc.output("blob");
 }
 
-export function downloadDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
-  const blob = buildDailySalesReportPdf(snapshot, orders);
+export async function downloadDailySalesReportPdf(snapshot: AppSnapshot, orders: SalesOrder[]) {
+  const blob = await buildDailySalesReportPdf(snapshot, orders);
   downloadBlobFile(safePdfFileName(`daily-sales-report-${indiaDateKey()}.pdf`), blob);
 }
 
@@ -1733,8 +1738,8 @@ export function scopedDailySalesOrders(snapshot: AppSnapshot, currentUser: AppUs
   return snapshot.salesOrders;
 }
 
-export function downloadHomeDailySalesReportPdf(snapshot: AppSnapshot, currentUser: AppUser) {
-  downloadDailySalesReportPdf(snapshot, scopedDailySalesOrders(snapshot, currentUser));
+export async function downloadHomeDailySalesReportPdf(snapshot: AppSnapshot, currentUser: AppUser) {
+  await downloadDailySalesReportPdf(snapshot, scopedDailySalesOrders(snapshot, currentUser));
 }
 
 export function countGroupedOrders(orders: Array<{ id: string; cartId?: string }>) {
@@ -2337,9 +2342,9 @@ export function downloadReportCsv(filePrefix: string, headers: string[], rows: A
   downloadCsvFile(`${filePrefix}-${token}.csv`, headers, rows);
 }
 
-export function downloadReportPdf(title: string, filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string, extraSubtitle: string[] = []) {
+export async function downloadReportPdf(title: string, filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string, extraSubtitle: string[] = []) {
   const token = dateRangeFileToken(fromDate, toDate);
-  const pdf = buildTablePdfBlob(title, [`From: ${fromDate}`, `To: ${toDate}`, `Rows: ${rows.length}`, ...extraSubtitle], headers, rows);
+  const pdf = await buildTablePdfBlob(title, [`From: ${fromDate}`, `To: ${toDate}`, `Rows: ${rows.length}`, ...extraSubtitle], headers, rows);
   downloadBlobFile(safePdfFileName(`${filePrefix}-${token}.pdf`), pdf);
 }
 
@@ -2629,7 +2634,8 @@ export function orderStatusAccess(snapshot: AppSnapshot, user: AppUser, target: 
   return { authorized: false, reason: "Unauthorized access. Your role cannot open sales order status." };
 }
 
-export function buildOrderStatusPdf(summary: OrderStatusSummary) {
+export async function buildOrderStatusPdf(summary: OrderStatusSummary) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const margin = 14;
   const width = doc.internal.pageSize.getWidth() - margin * 2;
@@ -2703,11 +2709,14 @@ export function OrderQrCard({
 
   useEffect(() => {
     let active = true;
-    void QRCode.toDataURL(link, { width: 168, margin: 1 }).then((value: string) => {
-      if (active) setDataUrl(value);
-    }).catch(() => {
-      if (active) setDataUrl("");
-    });
+    void import("qrcode")
+      .then(({ default: QRCode }) => QRCode.toDataURL(link, { width: 168, margin: 1 }))
+      .then((value: string) => {
+        if (active) setDataUrl(value);
+      })
+      .catch(() => {
+        if (active) setDataUrl("");
+      });
     return () => {
       active = false;
     };
@@ -2786,7 +2795,7 @@ export function OrderStatusOverlay({
         </article>
         <div className="payment-card-actions top-gap">
           <button className="primary-button" type="button" onClick={() => onOpenAction(target)}>{summary.completed ? "Open completed page" : "Open current action"}</button>
-          <button className="ghost-button" type="button" onClick={() => downloadBlobFile(safePdfFileName(`${target.orderId}-status.pdf`), buildOrderStatusPdf(summary))}>Download status PDF</button>
+          <button className="ghost-button" type="button" onClick={() => void buildOrderStatusPdf(summary).then((blob) => downloadBlobFile(safePdfFileName(`${target.orderId}-status.pdf`), blob))}>Download status PDF</button>
         </div>
       </>}
     </div>

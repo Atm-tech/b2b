@@ -1111,9 +1111,27 @@ async function reconcileRetrospectiveDeliveryCashCollections(client?: DbClient) 
   }
 }
 
+let lastDeliveryCashReconciliationAt = 0;
+let deliveryCashReconciliation: Promise<void> | null = null;
+
+async function reconcileDeliveryCashCollectionsWhenDue() {
+  const reconciliationIntervalMs = 60_000;
+  if (Date.now() - lastDeliveryCashReconciliationAt < reconciliationIntervalMs) return;
+  if (!deliveryCashReconciliation) {
+    deliveryCashReconciliation = reconcileRetrospectiveDeliveryCashCollections()
+      .then(() => {
+        lastDeliveryCashReconciliationAt = Date.now();
+      })
+      .finally(() => {
+        deliveryCashReconciliation = null;
+      });
+  }
+  await deliveryCashReconciliation;
+}
+
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
-  await reconcileRetrospectiveDeliveryCashCollections();
+  await reconcileDeliveryCashCollectionsWhenDue();
   const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, probationarySales, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, goodsWarrants, notes, settings] = await Promise.all([
     mapUsers(),
     mapWarehouses(),

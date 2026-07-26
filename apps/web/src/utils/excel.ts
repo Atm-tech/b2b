@@ -1,5 +1,3 @@
-import * as XLSX from "xlsx";
-
 function downloadBlobFile(fileName: string, blob: Blob) {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const url = window.URL.createObjectURL(blob);
@@ -46,7 +44,8 @@ export function downloadExcelTextWorkbook(fileName: string, headers: string[], r
   downloadBlobFile(fileName, new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8;" }));
 }
 
-export function downloadExcelWorkbook(fileName: string, headers: string[], rows: string[][], sheetName = "Sheet1") {
+export async function downloadExcelWorkbook(fileName: string, headers: string[], rows: string[][], sheetName = "Sheet1") {
+  const XLSX = await import("xlsx");
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);

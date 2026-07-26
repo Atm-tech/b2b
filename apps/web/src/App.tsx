@@ -1,23 +1,13 @@
 import { ACTIVE_VIEW_KEY, API_BASE, COMPANY_GST_NUMBER, DELIVERY_MANAGER_WAREHOUSE_KEY, GstRateInput, InvoicePdfConfig, InvoicePdfRow, OrderQrCard, OrderQrTarget, OrderStatusAccess, OrderStatusOverlay, OrderStatusSummary, QrScanOverlay, SESSION_KEY, SIDEBAR_COLLAPSED_KEY, TOKEN_KEY, TaxModeInput, ViewKey, WORKSPACE_DRAFT_KEY, addOneMonthForVoucherPreview, api, assignedDeliveryUsers, browserOriginFallback, buildDailySalesReportPdf, buildInvoicePdfBlob, buildOrderQrToken, buildOrderStatusPdf, buildOrderStatusSummary, buildOrderStatusUrl, buildPurchaseInvoicePdf, buildSalesInvoicePdf, buildTablePdfBlob, calculateTaxPreview, clearOrderQrTargetFromLocation, clearSessionState, collectionAssignment, collectionVisibleToUser, configuredApiBase, consignmentExportHeaders, consignmentExportRows, copyTextToClipboard, countGroupedOrders, dailySalesCollectorLabel, dateKeyInRange, dateRangeFileToken, deliveryConsignmentStatusLabel, deliveryDocketStatusLabel, deliverySideForUser, deliveryTaskExportHeaders, deliveryTaskExportRows, deliveryTaskStatusLabel, deliveryTasksForUser, displayLabel, displayOrderNote, distanceKmBetween, docketExportHeaders, docketExportRows, downloadBlobFile, downloadCsvFile, downloadDailySalesReportPdf, downloadDataUrlFile, downloadHomeDailySalesReportPdf, downloadPurchaseInvoicePdf, downloadReportCsv, downloadReportPdf, downloadSalesInvoicePdf, escapeHtml, escapeXml, findPurchaseOrderByPublicId, findSalesOrderByPublicId, formatChequeAmountWords, formatCurrencyInr, formatDateIst, formatDateTimeIst, formatLongDateIst, formatMoney, formatShortDate, formatShortNumber, formatWeightKg, getVisibleViews, getVisibleViewsForMode, goodsWarrantOutlets, groupNewestCreatedAt, groupOldestCreatedAt, groupPurchaseOrders, groupPurchaseRows, groupSalesCashTiming, groupSalesOrders, groupSalesRows, gstBillTypeLabel, gstRateExportValue, homeTaskCards, inboundOpsExportHeaders, inboundOpsExportRows, indiaDateKey, indiaYesterdayDateKey, invoiceValue, isDeliveryExecutive, isDeliveryTaskPending, isInboundDeliveryUser, isOpenPurchaseOrder, isOpenSalesOrder, isOutboundDeliveryUser, isUserAssignedToDelivery, isWarehouseScoped, labels, latestPurchasePayment, latestSalesPayment, mapsDirectionsUrl, nearestNeighborOrder, normalizeDateRange, numberToIndianWords, numberToWordsUnder1000, openChequePrintWindow, orderPublicId, orderQrShortLabel, orderStatusAccess, outboundOpsExportHeaders, outboundOpsExportRows, parseOrderQrValue, preferredSimpleMode, preferredWarehouseId, printInvoiceDocument, printPurchaseInvoice, printSalesInvoice, prioritizeWarehouseIds, productNameBySku, productNamesSummary, purchaseCartDraftSignature, purchaseCartEditState, purchaseCashDeliveryTask, purchaseDeliveryStatus, purchaseDeliveryTask, purchaseInvoiceCounterparty, purchaseInvoiceHtml, purchaseInvoiceWhatsappText, purchaseLedgerByOrder, purchaseNeedsInternalPickup, purchaseOrderExportHeaders, purchaseOrderExportRows, purchaseOrderPublicTotal, purchasePaymentExportHeaders, purchasePaymentExportRows, purchasePaymentStatus, purchasePaymentsByOrder, purchaseWarehouseStatus, purchaseWorkflowStatus, readOrderQrTargetFromLocation, readStoredJson, returnReasons, roleViews, safeDateToken, safePdfFileName, salesCollectionEligibleForAgent, salesCollectionExportHeaders, salesCollectionExportRows, salesCollectionHandledByDelivery, salesDeliveryStatus, salesDeliveryTask, salesFulfillmentStatus, salesInvoiceCounterparty, salesInvoiceHtml, salesInvoiceWeightKg, salesInvoiceWhatsappText, salesLineCdAmount, salesLineTodAmount, salesLineUnitWeightKg, salesLineWeightKg, salesOrderDraftSignature, salesOrderEditState, salesOrderExportHeaders, salesOrderExportRows, salesOrderPublicTotal, salesPaymentStatus, salesPaymentsByOrder, salesStatusLabel, scopedDailySalesOrders, shareInvoicePdfFile, sharePurchaseInvoicePdf, shareSalesInvoicePdf, shouldForceSimpleMode, simpleRoleViews, snapshotForWarehouse, snapshotForWarehouseScope, sortCounterpartiesAlphabetically, statusPillClass, subtractOneDayFromNextMonth, toCsvValue, userHasAnyRole, userRoleList, userWarehouseScope, workspaceStorageKey, writeStoredJson } from "./app/shared";
-import { CatalogDisplayProduct, buildCatalogDisplayProducts, catalogCardTitle, catalogVariantOptionLabel, normalizeCatalogFamilyLabel, normalizeStaplesWeightLabel, productDisplayLabel, productUnitWeightKg, staplesVariantSortWeight } from "./features/catalog/catalogUtils";
-import { CartLine, CatalogOrderView, CatalogOrderViewProps } from "./features/catalog/CatalogOrderView";
-import { PurchaseCartEditor, PurchaserPurchaseSummary, PurchaserPurchaseWorkspace } from "./features/purchases/PurchaseViews";
-import { SalesOrderEditor, SalesOrderSummary } from "./features/sales/SalesOrderViews";
-import { AccountsPaymentsView, PurchaserPaymentsView, SalesPaymentsView } from "./features/payments/PaymentViews";
-import { DeliveryJobsView, DeliveryManagerHome, WarehouseDeliveryBoard, WarehouseOperationsView, WarehouseOperationsViewV2 } from "./features/operations/OperationsViews";
-import { AccountsLedgerView, AccountsLedgerWorkspace, AccountsOverview, AccountsOverviewLegacy, BootLoader, Overview } from "./features/accounts/AccountViews";
-import { AnalystInventoryView, AnalystPurchaseView, AnalystSalesView, GoodsWarrantView, PartyVitalsList, ProductAdminView, ProductFormState, ReturnsWorkspace, StandaloneExcelMaker, isStaplesNonBrandedCategory, nonBrandedStaplesWeightOptions, parseCsvRows } from "./features/admin/AdminAndSupportViews";
+import type { CatalogOrderViewProps } from "./features/catalog/CatalogOrderView";
 import { renderOptions } from "./app/formOptions";
 import axios from "axios";
-import { jsPDF } from "jspdf";
-import QRCode from "qrcode";
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { SidebarVectorIcon } from "./components/navigation";
 import { CollapsiblePanel, DataTable, LabelWithBadge, MetricCard, Panel, PendingBadge, TwoCol } from "./components/ui";
 import appLogo from "./assets/group60.svg";
-import { downloadExcelTextWorkbook, downloadExcelWorkbook } from "./utils/excel";
 import type {
   AppSnapshot,
   AppUser,
@@ -42,6 +32,47 @@ import type {
   UserRole
 } from "@aapoorti-b2b/domain";
 import { inferProductWeightKg, productWeightSearchText, userRoles } from "@aapoorti-b2b/domain";
+
+const CatalogOrderView = lazy(() => import("./features/catalog/CatalogOrderView").then((module) => ({ default: module.CatalogOrderView })));
+const PurchaserPurchaseSummary = lazy(() => import("./features/purchases/PurchaseViews").then((module) => ({ default: module.PurchaserPurchaseSummary })));
+const PurchaserPurchaseWorkspace = lazy(() => import("./features/purchases/PurchaseViews").then((module) => ({ default: module.PurchaserPurchaseWorkspace })));
+const SalesOrderEditor = lazy(() => import("./features/sales/SalesOrderViews").then((module) => ({ default: module.SalesOrderEditor })));
+const SalesOrderSummary = lazy(() => import("./features/sales/SalesOrderViews").then((module) => ({ default: module.SalesOrderSummary })));
+const AccountsPaymentsView = lazy(() => import("./features/payments/PaymentViews").then((module) => ({ default: module.AccountsPaymentsView })));
+const PurchaserPaymentsView = lazy(() => import("./features/payments/PaymentViews").then((module) => ({ default: module.PurchaserPaymentsView })));
+const SalesPaymentsView = lazy(() => import("./features/payments/PaymentViews").then((module) => ({ default: module.SalesPaymentsView })));
+const DeliveryJobsView = lazy(() => import("./features/operations/OperationsViews").then((module) => ({ default: module.DeliveryJobsView })));
+const DeliveryManagerHome = lazy(() => import("./features/operations/OperationsViews").then((module) => ({ default: module.DeliveryManagerHome })));
+const WarehouseDeliveryBoard = lazy(() => import("./features/operations/OperationsViews").then((module) => ({ default: module.WarehouseDeliveryBoard })));
+const WarehouseOperationsViewV2 = lazy(() => import("./features/operations/OperationsViews").then((module) => ({ default: module.WarehouseOperationsViewV2 })));
+const AccountsLedgerWorkspace = lazy(() => import("./features/accounts/AccountViews").then((module) => ({ default: module.AccountsLedgerWorkspace })));
+const Overview = lazy(() => import("./features/accounts/AccountViews").then((module) => ({ default: module.Overview })));
+const AnalystInventoryView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.AnalystInventoryView })));
+const AnalystPurchaseView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.AnalystPurchaseView })));
+const AnalystSalesView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.AnalystSalesView })));
+const GoodsWarrantView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.GoodsWarrantView })));
+const PartyVitalsList = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.PartyVitalsList })));
+const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ProductAdminView })));
+const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
+const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
+
+function BootLoader() {
+  return (
+    <main className="boot-loader-shell">
+      <header className="boot-loader-header glass-surface">
+        <div className="topbar-brand-block"><span className="small-label">Aapoorti B2B</span><strong>Workspace Restore</strong></div>
+        <div className="topbar-logo-orb boot-topbar-logo"><img src={appLogo} alt="Aapoorti" className="topbar-logo-image" /></div>
+        <div className="topbar-side-slot"><span className="boot-loader-chip">Syncing</span></div>
+      </header>
+      <section className="boot-loader-card">
+        <div className="boot-loader-mark" aria-hidden="true"><span /><span /><span /></div>
+        <div className="boot-loader-copy"><span className="eyebrow">Aapoorti B2B</span><h1>Restoring workspace</h1><p>Loading your module, live orders, parties, stock, and delivery state.</p></div>
+        <div className="boot-loader-track"><span /></div>
+      </section>
+      <footer className="boot-loader-footer">Powered by OPAS</footer>
+    </main>
+  );
+}
 
 function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -187,16 +218,19 @@ function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    writeStoredJson(workspaceStorageKey(currentUser.id, "app"), {
-      activeView,
-      simpleMode,
-      deliveryManagerScreen,
-      deliveryManagerWarehouseId,
-      purchaseForm,
-      salesForm,
-      purchaseUpdateOrderId,
-      salesUpdateOrderId
-    });
+    const timeout = window.setTimeout(() => {
+      writeStoredJson(workspaceStorageKey(currentUser.id, "app"), {
+        activeView,
+        simpleMode,
+        deliveryManagerScreen,
+        deliveryManagerWarehouseId,
+        purchaseForm,
+        salesForm,
+        purchaseUpdateOrderId,
+        salesUpdateOrderId
+      });
+    }, 150);
+    return () => window.clearTimeout(timeout);
   }, [currentUser, activeView, simpleMode, deliveryManagerScreen, deliveryManagerWarehouseId, purchaseForm, salesForm, purchaseUpdateOrderId, salesUpdateOrderId]);
 
   useEffect(() => {
@@ -1160,6 +1194,7 @@ function App() {
           </nav>
         </aside> : null}
         <div className="content-shell">
+          <Suspense fallback={<div className="panel"><span className="eyebrow">Loading</span><p>Opening workspace…</p></div>}>
           {!effectiveSimpleMode && activeView === "Overview" ? <section className={isAccountsUser ? "metric-grid metric-collage-grid metric-collage-grid-accounts" : "metric-grid metric-collage-grid"}>
             {topMetricCards.map((card) => (
               <MetricCard
@@ -1429,6 +1464,7 @@ function App() {
           ) : null}
           {activeView === "Settings" ? <Panel title="Admin Settings" eyebrow="Payment methods and delivery"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/settings", snapshot.settings, "Settings updated."); }}>{snapshot.settings.paymentMethods.map((item, index) => <label key={item.code}>{item.code}<div className="settings-line"><input type="checkbox" checked={item.active} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, active: e.target.checked } : method) } }) : current)} />Active<input type="checkbox" checked={item.allowsCashTiming} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, paymentMethods: current.settings.paymentMethods.map((method, methodIndex) => methodIndex === index ? { ...method, allowsCashTiming: e.target.checked } : method) } }) : current)} />Cash timing</div></label>)}<label>Delivery model<select value={snapshot.settings.deliveryCharge.model} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, model: e.target.value as "Fixed" | "Per Km" } } }) : current)}><option>Fixed</option><option>Per Km</option></select></label><label>Delivery amount<input type="number" step="any" value={snapshot.settings.deliveryCharge.amount} onChange={(e) => setSnapshot((current) => current ? ({ ...current, settings: { ...current.settings, deliveryCharge: { ...current.settings.deliveryCharge, amount: Number(e.target.value) } } }) : current)} /></label><button className="primary-button" type="submit">Save settings</button></form></Panel> : null}
           {activeView === "Notes" ? (isAdminUser ? <Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel> : <TwoCol left={<Panel title="Add Note" eyebrow="Authorized viewers"><form className="form-grid" onSubmit={(e) => { e.preventDefault(); void post("/notes", noteForm, "Note added.", () => setNoteForm({ entityType: "Purchase Order", entityId: "", note: "", visibility: "Operational" })); }}><label>Entity<select value={noteForm.entityType} onChange={(e) => setNoteForm((c) => ({ ...c, entityType: e.target.value as NoteRecord["entityType"] }))}><option>Purchase Order</option><option>Receipt</option><option>Sales Order</option><option>Payment</option><option>Delivery</option><option>Inventory</option><option>Party</option></select></label><label>ID<input value={noteForm.entityId} onChange={(e) => setNoteForm((c) => ({ ...c, entityId: e.target.value }))} /></label><label>Visibility<select value={noteForm.visibility} onChange={(e) => setNoteForm((c) => ({ ...c, visibility: e.target.value as NoteRecord["visibility"] }))}><option>Restricted</option><option>Operational</option><option>Management</option></select></label><label className="wide-field">Note<textarea value={noteForm.note} onChange={(e) => setNoteForm((c) => ({ ...c, note: e.target.value }))} /></label><button className="primary-button" type="submit">Add note</button></form></Panel>} right={<Panel title="Notes Feed" eyebrow="Audit trail"><DataTable headers={["Entity","ID","Note","By","Visibility"]} rows={snapshot.notes.map((n) => [n.entityType, n.entityId, n.note, n.createdBy, n.visibility])} /></Panel>} />) : null}
+          </Suspense>
         </div>
       </section>
       {scanOverlayOpen ? <QrScanOverlay onClose={() => setScanOverlayOpen(false)} onScan={handleQrScan} /> : null}
