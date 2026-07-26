@@ -1,6 +1,7 @@
 import path from "node:path";
 import XLSX from "xlsx";
 import { inferProductWeightKg, type ProductMaster, type ProductSlab } from "@aapoorti-b2b/domain";
+import { classifyProductGst } from "./product-gst.js";
 
 type ImportRow = Record<string, string>;
 type ProductTaxonomy = Pick<ProductMaster, "division" | "department" | "section" | "category" | "subCategory">;
@@ -55,6 +56,11 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       .map((item) => item.trim())
       .filter(Boolean);
     const parsedWeightKg = parseProductWeightKg(row);
+    const gstClassification = classifyProductGst({
+      sku: barcode,
+      name,
+      hsnCode: readMapped(row, ["HSN CODE"])
+    });
 
     products.push({
       sku: requiredString(barcode || makeSkuFromName(name), "SKU"),
@@ -65,7 +71,7 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       category: taxonomy.category,
       subCategory: taxonomy.subCategory,
       unit: requiredString(unit, "Unit"),
-      defaultGstRate: 0,
+      defaultGstRate: gstClassification?.rate ?? 0,
       defaultTaxMode: "Exclusive",
       defaultWeightKg: parsedWeightKg,
       toleranceKg: requiredNumber(readMapped(row, ["toleranceKg", "TOLERANCE_KG"], "0"), "Tolerance kg"),

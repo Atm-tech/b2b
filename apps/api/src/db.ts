@@ -180,6 +180,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS gst_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cart_id TEXT;
+    ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS billing_type TEXT NOT NULL DEFAULT 'B2C';
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_kind TEXT NOT NULL DEFAULT 'Order';
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS counterparty_id TEXT;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS counterparty_name TEXT;
@@ -576,6 +577,7 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     cartId: row.cart_id ? stringValue(row.cart_id) : undefined,
     shopId: stringValue(row.shop_id),
     shopName: stringValue(row.shop_name),
+    billingType: (stringValue(row.billing_type) === "B2B" ? "B2B" : "B2C") as SalesOrder["billingType"],
     productSku: stringValue(row.product_sku),
     salesmanId: numberValue(row.salesman_id),
     salesmanName: stringValue(row.salesman_name),
@@ -1620,7 +1622,7 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       payload.subCategory.trim(),
       payload.unit.trim(),
       payload.defaultGstRate === "NA" ? 0 : payload.defaultGstRate,
-      payload.defaultTaxMode,
+      payload.defaultTaxMode === "NA" ? "Exclusive" : payload.defaultTaxMode,
       defaultWeightKg,
       payload.toleranceKg,
       payload.tolerancePercent,
@@ -1718,7 +1720,7 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
 
 function validateCounterpartyIdentity(name: string, gstNumber: string, bankName: string, bankAccountNumber: string, ifscCode: string) {
   if (!name) throw new Error("Name is required.");
-  if (!gstNumber) throw new Error("GST number is required. Use N/A for non-GST parties.");
+  if (!gstNumber) throw new Error("GST number is required. Use N/A for unregistered parties.");
   if (!bankName) throw new Error("Bank name is required. Use N/A when not available.");
   if (!bankAccountNumber) throw new Error("Bank account number is required. Use N/A when not available.");
   if (!ifscCode) throw new Error("IFSC code is required. Use N/A when not available.");
@@ -1726,6 +1728,10 @@ function validateCounterpartyIdentity(name: string, gstNumber: string, bankName:
 
 function isNaValue(value: string) {
   return value.trim().toUpperCase() === "N/A";
+}
+
+function isValidGstin(value: string) {
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i.test(value.trim());
 }
 
 async function ensureCounterpartyUnique(type: CounterpartyType, name: string, gstNumber: string, bankAccountNumber: string, excludeId?: string) {
@@ -1812,10 +1818,9 @@ export async function createPurchaseOrder(payload: {
   if (!product) throw new Error("Product not found.");
   const baseAmount = payload.quantityOrdered * payload.rate;
   const taxableAmount = payload.taxableAmount ?? baseAmount;
-  const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
-  const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
-  const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
-  const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
+  const gstRate = payload.gstRate === "NA" ? 0 : payload.gstRate ?? 0;
+  const gstAmount = payload.gstAmount ?? 0;
+  const taxMode = payload.taxMode === "NA" ? "Exclusive" : payload.taxMode || "Exclusive";
   const totalAmount = taxableAmount + gstAmount;
   const expectedWeightKg = payload.quantityOrdered * numberValue(product.default_weight_kg);
   const id = makeId(payload.lineIdPrefix || "PO");
@@ -1939,6 +1944,7 @@ export async function createSalesOrder(payload: {
   applyDeliveryCharge?: boolean;
   allowProbationarySale?: boolean;
   shopId: string;
+  billingType: SalesOrder["billingType"];
   productSku: string;
   warehouseId: string;
   quantity: number;
@@ -1972,16 +1978,20 @@ export async function createSalesOrder(payload: {
       await updateCounterpartyLocation(payload.shopId, payload.location, client);
     }
     const product = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [payload.productSku], client);
+    const customer = await one<Record<string, unknown>>("SELECT gst_number FROM counterparties WHERE id = $1 AND type = 'Shop'", [payload.shopId], client);
+    if (!customer) throw new Error("Customer not found.");
+    if (payload.billingType === "B2B" && !isValidGstin(stringValue(customer.gst_number))) {
+      throw new Error("A valid customer GSTIN is required before creating a B2B bill.");
+    }
     const stock = buildStockSummary(await mapWarehouses(client), await mapProducts(client), await mapInventoryLots(client)).find(
       (item) => item.warehouseId === payload.warehouseId && item.productSku === payload.productSku
     );
     const deliveryCharge = payload.deliveryMode === "Delivery" && payload.applyDeliveryCharge !== false ? settings.deliveryCharge.amount : 0;
     const baseAmount = payload.quantity * payload.rate;
     const taxableAmount = payload.taxableAmount ?? baseAmount;
-    const isNonGstBill = payload.gstRate === "NA" || payload.taxMode === "NA";
-    const gstRate = isNonGstBill ? 0 : payload.gstRate ?? 0;
-    const gstAmount = isNonGstBill ? 0 : payload.gstAmount ?? 0;
-    const taxMode = isNonGstBill ? "NA" : payload.taxMode || "Exclusive";
+    const gstRate = payload.gstRate === "NA" ? 0 : payload.gstRate ?? 0;
+    const gstAmount = payload.gstAmount ?? 0;
+    const taxMode = payload.taxMode === "NA" ? "Exclusive" : payload.taxMode || "Exclusive";
     const cdTodRate = payload.cdTodRate ?? payload.rate;
     const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
     const cdAmount = Math.min(Math.max(0, payload.cdAmount ?? 0), maximumDiscount);
@@ -1998,10 +2008,10 @@ export async function createSalesOrder(payload: {
     }
     await query(
       `INSERT INTO sales_orders (
-        id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+        id, cart_id, shop_id, billing_type, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
         delivery_mode, delivery_charge, note, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
-      [id, payload.cartId || null, payload.shopId, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, cdTodRate, cdAmount, todAmount, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, combinedNote, payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+      [id, payload.cartId || null, payload.shopId, payload.billingType, payload.productSku, currentUser.id, payload.warehouseId, payload.quantity, payload.rate, cdTodRate, cdAmount, todAmount, taxableAmount, gstRate, gstAmount, taxMode, totalAmount, payload.paymentMode, payload.cashTiming || null, payload.deliveryMode, deliveryCharge, combinedNote, payload.deliveryMode === "Self Collection" ? "Self Pickup" : "Booked", createdAt],
       client
     );
     if (probationaryQuantity > 0) {
@@ -3430,10 +3440,9 @@ export async function updatePurchaseOrder(orderId: string, payload: {
       }
       const product = await one<Record<string, unknown>>("SELECT default_weight_kg FROM products WHERE sku = $1", [productSku], client);
       if (!product) throw new Error("Product not found.");
-      const isNonGstBill = line.gstRate === "NA" || line.taxMode === "NA";
-      const gstRate = isNonGstBill ? 0 : line.gstRate ?? 0;
-      const gstAmount = isNonGstBill ? 0 : line.gstAmount ?? 0;
-      const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
+      const gstRate = line.gstRate === "NA" ? 0 : line.gstRate ?? 0;
+      const gstAmount = line.gstAmount ?? 0;
+      const taxMode = line.taxMode === "NA" ? "Exclusive" : line.taxMode || "Exclusive";
       const taxableAmount = line.taxableAmount ?? (line.quantityOrdered * line.rate);
       const totalAmount = taxableAmount + gstAmount;
       const expectedWeightKg = line.quantityOrdered * numberValue(product.default_weight_kg);
@@ -3692,10 +3701,9 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       const existing = line.id ? lineMap.get(line.id) : undefined;
       const warehouseId = (existing ? stringValue(existing.warehouse_id) : line.warehouseId?.trim()) || stringValue(firstLine.warehouse_id);
       const productSku = existing ? stringValue(existing.product_sku) : line.productSku.trim();
-      const isNonGstBill = line.gstRate === "NA" || line.taxMode === "NA";
-      const gstRate = isNonGstBill ? 0 : line.gstRate ?? 0;
-      const gstAmount = isNonGstBill ? 0 : line.gstAmount ?? 0;
-      const taxMode = isNonGstBill ? "NA" : line.taxMode || "Exclusive";
+      const gstRate = line.gstRate === "NA" ? 0 : line.gstRate ?? 0;
+      const gstAmount = line.gstAmount ?? 0;
+      const taxMode = line.taxMode === "NA" ? "Exclusive" : line.taxMode || "Exclusive";
       const taxableAmount = line.taxableAmount ?? (line.quantity * line.rate);
       const cdTodRate = line.cdTodRate ?? (existing && numberValue(existing.cd_tod_rate) > 0 ? numberValue(existing.cd_tod_rate) : line.rate);
       const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
@@ -3748,13 +3756,14 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       } else {
         await query(
           `INSERT INTO sales_orders (
-            id, cart_id, shop_id, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
+            id, cart_id, shop_id, billing_type, product_sku, salesman_id, warehouse_id, quantity, rate, cd_tod_rate, cd_amount, tod_amount, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, payment_mode, cash_timing,
             delivery_mode, delivery_charge, note, status, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
           [
             makeId("SO"),
             editable.publicOrderId,
             stringValue(firstLine.shop_id),
+            stringValue(firstLine.billing_type) === "B2B" ? "B2B" : "B2C",
             productSku,
             currentUser.id,
             warehouseId,

@@ -498,6 +498,7 @@ app.post("/sales-orders", async (req, res) => wrap(res, async () => {
     {
       allowProbationarySale: Boolean(req.body?.allowProbationarySale),
       shopId: requiredString(req.body?.shopId, "Shop"),
+      billingType: (optionalString(req.body?.billingType) || "").toUpperCase() === "B2B" ? "B2B" : "B2C",
       productSku: requiredString(req.body?.productSku, "Product"),
       warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
       quantity: requiredNumber(req.body?.quantity, "Quantity"),
@@ -547,6 +548,7 @@ app.post("/sales-orders/cart", async (req, res) => wrap(res, async () => {
   return createSalesCart({
     allowProbationarySale: Boolean(req.body?.allowProbationarySale),
     shopId: requiredString(req.body?.shopId, "Shop"),
+    billingType: (optionalString(req.body?.billingType) || "").toUpperCase() === "B2B" ? "B2B" : "B2C",
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,

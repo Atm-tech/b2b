@@ -210,12 +210,14 @@ export type PurchaseOrder = {
 };
 
 export type SalesStatus = "Draft" | "Booked" | "Ready for Dispatch" | "Pending Pickup" | "Out for Delivery" | "Self Pickup" | "Delivered" | "Closed" | "Cancelled";
+export type SalesBillingType = "B2B" | "B2C";
 
 export type SalesOrder = {
   id: string;
   cartId?: string;
   shopId: string;
   shopName: string;
+  billingType: SalesBillingType;
   productSku: string;
   salesmanId: number;
   salesmanName: string;

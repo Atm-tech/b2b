@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   id TEXT PRIMARY KEY,
   cart_id TEXT,
   shop_id TEXT NOT NULL,
+  billing_type TEXT NOT NULL DEFAULT 'B2C',
   product_sku TEXT NOT NULL,
   salesman_id BIGINT NOT NULL,
   warehouse_id TEXT NOT NULL,

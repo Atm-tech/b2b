@@ -7,7 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "import:workbook": "tsx src/import-workbook.ts",
-    "db:clean": "tsx src/clean-database.ts"
+    "db:clean": "tsx src/clean-database.ts",
+    "gst:sync": "tsx src/sync-product-gst.ts"
   },
   "dependencies": {
     "@aapoorti-b2b/domain": "0.1.0",
