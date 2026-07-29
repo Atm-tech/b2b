@@ -17,6 +17,6 @@
     "vercel-build": "npm run build -w packages/domain && npm run build -w apps/web"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^10.0.4"
   }
 }
