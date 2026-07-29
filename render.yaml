@@ -3,9 +3,19 @@ services:
     name: aapoorti-api
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run build -w packages/domain && npm run build -w apps/api
+    region: ohio
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --prefer-offline --no-audit && npm run build -w packages/domain && npm run build -w apps/api
     startCommand: npm run start -w apps/api
     healthCheckPath: /health
+    buildFilter:
+      paths:
+        - apps/api/**
+        - packages/domain/**
+        - postgres/**
+        - package.json
+        - package-lock.json
+        - render.yaml
     disk:
       name: uploads
       mountPath: /var/data
@@ -41,8 +51,16 @@ services:
   - type: web
     name: aapoorti-web
     runtime: static
-    buildCommand: npm install && npm run build -w packages/domain && npm run build -w apps/web
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --prefer-offline --no-audit && npm run build -w packages/domain && npm run build -w apps/web
     staticPublishPath: ./apps/web/dist
+    buildFilter:
+      paths:
+        - apps/web/**
+        - packages/domain/**
+        - package.json
+        - package-lock.json
+        - render.yaml
     envVars:
       - key: SKIP_INSTALL_DEPS
         value: "true"
