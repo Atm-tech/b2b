@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   cash_timing TEXT,
   note TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT purchase_orders_total_matches_tax
+    CHECK (ABS(total_amount - ROUND((taxable_amount + gst_amount)::numeric, 2)::double precision) <= 0.009)
 );
 
 CREATE TABLE IF NOT EXISTS sales_orders (
@@ -125,7 +127,17 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   delivery_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
   note TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT sales_orders_total_matches_discounts
+    CHECK (ABS(total_amount - ROUND(GREATEST(0, taxable_amount + gst_amount - cd_amount - tod_amount)::numeric, 2)::double precision) <= 0.009),
+  CONSTRAINT sales_orders_discount_matches_net_rate
+    CHECK (
+      cd_tod_rate >= 0 AND cd_tod_rate <= rate AND cd_amount >= 0 AND tod_amount >= 0
+      AND (
+        (cd_amount + tod_amount <= 0.01 AND (cd_tod_rate = 0 OR ABS(cd_tod_rate - rate) <= 0.0001))
+        OR ABS((cd_amount + tod_amount) - ((rate - cd_tod_rate) * quantity)) <= 0.021
+      )
+    )
 );
 
 CREATE TABLE IF NOT EXISTS purchase_returns (

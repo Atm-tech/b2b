@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
-import { inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
+import { calculateSalesAmounts, calculateTaxAmounts, inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
 import type {
   AppSnapshot,
   AppUser,
@@ -97,7 +97,88 @@ async function initializeDatabase() {
   `);
   await pool.query(indexSql);
   await seedDatabase();
+  await reconcileFinancialTotals();
   await backfillProductWeights();
+}
+
+async function reconcileFinancialTotals() {
+  await pool.query(`
+    -- A zero legacy CD/TOD rate meant "not supplied". If a client also created a
+    -- full-value discount, preserve the billed amount and remove that invalid discount.
+    UPDATE sales_orders
+    SET cd_tod_rate = rate, cd_amount = 0, tod_amount = 0
+    WHERE cd_tod_rate <= 0
+      AND cd_amount + tod_amount > 0
+      AND ABS((cd_amount + tod_amount) - (taxable_amount + gst_amount)) <= 0.02;
+
+    UPDATE purchase_orders
+    SET total_amount = ROUND((taxable_amount + gst_amount)::numeric, 2)::double precision
+    WHERE ABS(total_amount - ROUND((taxable_amount + gst_amount)::numeric, 2)::double precision) > 0.009;
+
+    UPDATE sales_orders
+    SET total_amount = ROUND(GREATEST(0, taxable_amount + gst_amount - cd_amount - tod_amount)::numeric, 2)::double precision
+    WHERE ABS(total_amount - ROUND(GREATEST(0, taxable_amount + gst_amount - cd_amount - tod_amount)::numeric, 2)::double precision) > 0.009;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'purchase_orders_total_matches_tax') THEN
+        ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_total_matches_tax
+          CHECK (ABS(total_amount - ROUND((taxable_amount + gst_amount)::numeric, 2)::double precision) <= 0.009) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sales_orders_total_matches_discounts') THEN
+        ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_total_matches_discounts
+          CHECK (ABS(total_amount - ROUND(GREATEST(0, taxable_amount + gst_amount - cd_amount - tod_amount)::numeric, 2)::double precision) <= 0.009) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sales_orders_discount_matches_net_rate') THEN
+        ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_discount_matches_net_rate
+          CHECK (
+            cd_tod_rate >= 0 AND cd_tod_rate <= rate AND cd_amount >= 0 AND tod_amount >= 0
+            AND (
+              (cd_amount + tod_amount <= 0.01 AND (cd_tod_rate = 0 OR ABS(cd_tod_rate - rate) <= 0.0001))
+              OR ABS((cd_amount + tod_amount) - ((rate - cd_tod_rate) * quantity)) <= 0.021
+            )
+          ) NOT VALID;
+      END IF;
+    END $$;
+
+    ALTER TABLE purchase_orders VALIDATE CONSTRAINT purchase_orders_total_matches_tax;
+    ALTER TABLE sales_orders VALIDATE CONSTRAINT sales_orders_total_matches_discounts;
+    ALTER TABLE sales_orders VALIDATE CONSTRAINT sales_orders_discount_matches_net_rate;
+
+    WITH purchase_totals AS (
+      SELECT COALESCE(cart_id, id) AS order_id,
+             CASE WHEN BOOL_AND(status = 'Cancelled') THEN 0 ELSE SUM(total_amount) END AS goods_value
+      FROM purchase_orders
+      GROUP BY COALESCE(cart_id, id)
+    )
+    UPDATE ledger_entries ledger
+    SET goods_value = totals.goods_value,
+        pending_amount = totals.goods_value - ledger.paid_amount,
+        status = CASE
+          WHEN totals.goods_value - ledger.paid_amount <= 0 THEN 'Settled'
+          WHEN ledger.paid_amount > 0 THEN 'Partial'
+          ELSE 'Pending'
+        END
+    FROM purchase_totals totals
+    WHERE ledger.side = 'Purchase' AND ledger.linked_order_id = totals.order_id;
+
+    WITH sales_totals AS (
+      SELECT COALESCE(cart_id, id) AS order_id,
+             CASE WHEN BOOL_AND(status = 'Cancelled') THEN 0 ELSE SUM(total_amount + delivery_charge) END AS goods_value
+      FROM sales_orders
+      GROUP BY COALESCE(cart_id, id)
+    )
+    UPDATE ledger_entries ledger
+    SET goods_value = totals.goods_value,
+        pending_amount = totals.goods_value - ledger.paid_amount,
+        status = CASE
+          WHEN totals.goods_value - ledger.paid_amount <= 0 THEN 'Settled'
+          WHEN ledger.paid_amount > 0 THEN 'Partial'
+          ELSE 'Pending'
+        END
+    FROM sales_totals totals
+    WHERE ledger.side = 'Sales' AND ledger.linked_order_id = totals.order_id;
+  `);
 }
 
 async function backfillProductWeights() {
@@ -124,6 +205,14 @@ async function backfillProductWeights() {
 
 async function ensureCompatibilityColumns() {
   await pool.query(`
+    -- Existing deployments may already have these checks while still containing
+    -- legacy rows that need the compatibility backfills below. PostgreSQL enforces
+    -- even NOT VALID checks on rows touched by ALTER/UPDATE, so repair the data
+    -- before reconcileFinancialTotals recreates and validates the constraints.
+    ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_total_matches_tax;
+    ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_total_matches_discounts;
+    ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_discount_matches_net_rate;
+
     ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
@@ -265,9 +354,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending';
     ALTER TABLE probationary_sales ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMPTZ;
     UPDATE purchase_orders SET taxable_amount = quantity_ordered * rate WHERE taxable_amount = 0;
-    UPDATE purchase_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     UPDATE sales_orders SET taxable_amount = quantity * rate WHERE taxable_amount = 0;
-    UPDATE sales_orders SET total_amount = taxable_amount + gst_amount WHERE taxable_amount > 0 AND gst_amount > 0;
     CREATE TABLE IF NOT EXISTS delivery_dockets (
       id TEXT PRIMARY KEY,
       sales_order_id TEXT NOT NULL,
@@ -531,7 +618,7 @@ async function mapPurchaseOrders(client?: DbClient): Promise<PurchaseOrder[]> {
      FROM purchase_orders po
      LEFT JOIN counterparties c ON c.id = po.supplier_id
      LEFT JOIN users u ON u.id = po.purchaser_id
-     ORDER BY po.created_at DESC`,
+     ORDER BY po.created_at DESC, po.id ASC`,
     [],
     client
   );
@@ -568,7 +655,7 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
      FROM sales_orders so
      LEFT JOIN counterparties c ON c.id = so.shop_id
      LEFT JOIN users u ON u.id = so.salesman_id
-     ORDER BY so.created_at DESC`,
+     ORDER BY so.created_at DESC, so.id ASC`,
     [],
     client
   );
@@ -1834,12 +1921,13 @@ export async function createPurchaseOrder(payload: {
   await ready;
   const product = await one<Record<string, unknown>>("SELECT * FROM products WHERE sku = $1", [payload.productSku]);
   if (!product) throw new Error("Product not found.");
-  const baseAmount = payload.quantityOrdered * payload.rate;
-  const taxableAmount = payload.taxableAmount ?? baseAmount;
-  const gstRate = payload.gstRate === "NA" ? 0 : payload.gstRate ?? 0;
-  const gstAmount = payload.gstAmount ?? 0;
-  const taxMode = payload.taxMode === "NA" ? "Exclusive" : payload.taxMode || "Exclusive";
-  const totalAmount = taxableAmount + gstAmount;
+  const amounts = calculateTaxAmounts(
+    payload.quantityOrdered,
+    payload.rate,
+    payload.gstRate ?? 0,
+    payload.taxMode || "Exclusive"
+  );
+  const { taxableAmount, gstRate, gstAmount, taxMode, totalAmount } = amounts;
   const expectedWeightKg = payload.quantityOrdered * numberValue(product.default_weight_kg);
   const id = makeId(payload.lineIdPrefix || "PO");
   const createdAt = operationalDate(payload.operationDate);
@@ -2005,16 +2093,16 @@ export async function createSalesOrder(payload: {
       (item) => item.warehouseId === payload.warehouseId && item.productSku === payload.productSku
     );
     const deliveryCharge = payload.deliveryMode === "Delivery" && payload.applyDeliveryCharge !== false ? settings.deliveryCharge.amount : 0;
-    const baseAmount = payload.quantity * payload.rate;
-    const taxableAmount = payload.taxableAmount ?? baseAmount;
-    const gstRate = payload.gstRate === "NA" ? 0 : payload.gstRate ?? 0;
-    const gstAmount = payload.gstAmount ?? 0;
-    const taxMode = payload.taxMode === "NA" ? "Exclusive" : payload.taxMode || "Exclusive";
-    const cdTodRate = payload.cdTodRate ?? payload.rate;
-    const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
-    const cdAmount = Math.min(Math.max(0, payload.cdAmount ?? 0), maximumDiscount);
-    const todAmount = Math.min(Math.max(0, payload.todAmount ?? 0), maximumDiscount - cdAmount);
-    const totalAmount = Math.max(0, taxableAmount + gstAmount - cdAmount - todAmount);
+    const amounts = calculateSalesAmounts({
+      quantity: payload.quantity,
+      rate: payload.rate,
+      cdTodRate: payload.cdTodRate,
+      cdAmount: payload.cdAmount,
+      todAmount: payload.todAmount,
+      gstRate: payload.gstRate ?? 0,
+      taxMode: payload.taxMode || "Exclusive"
+    });
+    const { taxableAmount, gstRate, gstAmount, taxMode, cdTodRate, cdAmount, todAmount, totalAmount } = amounts;
     const availableStock = stock?.availableQuantity ?? 0;
     const probationaryQuantity = Math.max(0, payload.quantity - availableStock);
     const probationaryNote = probationaryQuantity > 0
@@ -3458,11 +3546,13 @@ export async function updatePurchaseOrder(orderId: string, payload: {
       }
       const product = await one<Record<string, unknown>>("SELECT default_weight_kg FROM products WHERE sku = $1", [productSku], client);
       if (!product) throw new Error("Product not found.");
-      const gstRate = line.gstRate === "NA" ? 0 : line.gstRate ?? 0;
-      const gstAmount = line.gstAmount ?? 0;
-      const taxMode = line.taxMode === "NA" ? "Exclusive" : line.taxMode || "Exclusive";
-      const taxableAmount = line.taxableAmount ?? (line.quantityOrdered * line.rate);
-      const totalAmount = taxableAmount + gstAmount;
+      const amounts = calculateTaxAmounts(
+        line.quantityOrdered,
+        line.rate,
+        line.gstRate ?? 0,
+        line.taxMode || "Exclusive"
+      );
+      const { taxableAmount, gstRate, gstAmount, taxMode, totalAmount } = amounts;
       const expectedWeightKg = line.quantityOrdered * numberValue(product.default_weight_kg);
       if (existing) {
         await query(
@@ -3596,12 +3686,16 @@ export async function updateSalesOrder(orderId: string, payload: {
   if (!order) throw new Error("Sales order not found.");
   const settings = await mapSettings();
   const quantity = numberValue(order.quantity);
-  const rateChanged = Math.abs(payload.rate - numberValue(order.rate)) > 0.000001;
-  const taxableAmount = rateChanged ? quantity * payload.rate : numberValue(order.taxable_amount);
-  const gstAmount = rateChanged && stringValue(order.tax_mode) === "Exclusive"
-    ? taxableAmount * (numberValue(order.gst_rate) / 100)
-    : numberValue(order.gst_amount);
-  const totalAmount = Math.max(0, taxableAmount + gstAmount - numberValue(order.cd_amount) - numberValue(order.tod_amount));
+  const amounts = calculateSalesAmounts({
+    quantity,
+    rate: payload.rate,
+    cdTodRate: numberValue(order.cd_tod_rate) || payload.rate,
+    cdAmount: numberValue(order.cd_amount),
+    todAmount: numberValue(order.tod_amount),
+    gstRate: numberValue(order.gst_rate) as SalesOrder["gstRate"],
+    taxMode: stringValue(order.tax_mode) as SalesOrder["taxMode"]
+  });
+  const { taxableAmount, gstAmount, totalAmount } = amounts;
   const deliveryCharge = payload.deliveryMode === "Delivery"
     ? ((order.cart_id ? numberValue(order.delivery_charge) : settings.deliveryCharge.amount))
     : 0;
@@ -3719,15 +3813,16 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       const existing = line.id ? lineMap.get(line.id) : undefined;
       const warehouseId = (existing ? stringValue(existing.warehouse_id) : line.warehouseId?.trim()) || stringValue(firstLine.warehouse_id);
       const productSku = existing ? stringValue(existing.product_sku) : line.productSku.trim();
-      const gstRate = line.gstRate === "NA" ? 0 : line.gstRate ?? 0;
-      const gstAmount = line.gstAmount ?? 0;
-      const taxMode = line.taxMode === "NA" ? "Exclusive" : line.taxMode || "Exclusive";
-      const taxableAmount = line.taxableAmount ?? (line.quantity * line.rate);
-      const cdTodRate = line.cdTodRate ?? (existing && numberValue(existing.cd_tod_rate) > 0 ? numberValue(existing.cd_tod_rate) : line.rate);
-      const maximumDiscount = Math.max(0, taxableAmount + gstAmount);
-      const cdAmount = Math.min(Math.max(0, line.cdAmount ?? (existing ? numberValue(existing.cd_amount) : 0)), maximumDiscount);
-      const todAmount = Math.min(Math.max(0, line.todAmount ?? (existing ? numberValue(existing.tod_amount) : 0)), maximumDiscount - cdAmount);
-      const totalAmount = Math.max(0, taxableAmount + gstAmount - cdAmount - todAmount);
+      const amounts = calculateSalesAmounts({
+        quantity: line.quantity,
+        rate: line.rate,
+        cdTodRate: line.cdTodRate ?? (existing && numberValue(existing.cd_tod_rate) > 0 ? numberValue(existing.cd_tod_rate) : line.rate),
+        cdAmount: line.cdAmount ?? (existing ? numberValue(existing.cd_amount) : undefined),
+        todAmount: line.todAmount ?? (existing ? numberValue(existing.tod_amount) : undefined),
+        gstRate: line.gstRate ?? 0,
+        taxMode: line.taxMode || "Exclusive"
+      });
+      const { taxableAmount, gstRate, gstAmount, taxMode, cdTodRate, cdAmount, todAmount, totalAmount } = amounts;
       const deliveryCharge = payload.deliveryMode === "Delivery" ? (index === 0 ? settings.deliveryCharge.amount : 0) : 0;
 
       if (existing) {
