@@ -14,6 +14,7 @@ import {
 API_BASE,
 buildPurchaseInvoicePdf,
 buildSalesInvoicePdf,
+calculateTaxPreview,
 downloadBlobFile,
 downloadPurchaseInvoicePdf,
 downloadSalesInvoicePdf,
@@ -487,18 +488,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   function calculateTax(amountText: string, gstRateText: string, taxMode: TaxModeInput) {
-    const amount = Math.max(0, Number(amountText || 0));
-    const gstRate = gstRateText === "NA" ? 0 : Number(gstRateText || 0);
-    const resolvedTaxMode = taxMode === "NA" ? "Exclusive" : taxMode;
-    const divisor = 1 + gstRate / 100;
-    const taxableAmount = resolvedTaxMode === "Inclusive" && divisor > 0 ? amount / divisor : amount;
-    const gstAmount = resolvedTaxMode === "Inclusive" ? amount - taxableAmount : taxableAmount * (gstRate / 100);
-    const totalAmount = taxableAmount + gstAmount;
-    return {
-      taxableAmount: taxableAmount.toFixed(2),
-      gstAmount: gstAmount.toFixed(2),
-      totalAmount: totalAmount.toFixed(2)
-    };
+    return calculateTaxPreview(amountText, gstRateText, taxMode);
   }
 
   function applyTaxCalculation(form: any, amountText: string, taxMode: TaxModeInput = form.taxMode || "Exclusive") {
@@ -558,6 +548,11 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     if (!isPurchase && Number(popup.cdTodRate || 0) > nextRate) {
       scrollToFieldError(ratePopupSheetRef.current, '[data-error-key="cdTodRate"]');
       showCartToast("CD/TOD rate cannot be higher than sale rate");
+      return;
+    }
+    if (!isPurchase && Number(popup.cdTodRate || 0) <= 0) {
+      scrollToFieldError(ratePopupSheetRef.current, '[data-error-key="cdTodRate"]');
+      showCartToast("CD/TOD rate must be greater than zero");
       return;
     }
     if (!Number.isFinite(nextQuantity) || nextQuantity <= 0) {
@@ -1390,9 +1385,9 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     Enter Rate
                     <input type="number" step="any" value={ratePopup.rate} onChange={(e) => setRatePopup((current) => current ? { ...current, rate: e.target.value, confirmHighRate: false } : current)} />
                   </label>
-                  {!isPurchase ? <label data-error-key="cdTodRate" className={Number(ratePopup.cdTodRate || 0) > Number(ratePopup.rate || 0) ? "field-error" : ""}>
+                  {!isPurchase ? <label data-error-key="cdTodRate" className={Number(ratePopup.cdTodRate || 0) <= 0 || Number(ratePopup.cdTodRate || 0) > Number(ratePopup.rate || 0) ? "field-error" : ""}>
                     CD/TOD Rate
-                    <input type="number" step="any" value={ratePopup.cdTodRate} onChange={(e) => setRatePopup((current) => current ? { ...current, cdTodRate: e.target.value } : current)} />
+                    <input type="number" step="any" min="0.01" value={ratePopup.cdTodRate} onChange={(e) => setRatePopup((current) => current ? { ...current, cdTodRate: e.target.value } : current)} />
                   </label> : null}
                 </div>
                 <div className="cart-edit-grid">

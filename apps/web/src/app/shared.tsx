@@ -17,7 +17,7 @@ SalesStatus,
 TaxMode,
 UserRole
 } from "@aapoorti-b2b/domain";
-import { inferProductWeightKg } from "@aapoorti-b2b/domain";
+import { calculateTaxAmounts, inferProductWeightKg } from "@aapoorti-b2b/domain";
 import axios from "axios";
 import type { ChangeEvent } from "react";
 import { useEffect,useRef,useState } from "react";
@@ -3170,15 +3170,13 @@ export function nearestNeighborOrder<T>(items: T[], locationFor: (item: T) => { 
 
 export function calculateTaxPreview(amountText: string, gstRateText: string, taxMode: TaxModeInput) {
   const amount = Math.max(0, Number(amountText || 0));
-  const gstRate = gstRateText === "NA" ? 0 : Number(gstRateText || 0);
-  const resolvedTaxMode = taxMode === "NA" ? "Exclusive" : taxMode;
-  const divisor = 1 + gstRate / 100;
-  const taxableAmount = resolvedTaxMode === "Inclusive" && divisor > 0 ? amount / divisor : amount;
-  const gstAmount = resolvedTaxMode === "Inclusive" ? amount - taxableAmount : taxableAmount * (gstRate / 100);
+  if (amount <= 0) return { taxableAmount: "0.00", gstAmount: "0.00", totalAmount: "0.00" };
+  const gstRate = (gstRateText === "NA" ? "NA" : Number(gstRateText || 0)) as GstRate;
+  const amounts = calculateTaxAmounts(1, amount, gstRate, taxMode as TaxMode);
   return {
-    taxableAmount: taxableAmount.toFixed(2),
-    gstAmount: gstAmount.toFixed(2),
-    totalAmount: (taxableAmount + gstAmount).toFixed(2)
+    taxableAmount: amounts.taxableAmount.toFixed(2),
+    gstAmount: amounts.gstAmount.toFixed(2),
+    totalAmount: amounts.totalAmount.toFixed(2)
   };
 }
 

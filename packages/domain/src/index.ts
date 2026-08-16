@@ -169,6 +169,78 @@ export type PlatformSettings = {
 export type GstRate = "NA" | 0 | 5 | 12 | 18 | 40;
 export type TaxMode = "NA" | "Exclusive" | "Inclusive";
 
+export function roundCurrency(value: number) {
+  if (!Number.isFinite(value)) throw new Error("Amount must be a finite number.");
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function calculateTaxAmounts(quantity: number, rate: number, gstRate: GstRate, taxMode: TaxMode) {
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Quantity must be greater than zero.");
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error("Rate must be greater than zero.");
+  const numericGstRate = gstRate === "NA" ? 0 : gstRate;
+  const resolvedTaxMode = taxMode === "NA" ? "Exclusive" : taxMode;
+  const grossAmount = quantity * rate;
+  const divisor = 1 + numericGstRate / 100;
+  const rawTaxableAmount = resolvedTaxMode === "Inclusive" ? grossAmount / divisor : grossAmount;
+  const rawGstAmount = resolvedTaxMode === "Inclusive"
+    ? grossAmount - rawTaxableAmount
+    : rawTaxableAmount * (numericGstRate / 100);
+  const taxableAmount = roundCurrency(rawTaxableAmount);
+  const gstAmount = roundCurrency(rawGstAmount);
+  return {
+    taxableAmount,
+    gstAmount,
+    totalAmount: roundCurrency(taxableAmount + gstAmount),
+    gstRate: numericGstRate as Exclude<GstRate, "NA">,
+    taxMode: resolvedTaxMode
+  };
+}
+
+export function calculateSalesAmounts(input: {
+  quantity: number;
+  rate: number;
+  cdTodRate?: number;
+  cdAmount?: number;
+  todAmount?: number;
+  gstRate: GstRate;
+  taxMode: TaxMode;
+}) {
+  const tax = calculateTaxAmounts(input.quantity, input.rate, input.gstRate, input.taxMode);
+  const suppliedCdAmount = input.cdAmount === undefined ? undefined : roundCurrency(input.cdAmount);
+  const suppliedTodAmount = input.todAmount === undefined ? undefined : roundCurrency(input.todAmount);
+  const suppliedDiscount = roundCurrency((suppliedCdAmount || 0) + (suppliedTodAmount || 0));
+  let cdTodRate = input.cdTodRate;
+
+  // Older clients used zero as "not supplied". It is safe only when no discount was submitted.
+  if (cdTodRate === undefined || (cdTodRate === 0 && suppliedDiscount === 0)) cdTodRate = input.rate;
+  if (!Number.isFinite(cdTodRate) || cdTodRate <= 0) throw new Error("CD/TOD rate must be greater than zero.");
+  if (cdTodRate > input.rate) throw new Error("CD/TOD rate cannot be higher than sale rate.");
+
+  const expectedDiscount = roundCurrency((input.rate - cdTodRate) * input.quantity);
+  let cdAmount: number;
+  let todAmount: number;
+  if (suppliedCdAmount === undefined && suppliedTodAmount === undefined) {
+    cdAmount = roundCurrency(expectedDiscount / 2);
+    todAmount = roundCurrency(expectedDiscount - cdAmount);
+  } else {
+    if ((suppliedCdAmount || 0) < 0 || (suppliedTodAmount || 0) < 0) throw new Error("CD and TOD amounts cannot be negative.");
+    if (Math.abs(suppliedDiscount - expectedDiscount) > 0.02) {
+      throw new Error("CD/TOD amounts do not match the entered CD/TOD rate.");
+    }
+    cdAmount = suppliedCdAmount || 0;
+    todAmount = roundCurrency(expectedDiscount - cdAmount);
+    if (todAmount < 0) throw new Error("CD amount cannot exceed the total discount.");
+  }
+
+  return {
+    ...tax,
+    cdTodRate,
+    cdAmount,
+    todAmount,
+    totalAmount: roundCurrency(Math.max(0, tax.totalAmount - cdAmount - todAmount))
+  };
+}
+
 export type PurchaseStatus =
   | "Draft"
   | "Order Placed - Pending Delivery"
