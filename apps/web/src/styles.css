@@ -4599,3 +4599,54 @@ textarea {
     width: 100%;
   }
 }
+
+/* Keep checkout clear of the fixed app navigation and its raised centre action. */
+.simple-shell .catalog-shell.checkout-visible {
+  padding-bottom: 11rem;
+}
+
+.simple-shell .floating-checkout-button {
+  position: fixed;
+  left: 50%;
+  bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  width: min(calc(100vw - 32px), 420px);
+  margin: 0;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 980px) {
+  .catalog-shell.checkout-visible {
+    padding-bottom: 10rem;
+  }
+
+  .floating-checkout-button {
+    position: fixed;
+    left: 50%;
+    bottom: calc(118px + env(safe-area-inset-bottom, 0px));
+    width: min(calc(100vw - 32px), 420px);
+    margin: 0;
+    transform: translateX(-50%);
+  }
+
+  .simple-shell .floating-checkout-button {
+    bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 640px) {
+  .catalog-shell.checkout-visible {
+    padding-bottom: 9rem;
+  }
+
+  .floating-checkout-button,
+  .simple-shell .floating-checkout-button {
+    bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 420px) {
+  .floating-checkout-button,
+  .simple-shell .floating-checkout-button {
+    bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  }
+}

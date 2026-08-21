@@ -283,72 +283,17 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     .slice(0, 8);
 
   function applySearchSuggestion(item: CatalogDisplayProduct) {
-    addSearchProductToCheckout(resolveCatalogProduct(item));
+    openSearchProductRateEntry(resolveCatalogProduct(item));
     setSuggestionOpen(false);
   }
 
   function applyIndexedSearch(item: CatalogDisplayProduct) {
-    setSearchSheetOpen(false);
-    addSearchProductToCheckout(resolveCatalogProduct(item));
+    openSearchProductRateEntry(resolveCatalogProduct(item));
   }
 
-  function addSearchProductToCheckout(product: AppSnapshot["products"][number]) {
-    if (!isPurchase && !selectedPartyId) {
-      setSearchSheetOpen(false);
-      setFlowStep("existing");
-      showCartToast("Select customer before adding this product");
-      return;
-    }
-    const existingLine = cartLines.find((line) => line.productSku === product.sku);
-    const purchasePrice = productPurchasePrice(product);
-    const rate = isPurchase ? (purchasePrice || product.rsp || product.mrp || 0) : productSalePrice(product);
-    if (rate <= 0) {
-      setSearchSheetOpen(false);
-      selectProduct(product);
-      showCartToast("Set a product rate to continue");
-      return;
-    }
-    const quantity = existingLine?.quantity || "1";
-    const gstRate = existingLine?.gstRate === "NA" ? "0" : (existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate || 0) as GstRateInput));
-    const taxMode = existingLine?.taxMode === "NA" ? "Exclusive" : (existingLine?.taxMode || (billTaxOverride.enabled ? billTaxOverride.taxMode : (product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode || "Exclusive")));
-    const lineTotals = calculateLineTotals(quantity, String(rate), gstRate, taxMode);
-    const resolvedWarehouseId = orderForm.warehouseId || preferredWarehouseId(product.allowedWarehouseIds);
-    const availableStockAtOrder = isPurchase ? 0 : getLineAvailableStock(product.sku, resolvedWarehouseId);
-    const subsidyBreakdown = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(quantity, String(rate), String(rate));
-    const line: CartLine = {
-      productSku: product.sku,
-      quantity,
-      rate: String(rate),
-      cdTodRate: isPurchase ? "0" : String(rate),
-      cdAmount: subsidyBreakdown.cdAmount,
-      todAmount: subsidyBreakdown.todAmount,
-      previousRate: String(purchasePrice || 0),
-      taxableAmount: lineTotals.taxableAmount,
-      gstRate,
-      gstAmount: lineTotals.gstAmount,
-      taxMode,
-      priceApprovalRequested: !isPurchase && purchasePrice > 0 && rate < purchasePrice,
-      minimumAllowedRate: String(purchasePrice || 0),
-      stockApprovalRequested: !isPurchase && Number(quantity) > availableStockAtOrder,
-      availableStockAtOrder: String(availableStockAtOrder),
-      note: existingLine?.note || orderForm.note
-    };
-    setCartLines((current) => [...current.filter((item) => item.productSku !== product.sku), line]);
-    setOrderForm((current: any) => ({
-      ...current,
-      productSku: product.sku,
-      rate: String(rate),
-      warehouseId: current.warehouseId || resolvedWarehouseId,
-      ...(isPurchase ? { quantityOrdered: quantity } : { quantity, priceApprovalRequested: line.priceApprovalRequested, minimumAllowedRate: line.minimumAllowedRate, availableStockAtOrder: line.availableStockAtOrder, stockApprovalRequested: line.stockApprovalRequested }),
-      taxableAmount: line.taxableAmount,
-      gstRate,
-      gstAmount: line.gstAmount,
-      taxMode
-    }));
-    setCartStep("cart");
-    setRatePopup(null);
+  function openSearchProductRateEntry(product: AppSnapshot["products"][number]) {
     setSearchSheetOpen(false);
-    setCartOpen(true);
+    selectProduct(product);
   }
 
   function selectSavedParty(party: Counterparty) {
@@ -648,12 +593,12 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     if (isPurchase) {
       if (popup.lastRate > 0 && nextRate > popup.lastRate && !popup.confirmHighRate) {
         setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
-        showCartToast("Rate is higher than last purchase rate. Tap sure and continue.");
+        showCartToast("Rate is higher than last purchase rate. Tap your add action again to confirm.");
         return;
       }
     } else if (popup.lastRate > 0 && nextRate < popup.lastRate && !popup.confirmHighRate) {
       setRatePopup((current) => current ? { ...current, confirmHighRate: true } : current);
-      showCartToast("Rate is below last purchase price. Tap continue again to confirm.");
+      showCartToast("Rate is below last purchase price. Tap your add action again to confirm.");
       return;
     }
     const quantityText = String(popup.quantity);
@@ -1115,7 +1060,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
 
   const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
-          <div className="catalog-shell">
+          <div className={cartLines.length > 0 ? "catalog-shell checkout-visible" : "catalog-shell"}>
             {flowStep !== "catalog" ? <div ref={flowCardRef} className="flow-card">
               {flowStep === "landing" ? <>
                 <span className="eyebrow">Start</span>
@@ -1535,12 +1480,12 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                   Entered sales rate is below the last purchase price. You can still book it now after confirmation.
                 </div> : null}
                 <div className="cart-actions">
-                  <button type="button" className="ghost-button" onClick={() => confirmProductRate({ openCart: false })}>Continue shopping</button>
+                  <button type="button" className="ghost-button" onClick={() => confirmProductRate({ openCart: false })}>Add &amp; continue shopping</button>
                   <button type="button" className="ghost-button" onClick={() => setRatePopup(null)}>Cancel</button>
                   <button type="button" className="primary-button" onClick={() => confirmProductRate({ openCart: true })}>
                     {isPurchase
-                      ? (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate && ratePopup.confirmHighRate ? "Sure and continue" : "Continue")
-                      : (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate && ratePopup.confirmHighRate ? "Confirm and continue" : "Continue")}
+                      ? (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) > ratePopup.lastRate && ratePopup.confirmHighRate ? "Confirm & open cart" : "Add & open cart")
+                      : (ratePopup.lastRate > 0 && Number(ratePopup.rate || 0) < ratePopup.lastRate && ratePopup.confirmHighRate ? "Confirm & open cart" : "Add & open cart")}
                   </button>
                 </div>
                 </>;
