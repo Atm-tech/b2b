@@ -232,7 +232,9 @@ export function ReturnsWorkspace({
   );
 }
 
-export type ProductFormState = { sku: string; name: string; division: string; department: string; section: string; category: string; subCategory: string; unit: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
+export type ProductFormState = { sku: string; name: string; brand: string; division: string; department: string; section: string; category: string; subCategory: string; unit: string; rsp: string; mrp: string; isSeasonal: boolean; offerLabel: string; offerPrice: string; defaultGstRate: GstRateInput; defaultTaxMode: TaxModeInput; defaultWeightKg: string; toleranceKg: string; tolerancePercent: string; allowedWarehouseIds: string[] };
+
+const standardSubCategoryOptions = ["Stationary", "Stationery", "OTC Item", "Dairy & Fresh", "Insecticide"];
 export const nonBrandedStaplesWeightOptions = [
   { value: "1", label: "1KG" },
   { value: "5", label: "5KG" },
@@ -1401,7 +1403,7 @@ export function ProductAdminView({
   onBulkImport: (rows: object[]) => void;
   onBulkUpload: () => Promise<void>;
 }) {
-  const emptyForm: ProductFormState = { sku: "", name: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id)) };
+  const emptyForm: ProductFormState = { sku: "", name: "", brand: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", rsp: "0", mrp: "0", isSeasonal: false, offerLabel: "", offerPrice: "", defaultGstRate: "0", defaultTaxMode: "Exclusive", defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: prioritizeWarehouseIds(snapshot.warehouses.map((warehouse) => warehouse.id)) };
   const [selectedSku, setSelectedSku] = useState("");
   const [skuSearch, setSkuSearch] = useState("");
   const filteredProductOptions = snapshot.products.filter((product) => `${product.sku} ${product.name} ${product.division} ${product.department} ${product.section}`.toLowerCase().includes(skuSearch.trim().toLowerCase()));
@@ -1409,7 +1411,7 @@ export function ProductAdminView({
   const departmentOptions = uniqueProductFieldOptions(snapshot.products, "department");
   const sectionOptions = uniqueProductFieldOptions(snapshot.products, "section");
   const categoryOptions = uniqueProductFieldOptions(snapshot.products, "category");
-  const subCategoryOptions = uniqueProductFieldOptions(snapshot.products, "subCategory");
+  const subCategoryOptions = Array.from(new Set([...standardSubCategoryOptions, ...uniqueProductFieldOptions(snapshot.products, "subCategory")])).sort((left, right) => left.localeCompare(right, "en-IN"));
   const useStaplesWeightSelection = isStaplesNonBrandedCategory(productForm.category, productForm.subCategory);
 
   function toPayload(form: ProductFormState) {
@@ -1420,6 +1422,9 @@ export function ProductAdminView({
       defaultWeightKg: Number(form.defaultWeightKg),
       toleranceKg: Number(form.toleranceKg),
       tolerancePercent: Number(form.tolerancePercent),
+      rsp: Number(form.rsp || 0),
+      mrp: Number(form.mrp || 0),
+      offerPrice: form.offerPrice.trim() ? Number(form.offerPrice) : undefined,
       allowedWarehouseIds: prioritizeWarehouseIds(form.allowedWarehouseIds.length > 0 ? form.allowedWarehouseIds : snapshot.warehouses.map((warehouse) => warehouse.id))
     };
   }
@@ -1445,12 +1450,18 @@ export function ProductAdminView({
     setProductForm(normalizeStaplesWeightSelection({
       sku: product.sku,
       name: product.name,
+      brand: product.brand || "",
       division: product.division,
       department: product.department,
       section: product.section,
       category: product.category,
       subCategory: product.subCategory,
       unit: product.unit,
+      rsp: String(product.rsp || 0),
+      mrp: String(product.mrp || 0),
+      isSeasonal: Boolean(product.isSeasonal),
+      offerLabel: product.offerLabel || "",
+      offerPrice: product.offerPrice == null ? "" : String(product.offerPrice),
       defaultGstRate: String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate) as GstRateInput,
       defaultTaxMode: product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode,
       defaultWeightKg: String(product.defaultWeightKg),
@@ -1468,6 +1479,7 @@ export function ProductAdminView({
           <label>Select SKU<select value={selectedSku} onChange={(event) => loadProduct(event.target.value)}>{renderProductOptions(filteredProductOptions)}</select></label>
           <label>SKU<input value={productForm.sku} readOnly={Boolean(selectedSku)} onChange={(event) => updateProductForm((current) => ({ ...current, sku: event.target.value }))} /></label>
           <label>Name<input value={productForm.name} onChange={(event) => updateProductForm((current) => ({ ...current, name: event.target.value }))} /></label>
+          <label>Brand<input value={productForm.brand} onChange={(event) => updateProductForm((current) => ({ ...current, brand: event.target.value }))} /></label>
           <label>Division<input list="product-division-options" value={productForm.division} placeholder="Type or select saved division" onChange={(event) => updateProductForm((current) => ({ ...current, division: event.target.value }))} /></label>
           <label>Department<input list="product-department-options" value={productForm.department} placeholder="Type or select saved department" onChange={(event) => updateProductForm((current) => ({ ...current, department: event.target.value }))} /></label>
           <label>Section<input list="product-section-options" value={productForm.section} placeholder="Type or select saved section" onChange={(event) => updateProductForm((current) => ({ ...current, section: event.target.value }))} /></label>
@@ -1479,6 +1491,11 @@ export function ProductAdminView({
           <datalist id="product-category-options">{categoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <datalist id="product-subcategory-options">{subCategoryOptions.map((value) => <option key={value} value={value} />)}</datalist>
           <label>Unit<input value={productForm.unit} onChange={(event) => updateProductForm((current) => ({ ...current, unit: event.target.value }))} /></label>
+          <label>Purchase price<input type="number" min="0" step="any" value={productForm.rsp} onChange={(event) => updateProductForm((current) => ({ ...current, rsp: event.target.value }))} /></label>
+          <label>Sale price / MRP<input type="number" min="0" step="any" value={productForm.mrp} onChange={(event) => updateProductForm((current) => ({ ...current, mrp: event.target.value }))} /></label>
+          <label className="checkbox-line"><input type="checkbox" checked={productForm.isSeasonal} onChange={(event) => updateProductForm((current) => ({ ...current, isSeasonal: event.target.checked }))} />Seasonal item</label>
+          <label>Offer name<input value={productForm.offerLabel} placeholder="Summer offer, 10% off..." onChange={(event) => updateProductForm((current) => ({ ...current, offerLabel: event.target.value }))} /></label>
+          <label>Offer price<input type="number" min="0" step="any" value={productForm.offerPrice} onChange={(event) => updateProductForm((current) => ({ ...current, offerPrice: event.target.value }))} /></label>
           <label>Default GST<select value={productForm.defaultGstRate === "NA" ? "0" : productForm.defaultGstRate} onChange={(event) => updateProductForm((current) => ({ ...current, defaultGstRate: event.target.value as GstRateInput, defaultTaxMode: current.defaultTaxMode === "NA" ? "Exclusive" : current.defaultTaxMode }))}><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
           <label>Default Tax<select value={productForm.defaultTaxMode === "NA" ? "Exclusive" : productForm.defaultTaxMode} onChange={(event) => updateProductForm((current) => ({ ...current, defaultTaxMode: event.target.value as TaxModeInput }))}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option></select></label>
           <label>
@@ -1512,10 +1529,10 @@ export function ProductAdminView({
             <button className="primary-button" type="submit">Upload product file</button>
           </form>
         </Panel>
-        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Division","Department","Section","Category","Subcategory","Default GST","Per item/bundle weight"]} rows={snapshot.products.map((product) => [product.sku, productDisplayLabel(product), product.division, product.department, product.section, product.category, product.subCategory, `${product.defaultGstRate === "NA" ? 0 : product.defaultGstRate}% / ${product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode}`, product.defaultWeightKg])} /></Panel>
+        <Panel title="Products" eyebrow="Division > Department > Section"><DataTable headers={["SKU","Name","Brand","Category","Subcategory","Purchase","Sale","Seasonal / offer","Default GST"]} rows={snapshot.products.map((product) => [product.sku, productDisplayLabel(product), product.brand || "-", product.category, product.subCategory, product.rsp || 0, product.mrp || 0, [product.isSeasonal ? "Seasonal" : "", product.offerLabel || "", product.offerPrice != null ? `@ ${product.offerPrice}` : ""].filter(Boolean).join(" · ") || "-", `${product.defaultGstRate === "NA" ? 0 : product.defaultGstRate}% / ${product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode}`])} /></Panel>
       </>}
     />
   );
 }
 
-export function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, subCategory: row.subCategory || "", defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0) }; }); }
+export function parseCsvRows(csv: string) { const [header, ...lines] = csv.split(/\r?\n/).filter(Boolean); const headers = header.split(",").map((item) => item.trim()); return lines.map((line) => { const cols = line.split(",").map((item) => item.trim()); const row = Object.fromEntries(headers.map((key, index) => [key, cols[index] || ""])); return { ...row, subCategory: row.subCategory || "", defaultGstRate: (row.defaultGstRate || "0") as GstRateInput, defaultTaxMode: (row.defaultTaxMode || ((row.defaultGstRate || "0") === "NA" ? "NA" : "Exclusive")) as TaxModeInput, defaultWeightKg: Number(row.defaultWeightKg || 0), toleranceKg: Number(row.toleranceKg || 0), tolerancePercent: Number(row.tolerancePercent || 1), allowedWarehouseIds: String(row.allowedWarehouseIds || "").split("|").filter(Boolean), rsp: Number(row.rsp || 0), mrp: Number(row.mrp || 0), isSeasonal: /^(1|true|yes|y)$/i.test(String(row.isSeasonal || "")), offerPrice: row.offerPrice ? Number(row.offerPrice) : undefined }; }); }

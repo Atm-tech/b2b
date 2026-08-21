@@ -101,6 +101,9 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [partySuggestionOpen, setPartySuggestionOpen] = useState(false);
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
+  const [catalogSort, setCatalogSort] = useState<"relevance" | "brand" | "price-asc" | "price-desc" | "margin-desc" | "margin-asc">("relevance");
+  const [catalogScope, setCatalogScope] = useState<"all" | "seasonal" | "offers">("all");
+  const [brandFilter, setBrandFilter] = useState("");
   const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || (mode === "sales" ? "landing" : "catalog"));
   const [cartOpen, setCartOpen] = useState(Boolean(persisted?.cartOpen));
   const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">(persisted?.cartStep || "cart");
@@ -144,6 +147,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i.test((value || "").trim());
   }
   const divisions = Array.from(new Set(products.map((item) => productCategoryLabel(item)).filter(Boolean)));
+  const brands = Array.from(new Set(products.map((item) => item.brand?.trim()).filter((item): item is string => Boolean(item)))).sort((left, right) => left.localeCompare(right, "en-IN"));
   const normalizedSearch = search.trim().toLowerCase();
   const showingCategoryLanding = activeDivision === "" && normalizedSearch === "";
   useEffect(() => {
@@ -190,9 +194,12 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
       division: (product.division || "").toLowerCase(),
       department: (product.department || "").toLowerCase(),
       section: (product.section || "").toLowerCase(),
+      category: (product.category || "").toLowerCase(),
+      subCategory: (product.subCategory || "").toLowerCase(),
       article: (product.articleName || "").toLowerCase(),
       item: (product.itemName || "").toLowerCase(),
-      size: (product.size || "").toLowerCase()
+      size: (product.size || "").toLowerCase(),
+      offer: (product.offerLabel || "").toLowerCase()
     };
     const haystack = Object.values(fields).join(" ");
     if (fields.exactName === normalized) return 1000;
@@ -204,47 +211,69 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     if (fields.shortName.includes(normalized)) return 650;
     if (fields.brand.includes(normalized)) return 600;
     if (fields.department.includes(normalized)) return 500;
+    if (fields.subCategory.includes(normalized)) return 480;
+    if (fields.category.includes(normalized)) return 470;
     if (fields.section.includes(normalized)) return 450;
     if (fields.division.includes(normalized)) return 400;
     if (tokens.length > 0 && tokens.every((token) => haystack.includes(token))) return 350 + tokens.length * 25;
     if (tokens.some((token) => haystack.includes(token))) return 180;
     return 0;
   }
+  function productPurchasePrice(product: AppSnapshot["products"][number]) {
+    return getLastPurchaseRate(product);
+  }
+
+  function productSalePrice(product: AppSnapshot["products"][number]) {
+    const latestSale = snapshot.salesOrders
+      .filter((item) => item.productSku === product.sku && item.status !== "Cancelled")
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]?.rate;
+    return product.offerPrice && product.offerPrice > 0
+      ? product.offerPrice
+      : latestSale || product.mrp || product.rsp || productPurchasePrice(product);
+  }
+
+  function productMargin(product: AppSnapshot["products"][number]) {
+    return productSalePrice(product) - productPurchasePrice(product);
+  }
+
+  function matchesCatalogControls(product: AppSnapshot["products"][number]) {
+    const matchesBrand = brandFilter === "" || product.brand === brandFilter;
+    const matchesScope = catalogScope === "all"
+      || (catalogScope === "seasonal" && Boolean(product.isSeasonal))
+      || (catalogScope === "offers" && Boolean(product.offerLabel || (product.offerPrice && product.offerPrice > 0)));
+    return matchesBrand && matchesScope;
+  }
+
+  function sortProducts(left: AppSnapshot["products"][number], right: AppSnapshot["products"][number]) {
+    if (catalogSort === "brand") return (left.brand || "Unbranded").localeCompare(right.brand || "Unbranded", "en-IN") || left.name.localeCompare(right.name, "en-IN");
+    if (catalogSort === "price-asc") return productSalePrice(left) - productSalePrice(right) || left.name.localeCompare(right.name, "en-IN");
+    if (catalogSort === "price-desc") return productSalePrice(right) - productSalePrice(left) || left.name.localeCompare(right.name, "en-IN");
+    if (catalogSort === "margin-desc") return productMargin(right) - productMargin(left) || left.name.localeCompare(right.name, "en-IN");
+    if (catalogSort === "margin-asc") return productMargin(left) - productMargin(right) || left.name.localeCompare(right.name, "en-IN");
+    const scoreDiff = productMatchScore(right, search) - productMatchScore(left, search);
+    return scoreDiff || left.name.localeCompare(right.name, "en-IN");
+  }
+
   const filteredProducts = products.filter((product) => {
     const matchesDivision = activeDivision === "" || productCategoryLabel(product) === activeDivision;
     const matchesDepartment = activeDepartment === "" || product.department === activeDepartment;
     const matchesSection = activeSection === "" || product.section === activeSection;
     const matchesSearch = normalizedSearch === "" || productMatchScore(product, search) > 0;
-    return matchesDivision && matchesDepartment && matchesSection && matchesSearch;
-  }).sort((left, right) => {
-    const query = search.trim();
-    const scoreDiff = productMatchScore(right, query) - productMatchScore(left, query);
-    if (scoreDiff !== 0) return scoreDiff;
-    return left.name.localeCompare(right.name, "en-IN");
-  });
-  const catalogProducts = buildCatalogDisplayProducts(filteredProducts);
+    return matchesDivision && matchesDepartment && matchesSection && matchesSearch && matchesCatalogControls(product);
+  }).sort(sortProducts);
+  const catalogProducts = buildCatalogDisplayProducts(filteredProducts).sort((left, right) => sortProducts(resolveCatalogProduct(left), resolveCatalogProduct(right)));
   const searchSuggestions = search.trim() === ""
     ? []
     : buildCatalogDisplayProducts(
         products
-          .filter((product) => productMatchScore(product, search) > 0)
-          .sort((left, right) => {
-            const scoreDiff = productMatchScore(right, search) - productMatchScore(left, search);
-            if (scoreDiff !== 0) return scoreDiff;
-            return left.name.localeCompare(right.name, "en-IN");
-          })
+          .filter((product) => productMatchScore(product, search) > 0 && matchesCatalogControls(product))
+          .sort(sortProducts)
       ).slice(0, 6);
   const indexedSearchProducts = buildCatalogDisplayProducts(
     products
-      .filter((product) => normalizedSearch === "" || productMatchScore(product, search) > 0)
-      .sort((left, right) => {
-        if (normalizedSearch) {
-          const scoreDiff = productMatchScore(right, search) - productMatchScore(left, search);
-          if (scoreDiff !== 0) return scoreDiff;
-        }
-        return left.name.localeCompare(right.name, "en-IN");
-      })
-  );
+      .filter((product) => (normalizedSearch === "" || productMatchScore(product, search) > 0) && matchesCatalogControls(product))
+      .sort(sortProducts)
+  ).sort((left, right) => sortProducts(resolveCatalogProduct(left), resolveCatalogProduct(right)));
   const partySuggestions = parties
     .filter((party) => {
       const query = partySearch.trim().toLowerCase();
@@ -254,16 +283,72 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     .slice(0, 8);
 
   function applySearchSuggestion(item: CatalogDisplayProduct) {
-    setSearch(item.displayName);
-    setActiveDivision("");
-    setActiveDepartment("");
-    setActiveSection("");
+    addSearchProductToCheckout(resolveCatalogProduct(item));
     setSuggestionOpen(false);
   }
 
   function applyIndexedSearch(item: CatalogDisplayProduct) {
-    applySearchSuggestion(item);
     setSearchSheetOpen(false);
+    addSearchProductToCheckout(resolveCatalogProduct(item));
+  }
+
+  function addSearchProductToCheckout(product: AppSnapshot["products"][number]) {
+    if (!isPurchase && !selectedPartyId) {
+      setSearchSheetOpen(false);
+      setFlowStep("existing");
+      showCartToast("Select customer before adding this product");
+      return;
+    }
+    const existingLine = cartLines.find((line) => line.productSku === product.sku);
+    const purchasePrice = productPurchasePrice(product);
+    const rate = isPurchase ? (purchasePrice || product.rsp || product.mrp || 0) : productSalePrice(product);
+    if (rate <= 0) {
+      setSearchSheetOpen(false);
+      selectProduct(product);
+      showCartToast("Set a product rate to continue");
+      return;
+    }
+    const quantity = existingLine?.quantity || "1";
+    const gstRate = existingLine?.gstRate === "NA" ? "0" : (existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate || 0) as GstRateInput));
+    const taxMode = existingLine?.taxMode === "NA" ? "Exclusive" : (existingLine?.taxMode || (billTaxOverride.enabled ? billTaxOverride.taxMode : (product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode || "Exclusive")));
+    const lineTotals = calculateLineTotals(quantity, String(rate), gstRate, taxMode);
+    const resolvedWarehouseId = orderForm.warehouseId || preferredWarehouseId(product.allowedWarehouseIds);
+    const availableStockAtOrder = isPurchase ? 0 : getLineAvailableStock(product.sku, resolvedWarehouseId);
+    const subsidyBreakdown = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(quantity, String(rate), String(rate));
+    const line: CartLine = {
+      productSku: product.sku,
+      quantity,
+      rate: String(rate),
+      cdTodRate: isPurchase ? "0" : String(rate),
+      cdAmount: subsidyBreakdown.cdAmount,
+      todAmount: subsidyBreakdown.todAmount,
+      previousRate: String(purchasePrice || 0),
+      taxableAmount: lineTotals.taxableAmount,
+      gstRate,
+      gstAmount: lineTotals.gstAmount,
+      taxMode,
+      priceApprovalRequested: !isPurchase && purchasePrice > 0 && rate < purchasePrice,
+      minimumAllowedRate: String(purchasePrice || 0),
+      stockApprovalRequested: !isPurchase && Number(quantity) > availableStockAtOrder,
+      availableStockAtOrder: String(availableStockAtOrder),
+      note: existingLine?.note || orderForm.note
+    };
+    setCartLines((current) => [...current.filter((item) => item.productSku !== product.sku), line]);
+    setOrderForm((current: any) => ({
+      ...current,
+      productSku: product.sku,
+      rate: String(rate),
+      warehouseId: current.warehouseId || resolvedWarehouseId,
+      ...(isPurchase ? { quantityOrdered: quantity } : { quantity, priceApprovalRequested: line.priceApprovalRequested, minimumAllowedRate: line.minimumAllowedRate, availableStockAtOrder: line.availableStockAtOrder, stockApprovalRequested: line.stockApprovalRequested }),
+      taxableAmount: line.taxableAmount,
+      gstRate,
+      gstAmount: line.gstAmount,
+      taxMode
+    }));
+    setCartStep("cart");
+    setRatePopup(null);
+    setSearchSheetOpen(false);
+    setCartOpen(true);
   }
 
   function selectSavedParty(party: Counterparty) {
@@ -388,8 +473,8 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
       setRatePopup({
         product,
         quantity: existingLine?.quantity || "1",
-        rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : (product.mrp ?? lastRate ?? 0)),
-        cdTodRate: existingLine?.cdTodRate || existingLine?.rate || String(product.mrp ?? lastRate ?? 0),
+        rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : ((product.offerPrice && product.offerPrice > 0 ? product.offerPrice : product.mrp) ?? lastRate ?? 0)),
+        cdTodRate: existingLine?.cdTodRate || existingLine?.rate || String((product.offerPrice && product.offerPrice > 0 ? product.offerPrice : product.mrp) ?? lastRate ?? 0),
         lastRate,
         gstRate: existingLine?.gstRate === "NA" ? "0" : (existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate || 0) as GstRateInput)),
         taxMode: existingLine?.taxMode === "NA" ? "Exclusive" : (existingLine?.taxMode || (billTaxOverride.enabled ? billTaxOverride.taxMode : (product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode || "Exclusive"))),
@@ -1152,6 +1237,31 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     <button className={voiceBusy ? "ghost-button active-voice" : "ghost-button"} type="button" onClick={setVoiceSearch}>{voiceBusy ? "Listening..." : "Voice"}</button>
                   </div>
                 </label>
+                <div className="catalog-search-controls">
+                  <label>
+                    Brand
+                    <select value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}>
+                      <option value="">All brands</option>
+                      {brands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Sort products
+                    <select value={catalogSort} onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}>
+                      <option value="relevance">Best match</option>
+                      <option value="brand">Brand A–Z</option>
+                      <option value="price-asc">Price low to high</option>
+                      <option value="price-desc">Price high to low</option>
+                      <option value="margin-desc">Margin high to low</option>
+                      <option value="margin-asc">Margin low to high</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="chip-row catalog-scope-row" aria-label="Product promotion filter">
+                  <button type="button" className={catalogScope === "all" ? "chip-button active" : "chip-button"} onClick={() => setCatalogScope("all")}>All items</button>
+                  <button type="button" className={catalogScope === "seasonal" ? "chip-button active" : "chip-button"} onClick={() => setCatalogScope("seasonal")}>Seasonal items</button>
+                  <button type="button" className={catalogScope === "offers" ? "chip-button active" : "chip-button"} onClick={() => setCatalogScope("offers")}>Offers</button>
+                </div>
                 <div className="catalog-search-sheet-meta">
                   <span className="small-label">{normalizedSearch ? "Ranked results" : "Indexed products"}</span>
                   <strong>{indexedSearchProducts.length} item{indexedSearchProducts.length === 1 ? "" : "s"}</strong>
@@ -1160,8 +1270,9 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                   {indexedSearchProducts.length > 0 ? indexedSearchProducts.map((item) => {
                     const product = resolveCatalogProduct(item);
                     return <button key={`indexed-${item.key}`} type="button" className="search-suggestion-item catalog-search-sheet-item" onClick={() => applyIndexedSearch(item)}>
-                      <strong>{item.displayName}</strong>
-                      <span>{product.sku} / {productCategoryLabel(product)} / {product.department || "General"} / {product.section || "General"}</span>
+                      <span className="catalog-result-heading"><strong>{item.displayName}</strong>{product.isSeasonal ? <em>Seasonal</em> : null}{product.offerLabel || product.offerPrice ? <em>Offer</em> : null}</span>
+                      <span>{product.sku} / {product.brand || "Unbranded"} / {product.subCategory || product.category || "General"}</span>
+                      <span className="catalog-result-prices">Sale ₹{productSalePrice(product).toFixed(2)} · Purchase ₹{productPurchasePrice(product).toFixed(2)} · Margin ₹{productMargin(product).toFixed(2)}{product.offerLabel ? ` · ${product.offerLabel}` : ""}</span>
                     </button>;
                   }) : <div className="search-suggestion-item empty-suggestion"><strong>No matching product found</strong><span>Try a broader name, barcode, or brand.</span></div>}
                 </div>
@@ -1295,6 +1406,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="product-card-top">
                       <span className="eyebrow">{product.division || "General"}</span>
                       <strong>{catalogCardTitle(item, product)}</strong>
+                      {product.isSeasonal || product.offerLabel || product.offerPrice ? <span className="product-promo-badge">{product.offerLabel || (product.isSeasonal ? "Seasonal" : "Offer")}</span> : null}
                     </div>
                     <div className="product-meta compact">
                       <span>{metaLabel}</span>
@@ -1315,8 +1427,8 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                       </div> : null}
                     </div>
                     <div className="product-pricing compact">
-                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Min sell ${getLastPurchaseRate(product)}`}</strong>
-                      <span>{`MRP ${product.mrp ?? 0}`}</span>
+                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Sale ${productSalePrice(product)}`}</strong>
+                      <span>{product.offerPrice ? `Offer ${product.offerPrice} · MRP ${product.mrp ?? 0}` : `MRP ${product.mrp ?? 0}`}</span>
                     </div>
                     <div className="product-footer stacked">
                       {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`${getWarehouseLabel(orderForm.warehouseId)} stock ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}

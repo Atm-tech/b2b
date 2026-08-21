@@ -7,6 +7,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { SidebarVectorIcon } from "./components/navigation";
 import { CollapsiblePanel, DataTable, LabelWithBadge, MetricCard, Panel, PendingBadge, TwoCol } from "./components/ui";
+import { AssistantPanel } from "./features/assistant/AssistantPanel";
 import appLogo from "./assets/group60.svg";
 import type {
   AppSnapshot,
@@ -91,8 +92,8 @@ function App() {
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
   const [warehouseForm, setWarehouseForm] = useState({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" as "Warehouse" | "Yard" });
-  const [productForm, setProductForm] = useState({ sku: "", name: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", defaultGstRate: "0" as GstRateInput, defaultTaxMode: "Exclusive" as TaxModeInput, defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: [] as string[] });
-  const [bulkCsv, setBulkCsv] = useState("sku,name,division,department,section,category,subCategory,unit,defaultGstRate,defaultTaxMode,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds,rsp");
+  const [productForm, setProductForm] = useState({ sku: "", name: "", brand: "", division: "", department: "", section: "", category: "", subCategory: "", unit: "", rsp: "0", mrp: "0", isSeasonal: false, offerLabel: "", offerPrice: "", defaultGstRate: "0" as GstRateInput, defaultTaxMode: "Exclusive" as TaxModeInput, defaultWeightKg: "0", toleranceKg: "0", tolerancePercent: "1", allowedWarehouseIds: [] as string[] });
+  const [bulkCsv, setBulkCsv] = useState("sku,name,brand,division,department,section,category,subCategory,unit,rsp,mrp,isSeasonal,offerLabel,offerPrice,defaultGstRate,defaultTaxMode,defaultWeightKg,toleranceKg,tolerancePercent,allowedWarehouseIds");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [partyForm, setPartyForm] = useState({ type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" });
   const [partyFormErrors, setPartyFormErrors] = useState({ name: false, gstNumber: false, bankAccountNumber: false, ifscCode: false });
@@ -1469,6 +1470,14 @@ function App() {
       </section>
       {scanOverlayOpen ? <QrScanOverlay onClose={() => setScanOverlayOpen(false)} onScan={handleQrScan} /> : null}
       {orderStatusTarget ? <OrderStatusOverlay snapshot={snapshot} currentUser={currentUser} target={orderStatusTarget} onClose={() => setOrderStatusTarget(null)} onOpenAction={(target) => openOrderStatus(target, true)} /> : null}
+      <AssistantPanel
+        snapshot={snapshot}
+        currentUser={currentUser}
+        sessionToken={sessionToken}
+        onSnapshot={setSnapshot}
+        onMessage={setMessage}
+        onError={setError}
+      />
       {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>

@@ -64,6 +64,11 @@ Copy `.env.example` and set:
 - `R2_BUCKET_NAME`
 - `R2_OBJECT_PREFIX` (optional, defaults to `proofs`)
 - `VITE_API_BASE_URL`
+- The assistant uses the bundled offline language dataset by default and consumes no AI tokens.
+- To explicitly enable hosted interpretation, set both `ASSISTANT_USE_OPENAI=true` and `OPENAI_API_KEY` (optional).
+- `OPENAI_ASSISTANT_MODEL` (optional; defaults to `gpt-4o-mini`)
+
+The app-wide assistant remains usable without an OpenAI key through its deterministic local parser. Add the key only to the backend environment, never to a `VITE_*` frontend variable.
 
 ## Deployment Notes
 

@@ -4,6 +4,9 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_created_at ON purchase_orders(cre
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_cart ON purchase_orders(cart_id) WHERE cart_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_warehouse ON purchase_orders(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_product ON purchase_orders(product_sku);
+CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
+CREATE INDEX IF NOT EXISTS idx_products_sub_category ON products(sub_category);
+CREATE INDEX IF NOT EXISTS idx_products_seasonal_offer ON products(is_seasonal, offer_price) WHERE is_seasonal OR offer_price IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier_product_created ON purchase_orders(supplier_id, product_sku, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_sales_orders_shop ON sales_orders(shop_id);

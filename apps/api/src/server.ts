@@ -51,6 +51,7 @@ import {
 } from "./db.js";
 import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
 import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from "./object-storage.js";
+import { runAssistant } from "./assistant-service.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -130,7 +131,7 @@ app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
   if (isProduction) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
@@ -285,7 +286,13 @@ app.post("/products", async (req, res) => wrap(res, async () => {
       toleranceKg: requiredNumber(req.body?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(req.body?.tolerancePercent, "Tolerance percent"),
       allowedWarehouseIds: requiredStringArray(req.body?.allowedWarehouseIds, "Allowed warehouses"),
-      slabs: normalizeSlabs(req.body?.slabs, optionalNumber(req.body?.rsp) ?? 0)
+      slabs: normalizeSlabs(req.body?.slabs, optionalNumber(req.body?.rsp) ?? 0),
+      brand: optionalString(req.body?.brand),
+      rsp: optionalNumber(req.body?.rsp),
+      mrp: optionalNumber(req.body?.mrp),
+      isSeasonal: Boolean(req.body?.isSeasonal),
+      offerLabel: optionalString(req.body?.offerLabel),
+      offerPrice: optionalNumber(req.body?.offerPrice)
     },
     currentUser
   );
@@ -311,7 +318,11 @@ app.patch("/products/:sku", async (req, res) => wrap(res, async () => {
       allowedWarehouseIds: requiredStringArray(req.body?.allowedWarehouseIds, "Allowed warehouses"),
       slabs: normalizeSlabs(req.body?.slabs, optionalNumber(req.body?.rsp) ?? 0),
       rsp: optionalNumber(req.body?.rsp),
-      mrp: optionalNumber(req.body?.mrp)
+      mrp: optionalNumber(req.body?.mrp),
+      brand: optionalString(req.body?.brand),
+      isSeasonal: Boolean(req.body?.isSeasonal),
+      offerLabel: optionalString(req.body?.offerLabel),
+      offerPrice: optionalNumber(req.body?.offerPrice)
     },
     currentUser
   );
@@ -344,7 +355,13 @@ app.post("/products/bulk", async (req, res) => wrap(res, async () => {
       toleranceKg: requiredNumber(row?.toleranceKg, "Tolerance kg"),
       tolerancePercent: requiredNumber(row?.tolerancePercent, "Tolerance percent"),
       allowedWarehouseIds: requiredStringArray(row?.allowedWarehouseIds, "Allowed warehouses"),
-      slabs: normalizeSlabs(row?.slabs, optionalNumber(row?.rsp) ?? 0)
+      slabs: normalizeSlabs(row?.slabs, optionalNumber(row?.rsp) ?? 0),
+      brand: optionalString(row?.brand),
+      rsp: optionalNumber(row?.rsp),
+      mrp: optionalNumber(row?.mrp),
+      isSeasonal: typeof row?.isSeasonal === "boolean" ? row.isSeasonal : /^(1|true|yes|y)$/i.test(String(row?.isSeasonal || "")),
+      offerLabel: optionalString(row?.offerLabel),
+      offerPrice: optionalNumber(row?.offerPrice)
     })),
     currentUser
   );
@@ -1014,6 +1031,14 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   console.error("Unhandled API error", error);
   res.status(500).json({ message: "Unexpected server error." });
 });
+
+app.post("/assistant/query", async (req, res) => wrap(res, async () => {
+  const currentUser = await getCurrentUser(req);
+  const text = requiredString(req.body?.text, "Assistant request");
+  if (text.length > 2_000) throw new Error("Assistant request is too long.");
+  const responseLanguage = optionalString(req.body?.responseLanguage) === "english" ? "english" : "hinglish";
+  return runAssistant(text, await getSnapshot(currentUser), currentUser, responseLanguage);
+}));
 
 app.listen(port, () => {
   console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"}); proof storage: ${r2Enabled ? "Cloudflare R2" : "local filesystem"}`);

@@ -90,7 +90,10 @@ function mapImportRows(rows: ImportRow[], defaultWarehouseIds: string[]): Array<
       shortName: readMapped(row, ["NAME"]),
       size: sizeText,
       rsp: Number(rspText || 0),
-      mrp: Number(mrpText || 0)
+      mrp: Number(mrpText || 0),
+      isSeasonal: /^(1|true|yes|y)$/i.test(readMapped(row, ["isSeasonal", "IS_SEASONAL", "SEASONAL"])),
+      offerLabel: readMapped(row, ["offerLabel", "OFFER_LABEL", "OFFER"]),
+      offerPrice: Number(readMapped(row, ["offerPrice", "OFFER_PRICE"], "0")) || undefined
     });
   }
   return products;

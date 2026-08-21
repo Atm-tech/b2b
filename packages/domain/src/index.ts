@@ -57,6 +57,9 @@ export type ProductMaster = {
   size?: string;
   rsp?: number;
   mrp?: number;
+  isSeasonal?: boolean;
+  offerLabel?: string;
+  offerPrice?: number;
   createdBy: string;
   createdAt: string;
 };

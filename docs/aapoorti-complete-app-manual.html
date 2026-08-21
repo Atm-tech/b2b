@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aapoorti B2B Sales Management System - Client Source Code Handover Manual</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  body { font-family: Aptos, Calibri, Arial, sans-serif; color:#172033; font-size:10.5pt; line-height:1.42; }
+  h1 { color:#123a63; font-size:25pt; margin:0 0 8pt; }
+  h2 { color:#123a63; font-size:17pt; border-bottom:2px solid #1b75bb; padding-bottom:4pt; margin-top:22pt; page-break-after:avoid; }
+  h3 { color:#235b85; font-size:13pt; margin-top:15pt; margin-bottom:5pt; page-break-after:avoid; }
+  h4 { color:#334e68; font-size:11pt; margin:10pt 0 4pt; page-break-after:avoid; }
+  p { margin:4pt 0 8pt; }
+  ul, ol { margin-top:3pt; margin-bottom:8pt; }
+  li { margin-bottom:2pt; }
+  table { width:100%; border-collapse:collapse; margin:7pt 0 12pt; font-size:9pt; page-break-inside:auto; }
+  th { background:#123a63; color:white; text-align:left; padding:5pt; border:1px solid #8da2b5; }
+  td { vertical-align:top; padding:5pt; border:1px solid #b7c4cf; }
+  tr:nth-child(even) td { background:#f4f7fa; }
+  code { font-family:Consolas, monospace; color:#7b2444; font-size:9pt; }
+  pre { font-family:Consolas, monospace; font-size:8.5pt; background:#f2f5f7; border:1px solid #c7d1da; padding:8pt; white-space:pre-wrap; }
+  .cover { text-align:center; padding-top:55mm; page-break-after:always; }
+  .cover .sub { font-size:15pt; color:#3b5871; margin:8pt 0 24pt; }
+  .cover .meta { color:#536879; font-size:10pt; }
+  .callout { background:#eaf5ff; border-left:5px solid #1b75bb; padding:8pt 10pt; margin:8pt 0 12pt; }
+  .warning { background:#fff4df; border-left-color:#e38b19; }
+  .critical { background:#fdecec; border-left-color:#c0392b; }
+  .good { background:#eaf8ef; border-left-color:#2e8b57; }
+  .small { font-size:8.5pt; color:#536879; }
+  .pagebreak { page-break-before:always; }
+  .flow { font-family:Consolas, monospace; background:#f5f8fb; border:1px solid #b8c6d1; padding:10pt; text-align:center; }
+  img.screen { width:100%; border:1px solid #9dacb8; margin:6pt 0 12pt; }
+  .toc li { margin-bottom:4pt; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <h1>Aapoorti B2B Sales Management System</h1>
+  <div class="sub">Client Source Code Handover, Complete Working Manual and Technical Operations Reference</div>
+  <p><b>Coverage:</b> delivered source code, top-to-bottom business flow, every application section, user roles, records, APIs, database, storage, installation, deployment, security, backup, testing, maintenance and acceptance</p>
+  <p class="meta"><b>Client:</b> ______________________________<br><b>Delivered by:</b> ______________________________<br><b>Project/Contract:</b> ______________________________<br><b>Release/Commit:</b> ______________________________<br><b>Handover date:</b> ______________________________<br><br>Prepared from the Sales Management application source code<br>Document revision: 21 July 2026</p>
+</section>
+
+<h2>Document purpose and scope</h2>
+<p>This is the formal source-code and operational handover reference for the Aapoorti B2B Sales Management System. It describes the application as implemented in the delivered repository and is intended for the client’s business users, system administrators, developers, security reviewers and future maintenance vendor. It covers the delivered components, what each screen does, data entered, actions available, record movement, role restrictions, status meanings, configuration, API routes, database tables, proof files, reports, installation, deployment, security, validation, maintenance, recovery and acceptance.</p>
+<div class="callout"><b>How to complete this handover:</b> fill in the client/vendor/release fields on the cover and in the sign-off section; create a clean tagged release; transfer credentials through an approved secret manager; demonstrate installation and recovery; record all accepted exceptions; and obtain signatures from authorized representatives.</div>
+<div class="callout warning"><b>Important:</b> configuration examples in this manual use placeholders. The current project <code>.env</code> may contain credentials and is intentionally not reproduced. Never place real database or object-storage secrets in a user manual or commit them to Git.</div>
+
+<h3>Contents</h3>
+<ol class="toc">
+  <li>Application summary and architecture</li>
+  <li>Complete business flow</li>
+  <li>Login, navigation and shared interface elements</li>
+  <li>Roles, visibility and authorization</li>
+  <li>Every screen and its fields/actions</li>
+  <li>Status models, calculations and automatic effects</li>
+  <li>Master data and transaction record definitions</li>
+  <li>API reference and permission matrix</li>
+  <li>Database schema and storage</li>
+  <li>Environment and application configuration</li>
+  <li>Local installation, production build and deployment</li>
+  <li>Daily operation, controls, backup and troubleshooting</li>
+  <li>Source-code delivery inventory and repository map</li>
+  <li>Client installation, environment promotion and release runbook</li>
+  <li>Credential, domain and third-party service transfer</li>
+  <li>Testing, acceptance, known limitations and sign-off</li>
+</ol>
+
+<h2>1. Application summary</h2>
+<p>Aapoorti B2B is an internal procurement, sales, inventory, payment, warehouse and delivery operating system. A single shared snapshot supplies the frontend with role-filtered users, masters and operational records. Users enter purchase and sales carts, upload proofs, receive goods, reserve and dispatch stock, reconcile payments and track every order through status, ledger and notes.</p>
+
+<h3>Technology and repository layout</h3>
+<table>
+  <tr><th>Layer</th><th>Implementation</th><th>Location / purpose</th></tr>
+  <tr><td>Web frontend</td><td>React 19, TypeScript, Vite 7, Axios, jsPDF, QRCode, XLSX</td><td><code>apps/web</code>; responsive single-page application, forms, dashboards, PDF/Excel/QR features</td></tr>
+  <tr><td>API</td><td>Express 4, TypeScript, Multer</td><td><code>apps/api</code>; authentication, role checks, validation, workflow endpoints and file uploads</td></tr>
+  <tr><td>Database</td><td>PostgreSQL 16 compatible, <code>pg</code> pool</td><td>Schema in <code>postgres/init</code>; API creates schema, compatibility columns, indexes and seed records on startup</td></tr>
+  <tr><td>Shared domain</td><td>TypeScript package</td><td><code>packages/domain</code>; roles, statuses and record interfaces shared by web and API</td></tr>
+  <tr><td>Proof storage</td><td>Local filesystem or private Cloudflare R2</td><td>Payment, delivery, receipt and return proofs; API keeps the same <code>/uploads/...</code> URLs for both modes</td></tr>
+  <tr><td>Deployment</td><td>Render blueprint; Vercel frontend option; Docker Compose for local PostgreSQL</td><td><code>render.yaml</code>, <code>vercel.json</code>, <code>docker-compose.postgres.yml</code></td></tr>
+</table>
+
+<h3>Runtime request flow</h3>
+<div class="flow">Browser SPA → Axios request + Bearer session token → Express validation/role check → PostgreSQL transaction → refreshed role-filtered snapshot → React screen update<br><br>Proof upload → Multer MIME/size check → local category directory OR private R2 object → stored filename and stable /uploads URL</div>
+
+<h2>2. Complete business flow: top to bottom</h2>
+<ol>
+  <li><b>Administrator setup:</b> create users, assign one or more roles and warehouses, create warehouses/yards, maintain products and configure payment/delivery settings.</li>
+  <li><b>Party setup:</b> Accounts/Purchaser/Sales create suppliers and shops with GST, banking, contact and location details.</li>
+  <li><b>Purchase booking:</b> Purchaser selects supplier, warehouse and products; enters quantity, rate, GST/tax mode, delivery/payment mode, optional advance and note; submits a grouped purchase cart.</li>
+  <li><b>Supplier payment:</b> Purchaser or Accounts records payments/proof; Accounts verifies, rejects, disputes or resolves them. Accounts can record supplier advance payments before an order exists.</li>
+  <li><b>Inbound movement:</b> Dealer delivery is tracked to the warehouse, or Delivery Manager assigns self-collection. Payment delivery can be part of the delivery task.</li>
+  <li><b>Warehouse receipt:</b> Warehouse Manager records received quantity and actual/container/net weight, uploads weighing proof, confirms partial receipt and flags tolerance exceptions.</li>
+  <li><b>Inventory creation:</b> accepted receipt quantity becomes a traceable inventory lot. Available, reserved and blocked quantities feed the stock view.</li>
+  <li><b>Sales booking:</b> Sales chooses a shop, searches the catalogue, adds cart lines, applies rate/CD/TOD/GST rules, chooses warehouse, payment and delivery; stock shortages can create probationary sales records rather than disappearing silently.</li>
+  <li><b>Sales collection:</b> Sales records collected amounts; Collection Agent follows assigned outstanding orders; Accounts reconciles submitted payments.</li>
+  <li><b>Warehouse dispatch:</b> Warehouse creates delivery dockets, records weights/proofs and marks orders ready. Delivery Manager may group dockets into consignments and assign internal/external transport.</li>
+  <li><b>Last mile:</b> delivery user accepts the task, reaches pickup, marks picked/handed over/delivered, handles route stops, cash collection/handover and proof uploads.</li>
+  <li><b>Closure:</b> delivery is complete, payment is verified/reconciled, stock has moved, ledger pending amount is zero, and exceptions/notes are resolved. Returns use dedicated purchase-return or sales-return trails.</li>
+</ol>
+
+<h2>3. Login, navigation and shared interface</h2>
+<h3>Login and session</h3>
+<ul>
+  <li>Login requires username and password at <code>POST /auth/login</code>.</li>
+  <li>The API returns the user, a random session token and the initial filtered application snapshot.</li>
+  <li>The browser stores user, token, last active view, simple-mode choice, sidebar state, delivery-manager warehouse selection and in-progress workspace drafts in <code>localStorage</code>.</li>
+  <li>Every protected API request sends <code>Authorization: Bearer &lt;token&gt;</code>.</li>
+  <li>Logout deletes the server session and clears the stored browser session/navigation values.</li>
+</ul>
+<div class="callout critical"><b>Security note:</b> the current source stores passwords in plain text and compares them case-insensitively. Seed credentials are also present in source. Before public or high-risk use, replace this with salted password hashing, password reset/rotation, session expiry, rate limiting and audit logging. Change all seeded passwords immediately.</div>
+
+<h3>Shared visual elements</h3>
+<table>
+  <tr><th>Element</th><th>Working</th></tr>
+  <tr><td>Sidebar / bottom navigation</td><td>Displays only views permitted by the union of the user’s roles. It can be collapsed and adapts for mobile.</td></tr>
+  <tr><td>Simple / full mode</td><td>Simple mode hides secondary operational views for most roles. Delivery execution roles are forced into the simpler view set.</td></tr>
+  <tr><td>Home metric cards</td><td>Counts products, parties, users, payment exceptions, partial/flagged receipts, inventory, open sales and delivery tasks. Cards navigate to the relevant module.</td></tr>
+  <tr><td>Panels and two-column layouts</td><td>Reusable containers organize forms, tables, summaries and responsive mobile stacking.</td></tr>
+  <tr><td>Badges</td><td>Pending counts and operational states appear beside navigation labels and records.</td></tr>
+  <tr><td>Notifications</td><td>Success and error messages are shown after API actions; the snapshot refreshes after successful mutations.</td></tr>
+  <tr><td>Date controls</td><td>Many operational entries accept an operation date; the backend normalizes date-only input to an ISO timestamp.</td></tr>
+  <tr><td>QR tools</td><td>PO/SO QR cards open a role-scoped status page. Users can download QR PNG/status PDF and scan via camera, image or pasted link when browser support allows.</td></tr>
+  <tr><td>Invoice tools</td><td>Purchase and sales groups can create tax invoices or non-GST estimates, print, download PDF and share through supported browser sharing/WhatsApp flows.</td></tr>
+  <tr><td>Exports</td><td>Operational tables/reports can produce PDF and Excel workbooks; Accounts also has a standalone Excel Maker.</td></tr>
+</table>
+
+<img class="screen" src="manual-assets/sales-view.jpg" alt="Sales workspace">
+
+<h2>4. Roles, views and ownership</h2>
+<table>
+  <tr><th>Role</th><th>Full-mode visible sections</th><th>Primary responsibility</th></tr>
+  <tr><td>Admin</td><td>Home, Users, Warehouses, Products, Parties, Purchase, Sales, Payments, Receipts, Ledger, Stock, Delivery, Settings, Notes</td><td>Master data, configuration, oversight and selected operational administration</td></tr>
+  <tr><td>Warehouse Manager</td><td>Home, Receipts, Stock, Ledger, Notes</td><td>Inbound checking, inventory visibility, docket/dispatch actions</td></tr>
+  <tr><td>Delivery Manager</td><td>Home, Delivery, Ledger, Notes</td><td>Inbound/outbound planning, assignment, merging and consignments</td></tr>
+  <tr><td>Purchaser</td><td>Home, Parties, Purchase, Purchases, Purchase Return, Ledger, Notes</td><td>Supplier master, PO booking/update, purchase returns and payment submission</td></tr>
+  <tr><td>Accounts</td><td>Home, Parties, Purchases, Sales, Payments, Excel Maker, Goods Warrants, Ledger, Stock, Notes</td><td>Payment reference control, advances, verification, ledger, vouchers and analysis</td></tr>
+  <tr><td>Sales</td><td>Home, Parties, Sales, Sales Orders, Sales Return, Ledger, Notes</td><td>Shop onboarding, catalogue sales, collection capture and sales returns</td></tr>
+  <tr><td>Collection Agent</td><td>Home, Sales Orders, Payments, Ledger, Notes</td><td>Outstanding collection follow-up and collection status</td></tr>
+  <tr><td>Data Analyst</td><td>Home, Purchases, Sales Orders, Stock</td><td>Read-oriented reporting and operational analysis</td></tr>
+  <tr><td>In Delivery</td><td>Home, Current Delivery, New Assignment, Notes</td><td>Inbound/self-collection execution</td></tr>
+  <tr><td>Out Delivery / Delivery</td><td>Home, Current Delivery, New Assignment, Notes</td><td>Outbound delivery execution</td></tr>
+</table>
+<p class="small">A user may have multiple roles. Visible screens are the union of role views, while backend actions still require at least one specifically allowed role. Warehouse IDs scope relevant records. Admin access does not automatically bypass every operational endpoint; the endpoint matrix later in this document is authoritative.</p>
+
+<h2>5. Screen-by-screen element catalogue</h2>
+
+<h3>Home / Overview</h3>
+<p><b>Elements:</b> role-specific greeting and navigation cards; business metrics; pending badges; QR scanner launcher; recent or pending work; shortcuts to payments/orders/stock/delivery; Accounts purchase-advance entry; daily sales report PDF action where available.</p>
+<p><b>Use:</b> start each shift here, open the largest pending queue, and return after completing a task to verify the count reduced.</p>
+
+<h3>Users (Admin)</h3>
+<p><b>Create fields:</b> Username, Name, Mobile, Roles (multi-select), Warehouses (multi-select), Password. Default password in the form and API is <code>1234</code> when not changed.</p>
+<p><b>Directory columns:</b> Username, Name, Roles, Warehouses, Mobile. A blank warehouse list means broad/all-warehouse visibility in current mapping.</p>
+<p><b>Action:</b> Create user. There is no user edit/deactivate endpoint in the current UI/API.</p>
+
+<h3>Warehouses (Admin)</h3>
+<p><b>Create fields:</b> Code/ID, Name, City (initially Bhopal), Type (Warehouse or Yard), Address.</p>
+<p><b>List columns:</b> Code, Name, City, Type. Warehouse codes are referenced by products, orders, inventory, receipts, dockets, consignments and scoped users, so create carefully.</p>
+
+<h3>Products (Admin)</h3>
+<p><b>Core fields:</b> SKU, Name, Division, Department, Section, Category, Sub-category, Unit, default GST rate (NA/0/5/12/18/40), tax mode (NA/Exclusive/Inclusive), default weight kg, tolerance kg, tolerance %, allowed warehouses, quantity slabs, RSP and MRP.</p>
+<p><b>Extended import fields supported by the record/importer:</b> remarks, category 6, site name, barcode, supplier name, HSN code, article name, item name, brand, short name and size.</p>
+<p><b>Actions:</b> create, edit, delete; paste/import bulk rows; upload CSV/XLS/XLSX; download/use template where exposed; search/filter product directory. During startup the backend infers missing weights from product text such as grams, kilograms, litres, millilitres, additive/free packs and multipacks.</p>
+<div class="callout"><b>Operational rule:</b> allowed warehouses, weight and tolerance directly affect whether a product can be received and how receipt variance is flagged. GST defaults feed purchase and sales lines.</div>
+
+<h3>Parties</h3>
+<p><b>Types:</b> Supplier and Shop.</p>
+<p><b>Fields:</b> Type, Name, GST Number, Bank Name, Bank Account Number, IFSC Code, Mobile Number, Address, City, Contact Person; record model also supports delivery address/city, latitude, longitude and location label.</p>
+<p><b>Actions:</b> create, edit, filter by supplier/shop, review vitals and use a party in purchase, sales, payment and delivery workflows. Current create/update API requires the main identity, GST, banking, contact and address fields.</p>
+
+<h3>Purchase: new grouped PO</h3>
+<p><b>Header fields:</b> supplier, receiving warehouse, delivery mode (Dealer Delivery/Self Collection), payment mode, cash timing when applicable, operation date, order note, optional location and optional advance payment.</p>
+<p><b>Line/catalog fields:</b> product/SKU search, quantity, rate, taxable amount, GST rate, GST amount, tax mode and previous-rate context. Cart mode allows multiple products under one public cart/order group.</p>
+<p><b>Automatic calculations/effects:</b> expected weight = product default weight × ordered quantity; tax totals are normalized; initial status represents an order placed pending delivery; a purchase ledger entry is created/updated; advance payment can be recorded; a PO/group ID is generated.</p>
+<p><b>Actions:</b> add/remove cart items, submit order, reopen/update an eligible group from Purchases, print/download/share invoice or estimate, view/download QR/status.</p>
+
+<img class="screen" src="manual-assets/sales-cart-open.jpg" alt="Cart pattern">
+
+<h3>Purchases: grouped order summary</h3>
+<p><b>Elements:</b> grouped PO/cart rows, supplier, items, quantity/value, delivery status, payment status, outstanding amount, created date, search/filter, pending badges and analytics variants for Accounts/Data Analyst/Admin.</p>
+<p><b>Actions by permission:</b> Purchaser opens an order for update; authorized users view status QR, PDF/invoice and WhatsApp/share output; Accounts reviews payment position; analysts use summaries without editing the operational order.</p>
+
+<h3>Purchase Return</h3>
+<p><b>Fields:</b> mode (Adhoc/Planned), optional linked purchase group and line, supplier, warehouse, product, quantity, rate, reason, note and optional photo/proof.</p>
+<p><b>Reasons:</b> Rate Difference, Damage, Quality Issue, Wrong Item, Excess Quantity, Other. Multiple lines share a generated return-group ID. Only Purchaser creates purchase returns.</p>
+
+<h3>Sales: customer and catalogue cart</h3>
+<p><b>Customer step:</b> choose existing shop or open the party-creation path. Shop selection carries GST/contact/delivery context.</p>
+<p><b>Catalogue elements:</b> text search, category/brand/product browsing, optional speech recognition, product cards, rate pop-up, quantity, available stock, warehouse, add-to-cart and cart badge/drawer.</p>
+<p><b>Checkout fields:</b> shop, warehouse, line quantities and rates, CD/TOD rate and discounts, taxable amount, GST rate/amount/tax mode, payment mode/cash timing, collected or advance amount, delivery mode (Self Collection/Delivery), delivery charge, operation date and note.</p>
+<p><b>Actions:</b> new sale, customer select, search/add/remove/change cart lines, summary, payment step, finalize, continue shopping, create invoice/estimate, download/print/share PDF, QR status, and later reopen via Sales Orders when permitted.</p>
+<p><b>Automatic effects:</b> stock is reserved/allocated where available; delivery charge applies once per grouped delivery order; status begins Booked or Self Pickup; ledger entry is created; an advance payment may be created; insufficient stock can produce a probationary-sales record with pending quantity for later clearing.</p>
+
+<img class="screen" src="manual-assets/sales-catalog-page.jpg" alt="Sales catalogue">
+<img class="screen" src="manual-assets/sales-summary-step.jpg" alt="Sales checkout summary">
+
+<h3>Sales Orders / Sales summary</h3>
+<p><b>Elements:</b> grouped order/customer rows, line and amount totals, fulfilment status, payment state, outstanding collection, collection assignment and notes. Role-specific analyst and collection views are used.</p>
+<p><b>Actions:</b> update eligible order, record collection/payment, assign collection agent through an operational note, log override note, open QR status, invoice print/download/share. Warehouse dispatch actions update readiness and docket state through the warehouse operations views.</p>
+
+<h3>Sales Return</h3>
+<p><b>Fields:</b> mode, optional linked sales group/line, shop, warehouse, product, quantity, rate, reason, note and photo/proof.</p>
+<p><b>Effect:</b> records a grouped return audit trail and can create inventory with source type Sales Return. Only Sales creates sales returns.</p>
+
+<h3>Payments</h3>
+<p>The screen changes by role.</p>
+<ul>
+  <li><b>Purchaser:</b> supplier payment entries connected to purchase orders, amount/mode/cash timing/reference/voucher/UTR/proof/status/note/date.</li>
+  <li><b>Sales:</b> customer collection capture connected to sales groups; proof upload and submitted/pending state.</li>
+  <li><b>Collection Agent:</b> assigned outstanding orders, collection amount/reference/proof and collection follow-up.</li>
+  <li><b>Accounts:</b> unified purchase/sales review, create supplier advance, edit payment, verify/reject/dispute/resolve, inspect proof and reconcile ledger.</li>
+</ul>
+<p><b>Payment modes:</b> Cash, Card, UPI, NEFT, RTGS and Cheque, subject to Admin settings. Cash timing values are In Hand, At Delivery and Later.</p>
+<p><b>Verification states:</b> Pending, Submitted, Verified, Rejected, Disputed, Resolved. Verified/settled amounts reduce the linked ledger pending balance; collection status supports None, Assigned, Collected and Reconciled.</p>
+<p><b>Proof:</b> JPEG, PNG, WebP or PDF; default maximum 8 MiB. Proof URL remains <code>/uploads/payment-proofs/&lt;filename&gt;</code>.</p>
+
+<h3>Receipts (Warehouse Manager)</h3>
+<p><b>Fields:</b> purchase order, warehouse, received quantity, actual/gross weight, container weight, computed net weight, weighing proof, cash proof when relevant, note, operation date and explicit partial confirmation.</p>
+<p><b>Generated values:</b> GRC number, receiver identity, ordered/pending quantity, expected weight, variance kg, partial flag and exception flag.</p>
+<p><b>Actions:</b> receive, upload proof, confirm partial, flag/unflag/update note. Accepted quantity updates the PO and inventory. Weight variance is tested against product tolerance in kg/percent.</p>
+
+<h3>Stock</h3>
+<p><b>Summary fields:</b> warehouse/code/name, SKU/product, available, reserved and blocked quantities. Analyst/Admin/Accounts variants provide aggregated views; Warehouse Manager sees operational stock.</p>
+<p><b>Sources:</b> accepted purchase receipts and sales returns. Sales reservations reduce usable availability; exceptions may stay blocked. Probationary sales separately identify quantities sold before stock was available.</p>
+
+<h3>Ledger</h3>
+<p><b>Fields:</b> ledger ID, side (Purchase/Sales), linked order/group, party, goods value, paid amount, pending amount and status (Pending/Partial/Settled).</p>
+<p><b>Working:</b> the ledger is an operational reconciliation view derived/maintained from orders and payments. It is not a full double-entry accounting general ledger. Accounts has richer filters/workspaces; other permitted roles receive scoped visibility.</p>
+
+<h3>Delivery Manager: Home, Inbound and Dispatch</h3>
+<p><b>Home:</b> pending counts, warehouse selector and navigation to inbound or dispatch queues.</p>
+<p><b>Inbound fields/actions:</b> purchase-side linked order IDs, dealer/self-collection mode, internal/external transport, from/to, assignee, pickup/drop times, route hint/stops, vehicle, freight, payment action, cash requirement, status, proofs and date.</p>
+<p><b>Dispatch fields/actions:</b> select ready sales dockets/orders, create or update tasks, assign delivery user(s), group/merge compatible delivery tasks, create consignments, set warehouse, internal/external transport, vehicle/freight and route stops.</p>
+<p><b>Task states:</b> Planned → Picked → Handed Over → Delivered. Delivery dockets and consignments have their own readiness/pickup/delivery states.</p>
+
+<h3>Current Delivery / New Assignment</h3>
+<p><b>Elements:</b> role/user-filtered assignments, order and route stops, supplier/shop and warehouse locations, product summary, amount/payment requirement, acceptance/action buttons, proof uploads and last-action time.</p>
+<p><b>Typical execution:</b> open New Assignment → accept/mark Picked → reach supplier or warehouse → check/pick items → record payment delivered/collected when required → upload weight/cash/delivery proof → Handed Over → Delivered. In Delivery focuses purchase/inbound tasks; Out Delivery/Delivery focuses sales/outbound tasks.</p>
+
+<h3>Delivery dockets and consignments</h3>
+<p><b>Docket fields:</b> docket ID, sales order, shop, SKU, warehouse, quantity, gross/container weight, proof, optional consignment and status (Pending Packing, Ready, Tagged, Pending Pickup, Out for Delivery, Delivered).</p>
+<p><b>Consignment fields:</b> ID, docket IDs, warehouse, assigned person, total weight, status (Draft, Ready, Pending Pickup, Out for Delivery, Delivered), creator/date.</p>
+
+<h3>Goods Warrants (Accounts)</h3>
+<p><b>Fields:</b> outlet (Awadhpuri, Koh E Fiza, New Market, Kolar, Indrapuri), issued to, issuer name, received amount, warrant amount/denomination, Cash/Cheque, cheque number, cash collected date, issue date/start, valid-through date and note.</p>
+<p><b>Actions:</b> create one, bulk-create denominations with monthly limits, edit, clear list, render/print warrant document and use the configured logo endpoint. Warrant number is unique.</p>
+
+<h3>Excel Maker (Accounts)</h3>
+<p>A standalone utility converts pasted/structured text into a downloadable Excel workbook. It is client-side and uses the XLSX library; use it for ad-hoc tabular output, not as a replacement for database backup.</p>
+
+<h3>Settings (Admin)</h3>
+<p><b>Payment method rows:</b> code, label, Active checkbox and Allows Cash Timing checkbox.</p>
+<p><b>Delivery charge:</b> model (Fixed/Per Km) and numeric amount. Current sales calculation applies the configured amount to delivery orders; the grouped order carries it once.</p>
+<p><b>Defaults on a new database:</b> Cash/Card/UPI/NEFT/RTGS active, Cheque inactive; Cash allows cash timing; fixed delivery amount 350.</p>
+
+<h3>Notes</h3>
+<p><b>Fields:</b> Entity Type, Entity ID, Visibility, Note. Entity types: Purchase Order, Receipt, Sales Order, Payment, Delivery, Inventory, Party. Visibility: Restricted, Operational, Management.</p>
+<p><b>List:</b> entity, ID, note, author and visibility. Notes are the human-readable audit/exception trail; current enforcement primarily filters snapshot data/roles rather than implementing a complete record-by-record confidentiality policy.</p>
+
+<h2>6. Status models and key calculations</h2>
+<table>
+  <tr><th>Record</th><th>States</th></tr>
+  <tr><td>Purchase</td><td>Draft; Order Placed - Pending Delivery; Pickup Assigned; In Pickup; Order Delivered - Warehouse Check; Pending Payment; Ready for Dispatch; In Transit; Partially Received; Received; Closed; Cancelled</td></tr>
+  <tr><td>Sales</td><td>Draft; Booked; Ready for Dispatch; Pending Pickup; Out for Delivery; Self Pickup; Delivered; Closed; Cancelled</td></tr>
+  <tr><td>Payment verification</td><td>Pending; Submitted; Verified; Rejected; Disputed; Resolved</td></tr>
+  <tr><td>Collection</td><td>None; Assigned; Collected; Reconciled</td></tr>
+  <tr><td>Delivery task</td><td>Planned; Picked; Handed Over; Delivered</td></tr>
+  <tr><td>Docket</td><td>Pending Packing; Ready; Tagged; Pending Pickup; Out for Delivery; Delivered</td></tr>
+  <tr><td>Consignment</td><td>Draft; Ready; Pending Pickup; Out for Delivery; Delivered</td></tr>
+  <tr><td>Inventory lot</td><td>Available; Reserved; Blocked</td></tr>
+  <tr><td>Ledger</td><td>Pending; Partial; Settled</td></tr>
+  <tr><td>Probationary sale</td><td>Pending; Cleared</td></tr>
+</table>
+
+<h3>Calculations</h3>
+<ul>
+  <li><b>Expected receipt weight:</b> default product weight kg × ordered/expected quantity.</li>
+  <li><b>Net receipt weight:</b> actual/gross weight − container weight.</li>
+  <li><b>Weight variance:</b> net weight − expected weight; compared with tolerance kg and tolerance percent to set flagged status.</li>
+  <li><b>Exclusive tax:</b> taxable base plus calculated GST. <b>Inclusive tax:</b> tax is separated from the entered inclusive value. <b>NA:</b> non-GST estimate behavior.</li>
+  <li><b>Sales line value:</b> quantity/rate with CD/TOD adjustments, taxable value and GST, plus applicable grouped delivery charge.</li>
+  <li><b>Ledger:</b> pending = goods value − accepted paid amount; status becomes Pending, Partial or Settled.</li>
+  <li><b>Stock:</b> usable stock is aggregated from inventory lots after available/reserved/blocked movements. Returns and probationary clearing modify the trail.</li>
+</ul>
+
+<h2>7. Record definitions</h2>
+<table>
+  <tr><th>Record</th><th>Important stored elements</th></tr>
+  <tr><td>User</td><td>ID, username, full name, primary role, roles array, warehouse IDs, mobile, active, created time</td></tr>
+  <tr><td>Warehouse</td><td>Code, name, city, address, Warehouse/Yard, created time</td></tr>
+  <tr><td>Product</td><td>SKU, hierarchy, unit, GST/tax mode, weight/tolerances, allowed warehouses, slabs, barcode/HSN/brand/size/RSP/MRP metadata</td></tr>
+  <tr><td>Counterparty</td><td>Supplier/Shop, GST, banking, mobile, address/delivery address, contact, location coordinates/label</td></tr>
+  <tr><td>Purchase order line</td><td>PO/cart IDs, supplier, SKU, purchaser, warehouse, ordered/received quantities, rate/tax/total, expected weight, delivery/payment, note/status</td></tr>
+  <tr><td>Sales order line</td><td>SO/cart IDs, shop, SKU, salesman, warehouse, quantity/rate, CD/TOD, tax/total, payment/delivery, charge, note/status</td></tr>
+  <tr><td>Payment</td><td>side/order, kind Order/Advance, counterparty, amount, mode/timing, reference/voucher/UTR/proof, verification and collection data</td></tr>
+  <tr><td>Receipt</td><td>GRC, PO, warehouse/receiver, quantities, actual/container/net/expected weights, variance, proof, partial/flagged, notes</td></tr>
+  <tr><td>Return</td><td>group/line, mode, linked order, party, warehouse, SKU, quantity/rate, reason, note, photo, creator</td></tr>
+  <tr><td>Inventory lot</td><td>source order/type, warehouse, SKU, available/reserved/blocked, status</td></tr>
+  <tr><td>Delivery task</td><td>side, order IDs, consignment, mode/transport, vehicle/freight, from/to/assignee, route stops/times, payment/cash/proofs, status</td></tr>
+  <tr><td>Docket/consignment</td><td>sales packing and grouping records with quantities, weights, warehouse, assignee and dispatch status</td></tr>
+  <tr><td>Ledger/note/warrant</td><td>financial summary, operational audit narrative and Accounts voucher records</td></tr>
+</table>
+
+<h2>8. API endpoint and authorization reference</h2>
+<p>All endpoints except root, health, login, proof GETs and goods-warrant logo require a valid Bearer session either directly or through a role check. Mutation wrappers generally return HTTP 201 on success and 400 with <code>{message}</code> on validation/authorization failures.</p>
+<table>
+  <tr><th>Method and route</th><th>Allowed role(s) / purpose</th></tr>
+  <tr><td>GET <code>/</code>, <code>/health</code></td><td>Public service/version/health and proof-storage mode</td></tr>
+  <tr><td>POST <code>/auth/login</code>; POST <code>/auth/logout</code></td><td>Session creation/deletion</td></tr>
+  <tr><td>GET <code>/snapshot</code></td><td>Any authenticated user; returns role/warehouse-filtered application snapshot</td></tr>
+  <tr><td>POST <code>/users</code></td><td>Admin</td></tr>
+  <tr><td>POST <code>/warehouses</code></td><td>Admin</td></tr>
+  <tr><td>POST/PATCH/DELETE <code>/products...</code>; bulk and upload routes</td><td>Admin</td></tr>
+  <tr><td>POST/PATCH <code>/counterparties...</code></td><td>Accounts, Purchaser, Sales</td></tr>
+  <tr><td>POST <code>/settings</code></td><td>Admin</td></tr>
+  <tr><td>POST <code>/purchase-orders</code>, <code>/purchase-orders/cart</code>; PATCH <code>/purchase-orders/:id</code></td><td>Purchaser</td></tr>
+  <tr><td>POST <code>/sales-orders</code>, <code>/sales-orders/cart</code></td><td>Sales</td></tr>
+  <tr><td>PATCH <code>/sales-orders/:id</code></td><td>Sales for commercial editing; Warehouse Manager for permitted dispatch/status work</td></tr>
+  <tr><td>POST <code>/sales-orders/reset-operational</code></td><td>Admin; destructive operational reset, use only with backup</td></tr>
+  <tr><td>POST/PATCH <code>/payments...</code></td><td>Accounts, Purchaser, Sales, Collection Agent; Accounts requires reference and owns verification</td></tr>
+  <tr><td>POST/DELETE <code>/payments/purchase-advance</code></td><td>Create: Accounts. Clear: Admin or Accounts</td></tr>
+  <tr><td>POST <code>/payments/verify</code></td><td>Accounts</td></tr>
+  <tr><td>POST <code>/goods-warrants</code>, <code>/bulk</code>; PUT item; DELETE all</td><td>Accounts</td></tr>
+  <tr><td>POST <code>/receipt-checks</code></td><td>Warehouse Manager</td></tr>
+  <tr><td>PATCH <code>/receipt-checks/:id</code></td><td>Warehouse Manager, Accounts</td></tr>
+  <tr><td>POST <code>/purchase-returns</code></td><td>Purchaser</td></tr>
+  <tr><td>POST <code>/sales-returns</code></td><td>Sales</td></tr>
+  <tr><td>POST <code>/delivery-tasks</code></td><td>Delivery Manager, Accounts</td></tr>
+  <tr><td>PATCH <code>/delivery-tasks/:id</code></td><td>Warehouse Manager, Delivery Manager, In Delivery, Out Delivery, Delivery</td></tr>
+  <tr><td>POST <code>/delivery-tasks/merge</code></td><td>Delivery Manager</td></tr>
+  <tr><td>POST <code>/delivery-dockets</code></td><td>Warehouse Manager</td></tr>
+  <tr><td>POST <code>/delivery-consignments</code></td><td>Delivery Manager</td></tr>
+  <tr><td>POST <code>/notes</code></td><td>Warehouse Manager, Delivery Manager, Purchaser, Accounts, Sales, delivery execution roles</td></tr>
+  <tr><td>POST proof upload routes</td><td>Payment: Accounts/Purchaser/Sales/Collection Agent; Delivery: delivery roles; Receipt: Warehouse Manager; Return: Purchaser/Sales</td></tr>
+  <tr><td>GET <code>/uploads/:category/:fileName</code></td><td>Static/local or R2-backed proof delivery; currently not protected by record-level authorization</td></tr>
+</table>
+
+<h2>9. Database and storage</h2>
+<h3>PostgreSQL tables</h3>
+<table>
+  <tr><th>Table</th><th>Purpose</th><th>Main relationships</th></tr>
+  <tr><td><code>users</code>, <code>sessions</code></td><td>identity, roles, warehouse scope and session tokens</td><td>users referenced as creators, purchaser/salesman/receiver; sessions → users</td></tr>
+  <tr><td><code>warehouses</code>, <code>products</code>, <code>counterparties</code>, <code>settings</code></td><td>master/configuration data</td><td>referenced by almost all transaction records</td></tr>
+  <tr><td><code>purchase_orders</code>, <code>sales_orders</code></td><td>commercial order lines grouped by cart ID</td><td>party, product, user, warehouse; connect to payments, receipts, returns, delivery and ledger</td></tr>
+  <tr><td><code>payments</code>, <code>ledger_entries</code></td><td>payment evidence/reconciliation and financial summary</td><td>side + linked order/group</td></tr>
+  <tr><td><code>receipt_checks</code>, <code>inventory_lots</code>, <code>probationary_sales</code></td><td>receiving, stock and shortage exception trail</td><td>purchase/sales order, warehouse, product</td></tr>
+  <tr><td><code>purchase_returns</code>, <code>sales_returns</code></td><td>grouped returns</td><td>optional linked order/line, party, warehouse, product</td></tr>
+  <tr><td><code>delivery_tasks</code>, <code>delivery_dockets</code>, <code>delivery_consignments</code></td><td>transport execution, packing and grouping</td><td>order IDs, warehouse, consignment/docket links</td></tr>
+  <tr><td><code>goods_warrants</code>, <code>note_records</code></td><td>Accounts vouchers and operational audit notes</td><td>warrant unique number; note entity type/ID</td></tr>
+</table>
+<p>Indexes cover common supplier/shop/status/date lookups, payments, receipts, inventory, ledger, task assignee/status, notes and unique docket/warrant constraints. The API runs compatibility <code>ALTER TABLE ... ADD COLUMN IF NOT EXISTS</code> statements and selected backfills on startup.</p>
+
+<h3>Snapshot filtering</h3>
+<p><code>GET /snapshot</code> is the frontend read model. It returns metrics, settings and arrays for all domain records, filtered according to current roles, assignee identity and warehouse scope. UI state should never be treated as the security boundary; endpoint role checks and snapshot filtering both matter.</p>
+
+<h3>Proof file categories</h3>
+<table>
+  <tr><th>Category</th><th>Local subdirectory / URL</th><th>Accepted types</th></tr>
+  <tr><td>Payment</td><td><code>payment-proofs</code></td><td rowspan="4">JPEG, PNG, WebP, PDF; size controlled by <code>MAX_UPLOAD_BYTES</code></td></tr>
+  <tr><td>Delivery</td><td><code>delivery-proofs</code></td></tr>
+  <tr><td>Receipt</td><td><code>receipt-proofs</code></td></tr>
+  <tr><td>Return</td><td><code>return-proofs</code></td></tr>
+</table>
+<p>With complete R2 credentials, new proofs are written to private Cloudflare R2 and read through the API. A local file with the same name is checked first to support migration. Product CSV/workbook uploads remain temporary local files under the uploads CSV directory.</p>
+
+<h2>10. Configuration reference</h2>
+<table>
+  <tr><th>Variable</th><th>Required / default</th><th>Meaning</th></tr>
+  <tr><td><code>NODE_ENV</code></td><td>development</td><td>Enables production HSTS and hides development database path</td></tr>
+  <tr><td><code>PORT</code></td><td>8080</td><td>API listening port</td></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>Production recommended</td><td>Complete PostgreSQL connection string; overrides individual POSTGRES values</td></tr>
+  <tr><td><code>POSTGRES_HOST/PORT/DB/USER/PASSWORD</code></td><td>Local defaults in example</td><td>Used when DATABASE_URL is absent</td></tr>
+  <tr><td><code>PGSSLMODE</code> / <code>PGSSL</code></td><td>optional</td><td>Enables TLS; Render URLs are detected automatically</td></tr>
+  <tr><td><code>PGPOOL_MAX</code></td><td>10</td><td>PostgreSQL pool maximum connections</td></tr>
+  <tr><td><code>PG_IDLE_TIMEOUT_MS</code></td><td>30000</td><td>Idle connection timeout</td></tr>
+  <tr><td><code>UPLOADS_DIR</code></td><td><code>uploads</code></td><td>Local upload root / fallback and CSV staging</td></tr>
+  <tr><td><code>ALLOWED_ORIGINS</code></td><td><code>http://localhost:5173</code></td><td>Comma-separated CORS origins; avoid wildcard in production</td></tr>
+  <tr><td><code>REQUEST_BODY_LIMIT</code></td><td>2mb</td><td>JSON body limit</td></tr>
+  <tr><td><code>MAX_UPLOAD_BYTES</code></td><td>8388608</td><td>Product import and proof upload size limit</td></tr>
+  <tr><td><code>R2_ACCOUNT_ID</code></td><td>all four credentials or none</td><td>Cloudflare account</td></tr>
+  <tr><td><code>R2_ACCESS_KEY_ID</code></td><td>secret</td><td>R2 API access key</td></tr>
+  <tr><td><code>R2_SECRET_ACCESS_KEY</code></td><td>secret</td><td>R2 API secret</td></tr>
+  <tr><td><code>R2_BUCKET_NAME</code></td><td><code>aapoorti-proofs</code></td><td>Private proof bucket</td></tr>
+  <tr><td><code>R2_OBJECT_PREFIX</code></td><td><code>proofs</code></td><td>Object key prefix</td></tr>
+  <tr><td><code>VITE_API_BASE_URL</code></td><td>localhost API or browser origin fallback</td><td>Frontend build-time API address</td></tr>
+</table>
+
+<h3>Configuration example</h3>
+<pre>NODE_ENV=development
+PORT=8080
+DATABASE_URL=postgresql://&lt;user&gt;:&lt;password&gt;@127.0.0.1:5432/aapoorti_b2b
+UPLOADS_DIR=uploads
+ALLOWED_ORIGINS=http://localhost:5173
+REQUEST_BODY_LIMIT=2mb
+MAX_UPLOAD_BYTES=8388608
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=aapoorti-proofs
+R2_OBJECT_PREFIX=proofs
+VITE_API_BASE_URL=http://localhost:8080</pre>
+
+<h3>HTTP/security configuration already present</h3>
+<ul>
+  <li><code>x-powered-by</code> disabled; trust proxy enabled.</li>
+  <li><code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: DENY</code>, strict referrer policy and a permissions policy.</li>
+  <li>HSTS enabled in production.</li>
+  <li>CORS allow-list with credentials.</li>
+  <li>Proof filename sanitization, path/category validation, MIME allow-list and size limits.</li>
+</ul>
+
+<h2>11. Install, run, build and deploy</h2>
+<h3>Local prerequisites</h3>
+<ul><li>Node.js and npm</li><li>PostgreSQL 16 or Docker Desktop/Compose</li><li>A modern browser; camera/image QR decoding varies by browser</li></ul>
+
+<h3>Local run</h3>
+<pre>npm install
+npm run postgres:up
+npm run dev</pre>
+<p>Frontend normally runs at <code>http://localhost:5173</code>; API at <code>http://localhost:8080</code>. Verify <code>GET /health</code> returns <code>ok: true</code> and the expected proof-storage mode.</p>
+
+<h3>Useful commands</h3>
+<table>
+  <tr><th>Command</th><th>Purpose</th></tr>
+  <tr><td><code>npm run dev</code></td><td>Runs API and web development servers concurrently</td></tr>
+  <tr><td><code>npm run build</code></td><td>Builds domain, API and web in dependency order</td></tr>
+  <tr><td><code>npm run lint</code></td><td>Runs any workspace lint scripts that exist</td></tr>
+  <tr><td><code>npm run postgres:up/down/logs</code></td><td>Controls the local PostgreSQL Docker service</td></tr>
+  <tr><td><code>npm run import:workbook -w apps/api</code></td><td>Runs the API workbook import utility</td></tr>
+  <tr><td><code>npm run db:clean -w apps/api</code></td><td>Database cleanup utility; inspect and back up before using</td></tr>
+</table>
+
+<h3>Production build</h3>
+<pre>npm install
+npm run build -w packages/domain
+npm run build -w apps/api
+npm run start -w apps/api
+
+# frontend
+npm run build -w apps/web</pre>
+
+<h3>Render</h3>
+<p><code>render.yaml</code> defines an API web service, static frontend, persistent upload disk and PostgreSQL database. Configure production database, exact frontend origin and R2 secrets in the dashboard. Health path is <code>/health</code>. The static frontend rewrites all routes to <code>/index.html</code>.</p>
+
+<h3>Vercel frontend</h3>
+<p>The root <code>vercel.json</code> installs the domain/web workspaces, builds the domain then web, and publishes <code>apps/web/dist</code>. Set <code>VITE_API_BASE_URL</code> to the deployed Render API before building.</p>
+
+<h3>Cloudflare R2</h3>
+<ol>
+  <li>Create a private bucket, normally <code>aapoorti-proofs</code>.</li>
+  <li>Create a bucket-scoped Object Read &amp; Write token.</li>
+  <li>Set all R2 credentials and redeploy.</li>
+  <li>Confirm <code>/health</code> reports <code>cloudflare-r2</code>.</li>
+  <li>Test one upload/open operation for each proof category before removing any persistent disk.</li>
+</ol>
+<div class="callout warning">Do not enable a public <code>r2.dev</code> URL for private business proofs. The current API proof GET is itself unauthenticated, so production hardening should add authorization or signed short-lived URLs.</div>
+
+<h2>12. Daily controls, backup and troubleshooting</h2>
+<h3>Start-of-day checklist</h3>
+<ol>
+  <li>Confirm API health and database connectivity.</li>
+  <li>Open Home for each operating role and review pending badges.</li>
+  <li>Accounts reviews submitted/disputed payments and advances.</li>
+  <li>Warehouse reviews receipt and dispatch queues.</li>
+  <li>Delivery Manager checks unassigned/late inbound and outbound work.</li>
+  <li>Sales/Purchaser check open order and exception groups.</li>
+</ol>
+
+<h3>End-of-day checklist</h3>
+<ol>
+  <li>All physical receipts have a GRC, quantities, weights and required proof.</li>
+  <li>All completed delivery actions have correct status, route stops, proof and cash handover.</li>
+  <li>Accounts matches collections/supplier payments and investigates rejected/disputed items.</li>
+  <li>Review stock negative/probationary/blocked conditions and ledger pending balances.</li>
+  <li>Record unresolved exceptions in Notes with the correct entity ID.</li>
+  <li>Run/confirm database and proof-storage backups.</li>
+</ol>
+
+<h3>Backup and recovery</h3>
+<ul>
+  <li>Back up PostgreSQL with a managed snapshot and/or <code>pg_dump</code>. Test restore to a separate database.</li>
+  <li>Back up the local uploads directory if local storage is active. For R2, enable retention/versioning appropriate to policy.</li>
+  <li>Database and proofs must be backed up together; the database stores proof filenames, not the file bytes.</li>
+  <li>Before reset/cleanup/delete-all endpoints or utilities, take and verify a backup.</li>
+</ul>
+
+<h3>Troubleshooting</h3>
+<table>
+  <tr><th>Symptom</th><th>Checks / resolution</th></tr>
+  <tr><td>Invalid credentials</td><td>Confirm seeded/created username, password and active state. Password comparison is currently case-insensitive. Rotate the credential rather than sharing it.</td></tr>
+  <tr><td>Session expired/token missing</td><td>Log out/in; clear stale localStorage if necessary; confirm Authorization header reaches the API through the proxy.</td></tr>
+  <tr><td>Origin not allowed</td><td>Add the exact frontend scheme/host to comma-separated <code>ALLOWED_ORIGINS</code> and redeploy.</td></tr>
+  <tr><td>Database startup failure</td><td>Check DATABASE_URL or POSTGRES values, TLS mode, database availability, pool limit and schema privileges.</td></tr>
+  <tr><td>Proof rejected</td><td>Use JPEG/PNG/WebP/PDF under MAX_UPLOAD_BYTES. Check storage credentials/disk permissions and <code>/health</code> storage mode.</td></tr>
+  <tr><td>Product import fails</td><td>Check CSV/XLS/XLSX headers and required product/warehouse values; confirm upload size; review importer errors.</td></tr>
+  <tr><td>Wrong/no screen</td><td>Verify assigned role(s), simple/full mode and warehouse scope. Screen visibility and endpoint permission are separate.</td></tr>
+  <tr><td>Stock does not match</td><td>Trace receipt checks, inventory lots, sales reservations, returns, blocked quantities and probationary sales for the same warehouse/SKU.</td></tr>
+  <tr><td>Ledger not settled</td><td>Match payment side and linked group/order ID, amount and verification status; rejected/pending proof should not be treated as reconciled.</td></tr>
+  <tr><td>QR camera unavailable</td><td>Use image scan, paste the link/code or open through the phone camera. Browser BarcodeDetector support and secure context are required.</td></tr>
+  <tr><td>SPA route 404 in production</td><td>Configure static host rewrite of all paths to <code>index.html</code>.</td></tr>
+</table>
+
+<h3>Known hardening priorities</h3>
+<ol>
+  <li>Hash passwords with Argon2/bcrypt; remove/rotate seed passwords and add reset policy.</li>
+  <li>Add session expiry/revocation details, login throttling and CSRF strategy as appropriate.</li>
+  <li>Protect proof downloads with record authorization or signed expiring URLs.</li>
+  <li>Add formal database foreign keys/check constraints where compatible with migration history.</li>
+  <li>Add a complete immutable audit log for edits, deletes, verification and status transitions.</li>
+  <li>Split the very large frontend component into tested modules; add automated API/unit/end-to-end tests and CI gates.</li>
+  <li>Remove the hard-coded Windows goods-warrant logo path and configure it through an environment variable or bundled asset.</li>
+  <li>Document and gate destructive reset/clear endpoints with confirmation, backup and finer permissions.</li>
+</ol>
+
+<h2>13. Definition of a completed order cycle</h2>
+<div class="callout good"><b>A purchase-to-sale cycle is complete only when:</b> masters are correct; PO/SO groups and quantities match the physical transaction; inbound receipt and stock movement are posted; outbound docket/task is delivered or self-pickup is closed; payment proof is verified/reconciled; ledger pending is zero; returns, shortages, weight flags, cash handover and operational notes have no unresolved exception.</div>
+
+<h2>14. Source-code delivery inventory</h2>
+<p>The client handover should contain a clean repository snapshot or version-control access at one identified release tag/commit. The release must be reproducible from source; generated dependencies, personal browser profiles, local logs and real secrets are not source deliverables.</p>
+
+<h3>Required deliverables</h3>
+<table>
+  <tr><th>Deliverable</th><th>Included content</th><th>Client verification</th></tr>
+  <tr><td>Application source</td><td><code>apps/web</code>, <code>apps/api</code>, <code>packages/domain</code></td><td>Fresh install and production build succeed</td></tr>
+  <tr><td>Database definition</td><td><code>postgres/init/001-schema.sql</code>, <code>002-indexes.sql</code> and API compatibility migrations</td><td>Empty PostgreSQL database initializes on API startup</td></tr>
+  <tr><td>Deployment definitions</td><td>Render, Vercel and Docker Compose files</td><td>Client environment deploys with client-owned accounts</td></tr>
+  <tr><td>Configuration templates</td><td><code>.env.example</code>, Render/Vercel examples</td><td>No live secret exists in the delivered repository</td></tr>
+  <tr><td>Package manifests</td><td>Root/workspace <code>package.json</code> files and <code>package-lock.json</code></td><td>Locked dependency install completes</td></tr>
+  <tr><td>Operational utilities</td><td>Import, database cleanup and product/sales-history scripts</td><td>Each utility’s purpose and risk are understood</td></tr>
+  <tr><td>Documentation</td><td>This Word manual, editable HTML source and existing product-flow/blueprint guides</td><td>Client confirms the documents are readable and match the release</td></tr>
+  <tr><td>Data transfer, if contracted</td><td>PostgreSQL dump plus proof-object export, transmitted separately and encrypted</td><td>Restore rehearsal and record-count reconciliation pass</td></tr>
+</table>
+
+<h3>Repository map</h3>
+<table>
+  <tr><th>Path</th><th>Ownership and purpose</th><th>Change impact</th></tr>
+  <tr><td><code>apps/web/src/App.tsx</code></td><td>Main React application, views, business presentation, forms, invoices, QR and reports</td><td>High; changes can affect multiple roles and workflows</td></tr>
+  <tr><td><code>apps/web/src/styles.css</code></td><td>Responsive application styling</td><td>Visual/mobile regression risk</td></tr>
+  <tr><td><code>apps/web/src/components</code></td><td>Navigation and reusable UI containers/tables/badges</td><td>Cross-screen UI impact</td></tr>
+  <tr><td><code>apps/web/src/utils/excel.ts</code></td><td>Excel workbook generation</td><td>Report/export compatibility</td></tr>
+  <tr><td><code>apps/api/src/server.ts</code></td><td>Express startup, middleware, routes, validation and authorization</td><td>High; public contract/security boundary</td></tr>
+  <tr><td><code>apps/api/src/db.ts</code></td><td>PostgreSQL initialization, mapping and transactional business logic</td><td>Critical; data integrity and workflow transitions</td></tr>
+  <tr><td><code>apps/api/src/object-storage.ts</code></td><td>Private R2 proof-object adapter</td><td>Proof confidentiality/availability</td></tr>
+  <tr><td><code>apps/api/src/product-import.ts</code></td><td>CSV/workbook product mapping and validation</td><td>Master-data quality</td></tr>
+  <tr><td><code>packages/domain/src/index.ts</code></td><td>Shared roles, statuses, types and product-weight inference</td><td>Web/API contract; build domain first</td></tr>
+  <tr><td><code>postgres/init</code></td><td>Base schema and indexes</td><td>Critical; use reviewed forward migrations in production</td></tr>
+  <tr><td><code>scripts</code></td><td>Imports and documentation/build utilities</td><td>Review inputs and back up before execution</td></tr>
+  <tr><td><code>docs</code></td><td>User, product, handover and architecture documentation</td><td>Update with each material release</td></tr>
+  <tr><td><code>render.yaml</code>, <code>vercel.json</code>, Docker Compose</td><td>Infrastructure/build examples</td><td>Hosting, ports, persistence and environment variables</td></tr>
+</table>
+
+<h3>Items that should not be included in a clean client release</h3>
+<ul>
+  <li>Real <code>.env</code> files, database passwords, R2 keys, API tokens, private certificates or exported browser sessions.</li>
+  <li><code>node_modules</code>, local build output, IDE caches, browser profiles, temporary ZIP folders and Codex/tool logs.</li>
+  <li>Development log files, screenshots or test artifacts unless the client specifically accepts them as evidence.</li>
+  <li>Production database/proof files inside the source archive. Transfer operational data separately using encryption and a documented chain of custody.</li>
+  <li>Third-party assets without confirmed redistribution rights.</li>
+</ul>
+
+<h3>Release identification</h3>
+<table>
+  <tr><th>Field</th><th>Value to complete at handover</th></tr>
+  <tr><td>Repository name</td><td>____________________________________________</td></tr>
+  <tr><td>Release version/tag</td><td>____________________________________________</td></tr>
+  <tr><td>Git commit SHA</td><td>____________________________________________</td></tr>
+  <tr><td>Source archive SHA-256</td><td>____________________________________________</td></tr>
+  <tr><td>Database export SHA-256</td><td>____________________________________________</td></tr>
+  <tr><td>Proof archive/object inventory checksum</td><td>____________________________________________</td></tr>
+  <tr><td>Build performed by/date</td><td>____________________________________________</td></tr>
+</table>
+
+<h2>15. Client installation and release runbook</h2>
+<h3>Recommended environment separation</h3>
+<table>
+  <tr><th>Environment</th><th>Purpose</th><th>Data and access rules</th></tr>
+  <tr><td>Development</td><td>Feature work and local testing</td><td>Synthetic data only; developer access</td></tr>
+  <tr><td>Staging/UAT</td><td>Client acceptance and release rehearsal</td><td>Masked/synthetic data; limited client testers</td></tr>
+  <tr><td>Production</td><td>Live business operation</td><td>Client-owned accounts, least privilege, backups, monitoring and controlled releases</td></tr>
+</table>
+
+<h3>Clean-machine installation procedure</h3>
+<ol>
+  <li>Install an approved Node.js LTS release, npm, PostgreSQL 16 and Git. Record exact versions used for acceptance.</li>
+  <li>Clone or extract the identified release into a new directory. Do not copy the vendor’s <code>node_modules</code>.</li>
+  <li>Copy <code>.env.example</code> to a local untracked <code>.env</code> and set client-owned values.</li>
+  <li>Create an empty PostgreSQL database and restricted application user, or start the Docker Compose database for local evaluation.</li>
+  <li>Run <code>npm ci</code> when the lockfile is authoritative; use <code>npm install</code> only when intentionally updating the lockfile.</li>
+  <li>Run <code>npm run build</code>. Treat TypeScript/build failures as a failed release.</li>
+  <li>Start API and frontend, open <code>/health</code>, log in with a newly rotated Admin account, and run the smoke test below.</li>
+  <li>Disable/change seed credentials before exposing the service beyond an isolated acceptance network.</li>
+</ol>
+
+<h3>Minimum smoke test</h3>
+<ol>
+  <li>Health endpoint reports OK and correct proof-storage mode.</li>
+  <li>Admin login/logout and role-based navigation work.</li>
+  <li>Create test warehouse, product, supplier, shop and non-production role users.</li>
+  <li>Create grouped PO, purchase payment and inbound task; receive it and confirm stock.</li>
+  <li>Create sales cart, payment, docket, consignment/task and deliver it.</li>
+  <li>Confirm ledger settlement, invoice PDF, Excel export and QR/status view.</li>
+  <li>Upload/open one proof in every category.</li>
+  <li>Create one purchase return and one sales return.</li>
+  <li>Verify each role sees only expected screens and scoped records.</li>
+  <li>Back up, restore into a separate database/storage location and repeat login/read checks.</li>
+</ol>
+
+<h3>Release process</h3>
+<ol>
+  <li>Freeze and identify the source commit; update version, changelog and this manual.</li>
+  <li>Review dependency/security advisories and decide documented remediations.</li>
+  <li>Build and test in a clean environment, not only the developer workstation.</li>
+  <li>Take production database/proof backups and verify recovery points.</li>
+  <li>Deploy database-compatible API first where required, then frontend; monitor health and logs.</li>
+  <li>Run smoke tests and reconcile record counts. Keep a defined rollback artifact and decision window.</li>
+  <li>Record release time, operator, commit, environment changes and acceptance result.</li>
+</ol>
+
+<h3>Rollback</h3>
+<p>Application rollback means redeploying the previously accepted source/build with compatible configuration. Database rollback is not the same operation: do not reverse schema/data changes by copying old files. Use reviewed forward fixes or restore a verified database/proof backup only after the business owner accepts loss of transactions since that recovery point.</p>
+
+<h2>16. Data and service migration to client ownership</h2>
+<h3>Database transfer</h3>
+<ol>
+  <li>Stop writes or agree a final cutover window.</li>
+  <li>Create a consistent PostgreSQL dump and record engine version, row counts and SHA-256.</li>
+  <li>Transfer the encrypted dump separately from its password/key.</li>
+  <li>Restore into the client database, apply the delivered application startup/migrations and review errors.</li>
+  <li>Compare row counts for all tables and sample PO/SO/payment/receipt/stock/delivery/ledger chains.</li>
+  <li>Run client acceptance before changing DNS or frontend API URL.</li>
+</ol>
+
+<h3>Proof-object transfer</h3>
+<ol>
+  <li>Inventory objects by category and record count/total size/checksum where practical.</li>
+  <li>Copy local upload folders or R2 objects to client-owned storage without changing filenames/category paths.</li>
+  <li>Set new storage credentials and test database proof links through the API.</li>
+  <li>Keep the previous storage read-only during the agreed rollback/retention window.</li>
+  <li>Delete vendor-held copies only after written client authorization and contractual retention requirements are satisfied.</li>
+</ol>
+
+<h3>Reconciliation worksheet</h3>
+<table>
+  <tr><th>Item</th><th>Source count</th><th>Client count</th><th>Result/notes</th></tr>
+  <tr><td>Users / warehouses / products / counterparties</td><td></td><td></td><td></td></tr>
+  <tr><td>Purchase and sales order lines/groups</td><td></td><td></td><td></td></tr>
+  <tr><td>Payments and ledger entries</td><td></td><td></td><td></td></tr>
+  <tr><td>Receipts, inventory lots and probationary sales</td><td></td><td></td><td></td></tr>
+  <tr><td>Returns</td><td></td><td></td><td></td></tr>
+  <tr><td>Delivery tasks, dockets and consignments</td><td></td><td></td><td></td></tr>
+  <tr><td>Goods warrants and notes</td><td></td><td></td><td></td></tr>
+  <tr><td>Proof objects by category</td><td></td><td></td><td></td></tr>
+</table>
+
+<h2>17. Credential, account and asset handover</h2>
+<div class="callout critical"><b>Never write credentials in this document.</b> Transfer secrets through the client’s password manager or another approved encrypted channel. The client should create or rotate every production secret so the outgoing vendor does not retain access.</div>
+<table>
+  <tr><th>Asset/account</th><th>Transfer requirement</th><th>Owner after handover</th><th>Completed</th></tr>
+  <tr><td>Source repository and admin rights</td><td>Client organization owns repository; protect branches and require MFA</td><td></td><td>☐</td></tr>
+  <tr><td>Render/Vercel or replacement hosting</td><td>Billing, owners, service definitions, environment variables and deploy hooks</td><td></td><td>☐</td></tr>
+  <tr><td>PostgreSQL</td><td>Admin and application users, backups, network rules, TLS and alerts</td><td></td><td>☐</td></tr>
+  <tr><td>Cloudflare/R2</td><td>Account, private bucket, scoped key, lifecycle/versioning and billing</td><td></td><td>☐</td></tr>
+  <tr><td>Domains/DNS/TLS</td><td>Registrar ownership, DNS records, renewal and certificate automation</td><td></td><td>☐</td></tr>
+  <tr><td>Application Admin users</td><td>Create named client admins; rotate/remove seed/shared users</td><td></td><td>☐</td></tr>
+  <tr><td>Monitoring/logging</td><td>Client recipients, retention, alert thresholds and escalation</td><td></td><td>☐</td></tr>
+  <tr><td>Brand assets/logo</td><td>Confirm ownership/permission and replace hard-coded local logo path</td><td></td><td>☐</td></tr>
+  <tr><td>Backup encryption/recovery keys</td><td>At least two authorized client custodians; recovery test</td><td></td><td>☐</td></tr>
+</table>
+
+<h3>Post-transfer access revocation</h3>
+<ul>
+  <li>Rotate database, R2, hosting, deployment and application credentials.</li>
+  <li>Remove vendor members, personal API tokens, deploy keys, SSH keys and webhook secrets not covered by support.</li>
+  <li>Review authentication, billing contacts, recovery email/phone, MFA and audit logs.</li>
+  <li>Record any vendor access retained for support, with purpose, expiry and client approver.</li>
+</ul>
+
+<h2>18. Testing and acceptance</h2>
+<h3>Build verification performed for this document</h3>
+<p>The reviewed workspace completed the root production build successfully: shared domain TypeScript, API TypeScript and React/Vite frontend. Vite reported a non-fatal warning that the main minified JavaScript chunk exceeds 500 kB; code splitting is a recommended performance improvement.</p>
+
+<h3>Client acceptance matrix</h3>
+<table>
+  <tr><th>Area</th><th>Acceptance evidence</th><th>Pass/Fail</th><th>Client initials</th></tr>
+  <tr><td>Source completeness</td><td>Identified commit/archive builds on clean machine</td><td></td><td></td></tr>
+  <tr><td>Authentication and roles</td><td>All roles tested; incorrect action denied</td><td></td><td></td></tr>
+  <tr><td>Masters</td><td>User, warehouse, product import/edit and party workflows</td><td></td><td></td></tr>
+  <tr><td>Purchase/inbound</td><td>PO → payment/task → receipt → inventory → ledger</td><td></td><td></td></tr>
+  <tr><td>Sales/outbound</td><td>Cart → payment → docket/consignment/task → delivery → ledger</td><td></td><td></td></tr>
+  <tr><td>Returns/exceptions</td><td>Purchase/sales return, shortage, weight flag and dispute</td><td></td><td></td></tr>
+  <tr><td>Documents</td><td>Invoice/estimate PDF, print/share, QR/status, Excel and warrants</td><td></td><td></td></tr>
+  <tr><td>Proof storage</td><td>Upload/read all four categories in client-owned storage</td><td></td><td></td></tr>
+  <tr><td>Data migration</td><td>Counts/checksums/sample chains reconciled</td><td></td><td></td></tr>
+  <tr><td>Backup/recovery</td><td>Timed database and proof recovery demonstrated</td><td></td><td></td></tr>
+  <tr><td>Deployment/rollback</td><td>Production deployment and rollback rehearsal documented</td><td></td><td></td></tr>
+  <tr><td>Documentation/training</td><td>Admin, Accounts, Warehouse, Sales/Purchase and Delivery trained</td><td></td><td></td></tr>
+</table>
+
+<h3>Recommended test automation backlog</h3>
+<ul>
+  <li>Unit tests for tax, CD/TOD, weight tolerance, stock allocation, ledger and status transitions.</li>
+  <li>API integration tests for every role/endpoint, invalid inputs and cross-warehouse access.</li>
+  <li>Database transaction/concurrency tests for duplicate booking, receiving, payment and dispatch.</li>
+  <li>Browser end-to-end tests for desktop/mobile purchase, sales, receipt, payment and delivery flows.</li>
+  <li>Upload security, authorization and object-storage failure tests.</li>
+  <li>Backup restore and migration compatibility tests for every release.</li>
+</ul>
+
+<h2>19. Known limitations and accepted technical debt</h2>
+<table>
+  <tr><th>Item</th><th>Risk/impact</th><th>Recommended disposition</th></tr>
+  <tr><td>Plain-text, case-insensitive passwords and seed credentials</td><td>Critical account compromise risk</td><td>Block production handover until hashed passwords, rotation and login controls are implemented, or obtain explicit written risk acceptance</td></tr>
+  <tr><td>Proof download route not record-authorized</td><td>Anyone with a valid URL may retrieve a business proof</td><td>Add authenticated authorization or signed expiring URLs</td></tr>
+  <tr><td>Very large <code>App.tsx</code> and main JS bundle</td><td>Maintenance, testing and load-performance cost</td><td>Split by feature/routes and introduce lazy loading</td></tr>
+  <tr><td>Limited automated tests/CI evidence</td><td>Regression risk</td><td>Implement the test backlog and protected CI pipeline</td></tr>
+  <tr><td>Hard-coded Windows goods-warrant logo path</td><td>Logo fails on Linux hosting</td><td>Bundle asset or use environment/object storage configuration</td></tr>
+  <tr><td>Startup compatibility DDL instead of formal versioned migrations</td><td>Production schema-change governance is difficult</td><td>Adopt versioned forward-only migration tooling and migration ledger</td></tr>
+  <tr><td>Operational ledger is not full double-entry accounting</td><td>Cannot replace statutory accounting system</td><td>Integrate/export to approved accounting software; define reconciliation ownership</td></tr>
+  <tr><td>Notes visibility is not a complete confidentiality system</td><td>Users may infer data outside intended sensitivity rules</td><td>Define and enforce record-level authorization</td></tr>
+  <tr><td>Destructive clear/reset/cleanup operations exist</td><td>Accidental data loss</td><td>Restrict, add confirmation/audit and require verified backup</td></tr>
+  <tr><td>No user edit/deactivate UI endpoint described</td><td>Access lifecycle administration gap</td><td>Add user management and immediate session revocation</td></tr>
+</table>
+
+<h3>Accepted exceptions</h3>
+<table>
+  <tr><th>ID</th><th>Description</th><th>Severity</th><th>Owner/target date</th><th>Client acceptance</th></tr>
+  <tr><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+
+<h2>20. Ownership, maintenance and support</h2>
+<h3>Intellectual property and third-party software</h3>
+<p>This document does not by itself assign intellectual-property rights or create a software license. Ownership of custom source, data, branding, documentation and future modifications must follow the signed contract. The application uses third-party open-source packages under their respective licenses; the client should retain package manifests/lockfile, run a license inventory and comply with notices/obligations before redistribution.</p>
+
+<h3>Responsibility matrix to complete</h3>
+<table>
+  <tr><th>Responsibility</th><th>Client</th><th>Vendor/support provider</th><th>Notes/SLA</th></tr>
+  <tr><td>Production hosting, billing, DNS and TLS</td><td></td><td></td><td></td></tr>
+  <tr><td>User access and role approval</td><td></td><td></td><td></td></tr>
+  <tr><td>Database/proof backups and recovery tests</td><td></td><td></td><td></td></tr>
+  <tr><td>Security patching and dependency updates</td><td></td><td></td><td></td></tr>
+  <tr><td>Application monitoring and incident response</td><td></td><td></td><td></td></tr>
+  <tr><td>Business master-data quality</td><td></td><td></td><td></td></tr>
+  <tr><td>Bug fixes and feature changes</td><td></td><td></td><td></td></tr>
+  <tr><td>Accounting/statutory reconciliation</td><td></td><td></td><td></td></tr>
+</table>
+
+<h3>Recommended operational targets</h3>
+<p>The client should contractually choose recovery point objective (RPO), recovery time objective (RTO), support hours, severity definitions, response/resolution targets, maintenance windows, data retention and availability targets. No target should be assumed from the source code alone.</p>
+
+<h2>21. Formal handover and sign-off</h2>
+<p>By signing, the parties confirm only the items explicitly marked complete: the identified source release and agreed data/assets were delivered; the client received access to client-owned services; installation/build and agreed acceptance tests were demonstrated; known exceptions were recorded; credentials were transferred/rotated outside this document; and ongoing responsibilities follow the signed contract/support agreement.</p>
+
+<table>
+  <tr><th>For the delivering party</th><th>For the client</th></tr>
+  <tr><td><br><b>Name:</b> ______________________________<br><br><b>Title:</b> ______________________________<br><br><b>Signature:</b> ___________________________<br><br><b>Date:</b> ______________________________</td><td><br><b>Name:</b> ______________________________<br><br><b>Title:</b> ______________________________<br><br><b>Signature:</b> ___________________________<br><br><b>Date:</b> ______________________________</td></tr>
+</table>
+
+<h3>Final handover checklist</h3>
+<p>☐ Source release identified and checksum recorded &nbsp;&nbsp; ☐ Clean build passed &nbsp;&nbsp; ☐ Client repository ownership established &nbsp;&nbsp; ☐ Production services transferred &nbsp;&nbsp; ☐ Credentials rotated &nbsp;&nbsp; ☐ Database/proofs reconciled &nbsp;&nbsp; ☐ Backup recovery demonstrated &nbsp;&nbsp; ☐ Role/workflow UAT passed &nbsp;&nbsp; ☐ Known exceptions signed &nbsp;&nbsp; ☐ Training/documentation delivered &nbsp;&nbsp; ☐ Vendor access removed or documented</p>
+
+<p class="small">Source basis: <code>apps/web/src/App.tsx</code>, shared UI/navigation, <code>apps/api/src/server.ts</code>, <code>apps/api/src/db.ts</code>, object storage/import utilities, shared domain types, PostgreSQL schema/index files, package scripts and deployment/environment examples. This manual describes the repository state reviewed on 21 July 2026. Complete release identifiers and contractual ownership terms before client execution.</p>
+
+</body>
+</html>

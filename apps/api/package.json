@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
     "start": "node dist/server.js",
     "import:workbook": "tsx src/import-workbook.ts",
     "db:clean": "tsx src/clean-database.ts",

@@ -217,6 +217,12 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE products ADD COLUMN IF NOT EXISTS sub_category TEXT NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS is_seasonal BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS offer_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS offer_price DOUBLE PRECISION;
+    CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
+    CREATE INDEX IF NOT EXISTS idx_products_sub_category ON products(sub_category);
+    CREATE INDEX IF NOT EXISTS idx_products_seasonal_offer ON products(is_seasonal, offer_price) WHERE is_seasonal OR offer_price IS NOT NULL;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS location_label TEXT;
@@ -573,6 +579,9 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
     size: stringValue(row.size),
     rsp: row.rsp === null ? undefined : numberValue(row.rsp),
     mrp: row.mrp === null ? undefined : numberValue(row.mrp),
+    isSeasonal: Boolean(row.is_seasonal),
+    offerLabel: stringValue(row.offer_label),
+    offerPrice: row.offer_price === null ? undefined : numberValue(row.offer_price),
     createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)
   }));
@@ -1682,11 +1691,11 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
     `INSERT INTO products (
       sku, name, division, department, section_name, category, sub_category, unit, default_gst_rate, default_tax_mode, default_weight_kg, tolerance_kg, tolerance_percent,
       allowed_warehouse_ids_json, slabs_json, remarks, category_6, site_name, barcode, supplier_name, hsn_code,
-      article_name, item_name, brand, short_name, size, rsp, mrp, created_by, created_at
+      article_name, item_name, brand, short_name, size, rsp, mrp, is_seasonal, offer_label, offer_price, created_by, created_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
       $14::jsonb, $15::jsonb, $16, $17, $18, $19, $20, $21,
-      $22, $23, $24, $25, $26, $27, $28, $29, $30
+      $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
     )
     ON CONFLICT (sku) DO UPDATE SET
       name = EXCLUDED.name,
@@ -1716,6 +1725,9 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       size = EXCLUDED.size,
       rsp = EXCLUDED.rsp,
       mrp = EXCLUDED.mrp,
+      is_seasonal = EXCLUDED.is_seasonal,
+      offer_label = EXCLUDED.offer_label,
+      offer_price = EXCLUDED.offer_price,
       created_by = EXCLUDED.created_by`,
     [
       payload.sku.trim(),
@@ -1746,6 +1758,9 @@ async function upsertProduct(payload: Omit<ProductMaster, "createdBy" | "created
       payload.size?.trim() || "",
       payload.rsp ?? null,
       payload.mrp ?? null,
+      Boolean(payload.isSeasonal),
+      payload.offerLabel?.trim() || "",
+      payload.offerPrice ?? null,
       currentUser.username,
       payload.createdAt || now()
     ]
