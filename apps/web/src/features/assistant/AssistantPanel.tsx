@@ -91,6 +91,7 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [reply, setReply] = useState<AssistantReply | null>(null);
   const [draft, setDraft] = useState<EditableDraft | null>(null);
   const [orderThread, setOrderThread] = useState<OrderThread | null>(null);
@@ -99,6 +100,10 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   const keepListeningRef = useRef(false);
   const transcriptRef = useRef("");
   const capturedTranscriptRef = useRef("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const discardRecordingRef = useRef(false);
   const roles = currentUser.roles?.length ? currentUser.roles : [currentUser.role];
   const canCreateSales = roles.includes("Sales");
   const canCreatePurchase = roles.includes("Purchaser");
@@ -154,6 +159,9 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   function cancelOrderThread() {
     keepListeningRef.current = false;
     recognitionRef.current?.stop();
+    discardRecordingRef.current = true;
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     setListening(false);
     setDraft(null);
     setOrderThread(null);
@@ -177,6 +185,10 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   function finishListening() {
     if (!listening) return;
     keepListeningRef.current = false;
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+      return;
+    }
     recognitionRef.current?.stop();
   }
 
@@ -185,29 +197,85 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       SpeechRecognition?: new () => SpeechRecognitionInstance;
       webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
     };
-    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
-    if (!Recognition) {
-      const message = assistantLanguage === "hinglish" ? "Is browser mein voice input support nahi hai. Aap wahi command type kar sakte hain." : "Voice input is not supported by this browser. You can type the same command.";
-      const spokenMessage = assistantLanguage === "hinglish" ? "इस ब्राउज़र में वॉइस इनपुट सपोर्ट नहीं है। आप वही कमांड टाइप कर सकते हैं।" : message;
-      setReply({ kind: "answer", engine: "local", message, spokenMessage });
-      speak(spokenMessage, assistantLanguage);
-      return;
-    }
     if (listening) return finishListening();
+    if (transcribing) return;
     window.speechSynthesis?.cancel();
     if (!navigator.mediaDevices?.getUserMedia) {
       const message = assistantLanguage === "hinglish" ? "Is browser mein microphone access available nahi hai. Chrome/Edge mein localhost kholiye ya command type kariye." : "Microphone access is unavailable in this browser. Open localhost in Chrome/Edge or type the command.";
       setReply({ kind: "answer", engine: "local", message });
       return;
     }
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (error) {
       const errorName = error instanceof DOMException ? error.name : "MicrophoneError";
       const message = errorName === "NotAllowedError"
         ? (assistantLanguage === "hinglish" ? "Microphone permission blocked hai. Address bar ke microphone icon se Allow karke dobara Start dabaiye." : "Microphone permission is blocked. Allow it from the address bar, then press Start again.")
         : (assistantLanguage === "hinglish" ? `Microphone open nahi hua (${errorName}). Windows input device aur browser permission check karein.` : `The microphone could not be opened (${errorName}). Check the Windows input device and browser permission.`);
+      setReply({ kind: "answer", engine: "local", message });
+      return;
+    }
+    if (typeof MediaRecorder !== "undefined") {
+      const preferredMime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((item) => MediaRecorder.isTypeSupported(item));
+      const recorder = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
+      mediaRecorderRef.current = recorder;
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+      discardRecordingRef.current = false;
+      setText("");
+      setListening(true);
+      recorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
+      recorder.onerror = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current = null;
+        setListening(false);
+        setReply({ kind: "answer", engine: "local", message: "Local voice recording failed. Microphone permission aur Windows input device check karein." });
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current = null;
+        setListening(false);
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        if (discardRecordingRef.current) { discardRecordingRef.current = false; return; }
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size < 500) {
+          setReply({ kind: "answer", engine: "local", message: "Recording mein audio nahi mila. Start dabakar boliye aur end mein Stop dabaiye." });
+          return;
+        }
+        setTranscribing(true);
+        setBusy(true);
+        onError("");
+        try {
+          const form = new FormData();
+          form.append("audio", blob, recorder.mimeType.includes("ogg") ? "voice.ogg" : "voice.webm");
+          form.append("language", assistantLanguage);
+          const { data } = await api.post<{ text: string; engine: string; model: string }>("/assistant/transcribe", form, {
+            headers: { authorization: `Bearer ${sessionToken}` },
+            timeout: 300_000
+          });
+          setText(data.text);
+          setBusy(false);
+          setTranscribing(false);
+          handleCapturedVoice(data.text);
+        } catch (error) {
+          const message = axios.isAxiosError(error) ? String(error.response?.data?.message || error.message) : "Local speech transcription failed.";
+          setReply({ kind: "answer", engine: "local", message });
+          onError(message);
+          setBusy(false);
+          setTranscribing(false);
+        }
+      };
+      recorder.start(500);
+      return;
+    }
+    stream.getTracks().forEach((track) => track.stop());
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      const message = assistantLanguage === "hinglish" ? "Is browser mein local audio recording ya voice input support nahi hai. Command type kariye." : "This browser does not support local audio recording or voice input. Type the command.";
       setReply({ kind: "answer", engine: "local", message });
       return;
     }
@@ -345,7 +413,7 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   return <>
     <button className={open ? "assistant-launcher is-open" : "assistant-launcher"} type="button" onClick={() => setOpen((current) => !current)} aria-label="Open voice assistant">
       <span aria-hidden="true">{listening ? "●" : "AI"}</span>
-      <small>{listening ? "Listening" : "Ask"}</small>
+      <small>{listening ? "Recording" : transcribing ? "Local STT" : "Ask"}</small>
     </button>
     {open ? <section className="assistant-panel" aria-label="Aapoorti voice assistant">
       <header className="assistant-head">
@@ -360,10 +428,11 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       </div>
       <form className="assistant-input-row" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
         <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={assistantLanguage === "hinglish" ? "Boliye ya type kariye: Gupta Store ke liye 10 Lux rate 42 ka SO banao" : "Speak or type: Create SO for Gupta Store: 10 Lux at 42"} rows={2} />
-        <button className={listening ? "assistant-mic active" : "assistant-mic"} type="button" onClick={listen} aria-label={listening ? "Stop and interpret voice input" : "Start voice input"}>{listening ? "Stop" : "🎙"}</button>
+        <button className={listening ? "assistant-mic active" : "assistant-mic"} type="button" onClick={listen} disabled={transcribing} aria-label={listening ? "Stop and transcribe local voice input" : "Start local voice recording"}>{listening ? "Stop" : "🎙"}</button>
         <button className="primary-button" type="submit" disabled={busy || !text.trim()}>{busy ? "Working…" : "Ask"}</button>
       </form>
       {listening ? <div className="assistant-listening-note"><strong>Listening…</strong><span>{assistantLanguage === "hinglish" ? "Pause le sakte hain. Pura bolne ke baad Stop dabaiye." : "Pauses are okay. Press Stop when you are finished."}</span></div> : null}
+      {transcribing ? <div className="assistant-listening-note"><strong>Local Whisper…</strong><span>{assistantLanguage === "hinglish" ? "Recording isi computer par process ho rahi hai. Pehli baar model load hone mein thoda samay lagega." : "The recording is processing on this computer. First model load can take a little longer."}</span></div> : null}
       {orderThread ? <div className="assistant-thread-bar"><span><strong>{orderThread.side === "Sales" ? "SO" : orderThread.side === "Purchase" ? "PO" : "Order"} thread active</strong> · {orderThread.commands.length} voice/text turn{orderThread.commands.length === 1 ? "" : "s"}</span><button type="button" onClick={cancelOrderThread}>Clear thread</button></div> : null}
       {reply ? <div className="assistant-response">
         <div className="assistant-response-head"><strong>{reply.message}</strong><div className="assistant-response-actions"><button type="button" onClick={() => speak(reply.spokenMessage || reply.message, assistantLanguage)} aria-label="Replay assistant answer">🔊 {assistantLanguage === "hinglish" ? "Suno" : "Listen"}</button><span>{reply.engine === "openai" ? "AI interpretation" : "Offline assistant"}</span></div></div>

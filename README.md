@@ -66,6 +66,7 @@ Copy `.env.example` and set:
 - `VITE_API_BASE_URL`
 - The assistant uses the bundled offline language dataset by default and consumes no AI tokens.
 - To explicitly enable hosted interpretation, set both `ASSISTANT_USE_OPENAI=true` and `OPENAI_API_KEY` (optional).
+- Local voice transcription uses multilingual Faster-Whisper and consumes no API tokens. Run `npm run speech:setup` once, then `npm run speech:warmup` to download/cache the configured model. Development defaults to the CPU/int8 `small` model; configure it with `LOCAL_WHISPER_MODEL`, `LOCAL_WHISPER_THREADS`, and `LOCAL_WHISPER_TIMEOUT_MS`.
 - `OPENAI_ASSISTANT_MODEL` (optional; defaults to `gpt-4o-mini`)
 
 The app-wide assistant remains usable without an OpenAI key through its deterministic local parser. Add the key only to the backend environment, never to a `VITE_*` frontend variable.

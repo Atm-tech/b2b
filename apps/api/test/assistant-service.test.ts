@@ -172,6 +172,18 @@ test("parses Chrome Hindi phonetics and repeated rate-first products without aur
   assert.equal(result.draft?.lines[1]?.rate, 15);
 });
 
+test("uses database vocabulary for party correction and recovers 34 Lux from lakh formatting", async () => {
+  const numericTranscript = await runAssistant("kutta sales ke liye order bana 10 ke rate se 3400000", snapshot, salesUser, "hinglish");
+  const hindiTranscript = await runAssistant("kutta sales ke liye order bana 10 ke rate se चौंतीस लाख", snapshot, salesUser, "hinglish");
+  for (const [label, result] of [["numeric", numericTranscript], ["hindi", hindiTranscript]] as const) {
+    assert.equal(result.kind, "order_draft", `${label}: ${result.message}`);
+    assert.equal(result.draft?.partyCandidates[0]?.id, "SHOP-1");
+    assert.equal(result.draft?.lines[0]?.candidates[0]?.id, "LUX-100");
+    assert.equal(result.draft?.lines[0]?.quantity, 34);
+    assert.equal(result.draft?.lines[0]?.rate, 10);
+  }
+});
+
 test("treats spoken SO/PO aliases as sales and purchase orders", async () => {
   const sales = await runAssistant("sale order for Gupta Store: 10 Lux Soap rate 55", snapshot, salesUser);
   const purchase = await runAssistant("supplier order from Metro Supplier: 20 Dove Soap rate 58", snapshot, purchaseUser);

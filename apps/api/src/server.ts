@@ -2,6 +2,7 @@ import cors from "cors";
 import compression from "compression";
 import express from "express";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import multer from "multer";
 import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, ProductMaster, UserRole, Warehouse } from "@aapoorti-b2b/domain";
@@ -52,6 +53,7 @@ import {
 import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
 import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from "./object-storage.js";
 import { runAssistant } from "./assistant-service.js";
+import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -63,6 +65,7 @@ const deliveryDir = path.join(uploadsDir, "delivery-proofs");
 const receiptDir = path.join(uploadsDir, "receipt-proofs");
 const returnDir = path.join(uploadsDir, "return-proofs");
 const goodsWarrantLogoPath = path.resolve("D:/AAPOORTI/ASSETS/Apoorti Logo/Aapurti Mart Logo.png");
+const assistantAudioDir = path.join(uploadsDir, "assistant-audio");
 const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "2mb";
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -74,6 +77,7 @@ mkdirSync(paymentDir, { recursive: true });
 mkdirSync(deliveryDir, { recursive: true });
 mkdirSync(receiptDir, { recursive: true });
 mkdirSync(returnDir, { recursive: true });
+mkdirSync(assistantAudioDir, { recursive: true });
 
 const csvUpload = multer({
   storage: multer.diskStorage({
@@ -86,6 +90,22 @@ const csvUpload = multer({
   limits: {
     fileSize: Number(process.env.MAX_UPLOAD_BYTES || 8 * 1024 * 1024)
   }
+});
+
+const assistantAudioUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, assistantAudioDir),
+    filename: (_req, file, cb) => {
+      const extension = path.extname(file.originalname).replace(/[^a-zA-Z0-9.]/g, "") || ".webm";
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`);
+    }
+  }),
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(["audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "video/webm"]);
+    if (!allowed.has(file.mimetype.split(";")[0])) return cb(new Error("Unsupported assistant audio format."));
+    cb(null, true);
+  },
+  limits: { fileSize: Number(process.env.LOCAL_WHISPER_MAX_AUDIO_BYTES || 12 * 1024 * 1024) }
 });
 
 const proofDirectories: Record<ProofCategory, string> = {
@@ -1016,6 +1036,31 @@ app.post("/notes", async (req, res) => wrap(res, async () => {
   );
 }));
 
+app.post("/assistant/transcribe", assistantAudioUpload.single("audio"), async (req, res) => wrap(res, async () => {
+  if (process.env.LOCAL_WHISPER_ENABLED === "false") throw new Error("Local speech transcription is disabled.");
+  const currentUser = await getCurrentUser(req);
+  if (!req.file?.path) throw new Error("Voice recording is required.");
+  try {
+    const snapshot = await getSnapshot(currentUser);
+    const vocabulary = Array.from(new Set([
+      ...snapshot.counterparties.map((item) => item.name),
+      ...snapshot.products.flatMap((item) => [item.name, item.sku, item.brand || "", item.shortName || ""])
+    ].filter(Boolean)));
+    const promptPrefix = "Aapoorti sales and purchase order in Hindi and English. Preserve quantities, rates, party names and product brand names. Vocabulary: ";
+    let prompt = promptPrefix;
+    for (const item of vocabulary) {
+      if (prompt.length + item.length + 2 > 2_900) break;
+      prompt += `${item}, `;
+    }
+    const requestedLanguage = optionalString(req.body?.language);
+    const result = await transcribeLocalAudio(req.file.path, prompt, requestedLanguage === "english" ? "en" : "hi");
+    if (!result.text) throw new Error("Local speech engine did not detect speech in the recording.");
+    return { ...result, engine: "local-whisper" };
+  } finally {
+    await rm(req.file.path, { force: true });
+  }
+}));
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof multer.MulterError) {
     const message = error.code === "LIMIT_FILE_SIZE"
@@ -1025,6 +1070,10 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     return;
   }
   if (error instanceof Error && error.message.includes("proof files are allowed")) {
+    res.status(400).json({ message: error.message });
+    return;
+  }
+  if (error instanceof Error && error.message.includes("assistant audio format")) {
     res.status(400).json({ message: error.message });
     return;
   }
@@ -1042,6 +1091,7 @@ app.post("/assistant/query", async (req, res) => wrap(res, async () => {
 
 app.listen(port, () => {
   console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"}); proof storage: ${r2Enabled ? "Cloudflare R2" : "local filesystem"}`);
+  warmLocalSpeechModel();
 });
 
 async function storeProofFile(category: ProofCategory, file: Express.Multer.File) {

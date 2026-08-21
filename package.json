@@ -10,6 +10,8 @@
     "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
     "build": "npm run build -w packages/domain && npm run build -w apps/api && npm run build -w apps/web",
     "test": "npm run test -w packages/domain && npm run test -w apps/api",
+    "speech:setup": "python -m pip install -r scripts/requirements-speech.txt",
+    "speech:warmup": "python scripts/local_speech_worker.py --warmup",
     "audit:financials": "node scripts/audit-financial-integrity.mjs",
     "lint": "npm run lint --workspaces --if-present",
     "postgres:up": "docker compose -f docker-compose.postgres.yml up -d",

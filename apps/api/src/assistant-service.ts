@@ -79,9 +79,28 @@ const EMPTY_PARSE: ParsedAssistantRequest = {
   lines: []
 };
 
+const HINDI_NUMBER_WORDS: Array<[string, number]> = [
+  ["शून्य", 0], ["एक", 1], ["दो", 2], ["तीन", 3], ["चार", 4], ["पांच", 5], ["पाँच", 5], ["छह", 6], ["छः", 6], ["सात", 7], ["आठ", 8], ["नौ", 9], ["दस", 10],
+  ["ग्यारह", 11], ["बारह", 12], ["तेरह", 13], ["चौदह", 14], ["पंद्रह", 15], ["पन्द्रह", 15], ["सोलह", 16], ["सत्रह", 17], ["अठारह", 18], ["उन्नीस", 19], ["बीस", 20],
+  ["इक्कीस", 21], ["बाईस", 22], ["तेईस", 23], ["चौबीस", 24], ["पच्चीस", 25], ["छब्बीस", 26], ["सत्ताईस", 27], ["अट्ठाईस", 28], ["उनतीस", 29], ["तीस", 30],
+  ["इकतीस", 31], ["बत्तीस", 32], ["तैंतीस", 33], ["चौंतीस", 34], ["चौतीस", 34], ["पैंतीस", 35], ["छत्तीस", 36], ["सैंतीस", 37], ["अड़तीस", 38], ["अड़तीस", 38], ["उनतालीस", 39], ["चालीस", 40],
+  ["इकतालीस", 41], ["बयालीस", 42], ["तैंतालीस", 43], ["चवालीस", 44], ["पैंतालीस", 45], ["छियालीस", 46], ["सैंतालीस", 47], ["अड़तालीस", 48], ["अड़तालीस", 48], ["उनचास", 49], ["पचास", 50],
+  ["इक्यावन", 51], ["बावन", 52], ["तिरपन", 53], ["चौवन", 54], ["पचपन", 55], ["छप्पन", 56], ["सत्तावन", 57], ["अट्ठावन", 58], ["उनसठ", 59], ["साठ", 60],
+  ["इकसठ", 61], ["बासठ", 62], ["तिरसठ", 63], ["चौंसठ", 64], ["पैंसठ", 65], ["छियासठ", 66], ["सड़सठ", 67], ["अड़सठ", 68], ["उनहत्तर", 69], ["सत्तर", 70],
+  ["इकहत्तर", 71], ["बहत्तर", 72], ["तिहत्तर", 73], ["चौहत्तर", 74], ["पचहत्तर", 75], ["छिहत्तर", 76], ["सतहत्तर", 77], ["अठहत्तर", 78], ["उन्नासी", 79], ["अस्सी", 80],
+  ["इक्यासी", 81], ["बयासी", 82], ["तिरासी", 83], ["चौरासी", 84], ["पचासी", 85], ["छियासी", 86], ["सतासी", 87], ["अट्ठासी", 88], ["नवासी", 89], ["नब्बे", 90],
+  ["इक्यानवे", 91], ["बानवे", 92], ["तिरानवे", 93], ["चौरानवे", 94], ["पंचानवे", 95], ["छियानवे", 96], ["सत्तानवे", 97], ["अट्ठानवे", 98], ["निन्यानवे", 99], ["सौ", 100]
+];
+
+function replaceHindiNumberWords(value: string) {
+  return HINDI_NUMBER_WORDS.reduce((result, [word, number]) => {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return result.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "g"), `$1${number}`);
+  }, value);
+}
+
 function normalize(value: string) {
-  return value
-    .toLowerCase()
+  return replaceHindiNumberWords(value.toLowerCase())
     .replace(/[०-९]/g, (digit) => String("०१२३४५६७८९".indexOf(digit)))
     .replace(/\b(?:bada|bade|badi|badhiya|achha|acha|accha|zyada|jyada|jyaada|high|best)\s+(?:margin|margen|marjin|munafa|munaafa|fayda|faayda|profit)\b/g, " highest margin ")
     .replace(/\b(?:margin|margen|marjin|munafa|munaafa|fayda|faayda|profit)\s+(?:bada|bade|badi|badhiya|achha|acha|accha|zyada|jyada|jyaada|high|best)\b/g, " highest margin ")
@@ -98,6 +117,7 @@ function normalize(value: string) {
     .replace(/(?:परचेज|खरीद)\s+ऑर्डर/g, " purchase order ")
     .replace(/(?:परचेस|परचेज|पर्चेस|पर्चेज|खरीद)\s*(?:ऑर्डर|आर्डर|आदेश)/g, " purchase order ")
     .replace(/(?:लाख|लख|लक्स)\s*(?:का\s*)?(?:साबुन|सोप)/g, " lux soap ")
+    .replace(/(\d+)\s*(?:लाख|लख)(?=\s|$)/g, " $1 lux ")
     .replace(/(?:कुक|कूक)?\s*(?:डव|डोव|दव|दोव)/g, " dove ")
     .replace(/(?:लक्स)/g, " lux ")
     .replace(/(?:साबुन|सोप)/g, " soap ")
@@ -116,7 +136,7 @@ function normalize(value: string) {
     .replace(/के\s+लिए/g, " for ")
     .replace(/(?:और|फिर|उसके\s+बाद)/g, " and ")
     .replace(/से/g, " from ")
-    .replace(/(?:^|\s)(?:एक)(?=\s+(?:sales|purchase)\s+order)/g, " ")
+    .replace(/(?:^|\s)1(?=\s+(?:sales|purchase)\s+order)/g, " ")
     .replace(/(?:^|\s)(?:एक)(?=\s|$)/g, " 1 ")
     .replace(/(?:^|\s)(?:दो)(?=\s|$)/g, " 2 ")
     .replace(/(?:^|\s)(?:तीन)(?=\s|$)/g, " 3 ")
@@ -181,6 +201,42 @@ function levenshtein(left: string, right: string) {
     }
   }
   return row[b.length];
+}
+
+function phoneticInitial(value: string) {
+  const initial = value[0] || "";
+  if (/[kgq]/.test(initial)) return "k";
+  if (/[pbvf]/.test(initial)) return "p";
+  if (/[td]/.test(initial)) return "t";
+  if (/[szx]/.test(initial)) return "s";
+  if (/[cj]/.test(initial)) return "c";
+  return initial;
+}
+
+function correctSpokenQuery(query: string, vocabularyValues: string[]) {
+  const normalizedQuery = expandProductAlias(normalize(query));
+  const vocabulary = Array.from(new Set(vocabularyValues.flatMap((value) => tokens(value)).filter((token) => token.length >= 3)));
+  return normalizedQuery.split(" ").map((token) => {
+    if (token.length < 3 || /^\d/.test(token) || vocabulary.includes(token)) return token;
+    let best = token;
+    let bestScore = 0;
+    vocabulary.forEach((candidate) => {
+      if (Math.abs(candidate.length - token.length) > 2) return;
+      const similarity = 1 - levenshtein(token, candidate) / Math.max(token.length, candidate.length, 1);
+      const score = similarity
+        + (phoneticInitial(token) === phoneticInitial(candidate) ? 0.08 : 0)
+        + (token.at(-1) === candidate.at(-1) ? 0.04 : 0);
+      if (score > bestScore) { best = candidate; bestScore = score; }
+    });
+    return bestScore >= 0.68 ? best : token;
+  }).join(" ");
+}
+
+function correctPartySpokenQuery(query: string, vocabularyValues: string[]) {
+  const contextCorrected = query
+    .replace(/(?:कुत्ता|कुट्टा|गुत्ता)\s*(?=(?:सेल|सेल्स|स्टोर|ट्रेडर्स))/g, "gupta ")
+    .replace(/\b(?:kutta|kuta|gutta|guptha)\b(?=\s+(?:sales|store|stores|traders|agency)\b)/gi, "gupta");
+  return correctSpokenQuery(contextCorrected, vocabularyValues);
 }
 
 function matchScore(query: string, values: string[]) {
@@ -272,6 +328,12 @@ function splitOrderSegments(value: string) {
 
 function parseOrderLine(segment: string, partyQuery: string) {
   let working = normalize(segment);
+  working = working.replace(/\b(\d{7,})\b/g, (match, raw: string, offset: number, source: string) => {
+    if (/\brate\s*$/i.test(source.slice(Math.max(0, offset - 12), offset))) return match;
+    const numeric = Number(raw);
+    const lakhQuantity = numeric / 100_000;
+    return numeric % 100_000 === 0 && lakhQuantity >= 1 && lakhQuantity <= 999 ? `${lakhQuantity} lux` : match;
+  });
   let rate = 0;
   let quantity = 0;
   const rateBeforeLabel = working.match(/\b(\d+(?:\.\d+)?)\s*(?:ka|ki|ke)?\s*rate\b(?:\s*(?:se|from))?/i);
@@ -313,7 +375,7 @@ function fallbackParse(text: string, snapshot: AppSnapshot): ParsedAssistantRequ
   const classified = classifyOfflineIntent(value);
   const classifiedOrder = classified.intent === "sales_order" || classified.intent === "purchase_order";
   const isOrder = classifiedOrder || /\b(create|make|generate|book|prepare|order|po|so|purchase|buy|sell)\b/.test(value)
-    && !/\b(highest|lowest|widest|best|top|least|sales|margin)\b/.test(value.replace(/sales order/g, "order"));
+    && !/\b(highest|lowest|widest|best|top|least|margin)\b/.test(value.replace(/sales order/g, "order"));
   const metric: AssistantMetric = classified.intent === "highest_margin" || classified.intent === "lowest_margin"
     || classified.intent === "highest_sales" || classified.intent === "lowest_sales"
     ? classified.intent
@@ -345,9 +407,10 @@ function fallbackParse(text: string, snapshot: AppSnapshot): ParsedAssistantRequ
   const explicitPartyQuery = (explicitPartyMatch?.[1] || hinglishPartyMatch?.[1] || normalizedPartyMatch?.[1] || "")
     .replace(/\b(?:create|make|banao|banaao|order)\b/gi, " ")
     .trim();
-  const party = snapshot.counterparties
-    .filter((item) => item.type === partyType)
-    .map((item) => ({ item, score: namedEntityScore(explicitPartyQuery || text, item.name, [item.contactPerson, item.mobileNumber, item.city]) }))
+  const eligibleParties = snapshot.counterparties.filter((item) => item.type === partyType);
+  const correctedPartyQuery = correctPartySpokenQuery(explicitPartyQuery, eligibleParties.flatMap((item) => [item.name, item.contactPerson, item.city]));
+  const party = eligibleParties
+    .map((item) => ({ item, score: namedEntityScore(correctedPartyQuery || text, item.name, [item.contactPerson, item.mobileNumber, item.city]) }))
     .sort((left, right) => right.score - left.score)[0];
   const warehouse = snapshot.warehouses
     .map((item) => ({ item, score: matchScore(text, [item.id, item.name, item.city, item.address]) }))
@@ -356,8 +419,10 @@ function fallbackParse(text: string, snapshot: AppSnapshot): ParsedAssistantRequ
   const billingType = /\bb2b\b/.test(value) ? "B2B" : /\bb2c\b/.test(value) ? "B2C" : "Unknown";
   const deliveryMode = /self collection|self pickup|pickup/.test(value) ? "Self Collection" : /delivery|dealer delivery/.test(value) ? (side === "Purchase" ? "Dealer Delivery" : "Delivery") : "";
   const tail = text.includes(":") ? text.slice(text.indexOf(":") + 1) : text;
+  const productVocabulary = snapshot.products.flatMap((product) => productValues(product));
   const lines = splitOrderSegments(tail)
     .map((segment) => parseOrderLine(segment, explicitPartyQuery))
+    .map((line) => ({ ...line, productQuery: correctSpokenQuery(line.productQuery, productVocabulary) }))
     .filter((line) => line.productQuery && snapshot.products.some((product) => matchScore(line.productQuery, productValues(product)) > 0));
 
   return {
@@ -366,7 +431,7 @@ function fallbackParse(text: string, snapshot: AppSnapshot): ParsedAssistantRequ
     side,
     metric,
     productFilter,
-    partyQuery: explicitPartyQuery || (party && party.score >= 500 ? party.item.name : ""),
+    partyQuery: correctedPartyQuery || (party && party.score >= 500 ? party.item.name : ""),
     warehouseQuery: warehouse && warehouse.score >= 500 ? warehouse.item.name : "",
     paymentMode,
     deliveryMode,
