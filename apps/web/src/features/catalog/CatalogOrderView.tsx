@@ -1512,36 +1512,42 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                 {cartStep === "cart" ? <>
                 <div className="stack-list">
                   {cartProducts.map(({ line, product }) => <article className="list-card cart-product-line" key={line.productSku}>
-                    <div className="payment-update-head">
-                      <div><strong>{productDisplayLabel(product)}</strong><p>{product.division} / {product.section}</p></div>
-                      <button type="button" className="ghost-button danger-button" onClick={() => setCartLines((current) => current.filter((item) => item.productSku !== line.productSku))}>Remove</button>
-                    </div>
-                    <div className="payment-meta-grid">
-                      <label>Qty<input type="number" step="any" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
-                      <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
-                      {!isPurchase ? <div><span className="small-label">CD/TOD Rate</span><strong>{Number(line.cdTodRate || 0).toFixed(2)}</strong></div> : null}
-                      <label>GST<select value={line.gstRate === "NA" ? "0" : line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput })} disabled={billTaxOverride.enabled}><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
-                      <label>Calculation<select value={line.taxMode === "NA" ? "Exclusive" : line.taxMode} onChange={(e) => updateCartLineTax(line.productSku, { taxMode: e.target.value as TaxModeInput })} disabled={billTaxOverride.enabled}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option></select></label>
-                      <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
-                      <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
-                      {!isPurchase ? <div><span className="small-label">CD</span><strong>{getCartLineCdAmount(line).toFixed(2)}</strong></div> : null}
-                      {!isPurchase ? <div><span className="small-label">TOD</span><strong>{getCartLineTodAmount(line).toFixed(2)}</strong></div> : null}
-                      <div><span className="small-label">Line total</span><strong>{getCartLineTotal(line).toFixed(2)}</strong></div>
-                    </div>
-                    {!isPurchase ? <div className="cart-line top-gap">
-                      <div>
-                        <span className="small-label">Available Qty</span>
-                        <strong>{getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}</strong>
+                    <div className="cart-product-overview">
+                      <div className="payment-update-head">
+                        <div><strong>{productDisplayLabel(product)}</strong><p>{product.division} / {product.section}</p></div>
+                        <button type="button" className="ghost-button danger-button" onClick={() => setCartLines((current) => current.filter((item) => item.productSku !== line.productSku))}>Remove</button>
                       </div>
-                      <div>
-                        <span className="small-label">Warehouse</span>
-                        <strong>{orderForm.warehouseId ? getWarehouseLabel(orderForm.warehouseId) : "All"}</strong>
+                      {!isPurchase ? <div className="cart-line cart-product-stock">
+                        <div>
+                          <span className="small-label">Available Qty</span>
+                          <strong>{getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}</strong>
+                        </div>
+                        <div>
+                          <span className="small-label">Warehouse</span>
+                          <strong>{orderForm.warehouseId ? getWarehouseLabel(orderForm.warehouseId) : "All"}</strong>
+                        </div>
+                      </div> : null}
+                    </div>
+                    <div className="cart-product-details">
+                      <div className="payment-meta-grid cart-product-values">
+                        <label>Qty<input type="number" step="any" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
+                        <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
+                        {!isPurchase ? <div><span className="small-label">CD/TOD Rate</span><strong>{Number(line.cdTodRate || 0).toFixed(2)}</strong></div> : null}
+                        <label>GST<select value={line.gstRate === "NA" ? "0" : line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput })} disabled={billTaxOverride.enabled}><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
+                        <label>Calculation<select value={line.taxMode === "NA" ? "Exclusive" : line.taxMode} onChange={(e) => updateCartLineTax(line.productSku, { taxMode: e.target.value as TaxModeInput })} disabled={billTaxOverride.enabled}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option></select></label>
+                        <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
+                        <div><span className="small-label">GST Amt</span><strong>{Number(line.gstAmount || 0).toFixed(2)}</strong></div>
+                        {!isPurchase ? <div><span className="small-label">CD</span><strong>{getCartLineCdAmount(line).toFixed(2)}</strong></div> : null}
+                        {!isPurchase ? <div><span className="small-label">TOD</span><strong>{getCartLineTodAmount(line).toFixed(2)}</strong></div> : null}
+                        <div><span className="small-label">Line total</span><strong>{getCartLineTotal(line).toFixed(2)}</strong></div>
                       </div>
-                    </div> : null}
-                    {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
-                    {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box top-gap">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}.</div> : null}
-                    {!isPurchase && getProbationaryQuantity(line) > 0 ? <div className="rate-warning-box top-gap">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. Extra {getProbationaryQuantity(line)} will go to probationary sales after confirmation.</div> : null}
-                    {billTaxOverride.enabled ? <div className="message success top-gap">Whole bill tax override is active for all products in this cart.</div> : null}
+                      <div className="cart-product-flags">
+                        {isPurchase && Number(line.previousRate || 0) > 0 && Number(line.rate || 0) > Number(line.previousRate || 0) ? <div className="rate-warning-box">Rate flag: purchase rate {Number(line.rate || 0).toFixed(2)} is higher than last purchase {Number(line.previousRate || 0).toFixed(2)}.</div> : null}
+                        {!isPurchase && Number(line.minimumAllowedRate || line.previousRate || 0) > 0 && Number(line.rate || 0) < Number(line.minimumAllowedRate || line.previousRate || 0) ? <div className="rate-warning-box">Rate flag: sales rate {Number(line.rate || 0).toFixed(2)} is below last purchase {Number(line.minimumAllowedRate || line.previousRate || 0).toFixed(2)}.</div> : null}
+                        {!isPurchase && getProbationaryQuantity(line) > 0 ? <div className="rate-warning-box">Stock flag: requested qty {Number(line.quantity || 0)} exceeds available qty {getLineAvailableStock(line.productSku, orderForm.warehouseId || "")}. Extra {getProbationaryQuantity(line)} will go to probationary sales after confirmation.</div> : null}
+                        {billTaxOverride.enabled ? <div className="message success">Whole bill tax override is active for all products in this cart.</div> : null}
+                      </div>
+                    </div>
                   </article>)}
                 </div>
                 <div className="cart-edit-grid">
