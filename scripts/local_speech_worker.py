@@ -34,7 +34,12 @@ def transcribe(request):
         condition_on_previous_text=False,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 650, "speech_pad_ms": 250},
-        initial_prompt=prompt or None,
+        # faster-whisper combines initial_prompt and hotwords in the decoder
+        # context. Supplying the same database vocabulary to both can exceed
+        # Whisper's 448-position limit before decoding starts. Hotwords are
+        # already capped safely by faster-whisper and are the right mechanism
+        # for party/product pronunciation hints.
+        initial_prompt=None,
         hotwords=prompt or None,
         word_timestamps=False,
     )

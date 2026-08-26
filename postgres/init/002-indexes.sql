@@ -41,6 +41,9 @@ CREATE INDEX IF NOT EXISTS idx_goods_warrants_created_at ON goods_warrants(creat
 CREATE INDEX IF NOT EXISTS idx_goods_warrants_outlet ON goods_warrants(outlet);
 
 CREATE INDEX IF NOT EXISTS idx_notes_entity ON note_records(entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_voice_training_active_created ON voice_training_examples(active, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_voice_training_action ON voice_training_examples(action_type);
+CREATE INDEX IF NOT EXISTS idx_voice_training_module ON voice_training_examples(training_module, active, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_counterparties_type_name ON counterparties(type, name);
 CREATE INDEX IF NOT EXISTS idx_purchase_returns_warehouse_created ON purchase_returns(warehouse_id, created_at DESC);

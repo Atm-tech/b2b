@@ -18,6 +18,7 @@ import {
   createBulkGoodsWarrants,
   createDeliveryConsignment,
   createDeliveryTask,
+  createVoiceTrainingExample,
   createGoodsWarrant,
   updateGoodsWarrant,
   mergeDeliveryTasks,
@@ -37,7 +38,10 @@ import {
   databasePath,
   deleteProduct,
   deleteSession,
+  deleteVoiceTrainingExample,
   getSnapshot,
+  getVoiceTrainingAudio,
+  getVoiceTrainingExamples,
   getUserBySessionToken,
   updateCounterparty,
   updateDeliveryTask,
@@ -48,6 +52,7 @@ import {
   updateSalesOrder,
   updateSalesOrderGroup,
   updateSettings,
+  updateVoiceTrainingExample,
   verifyPayment
 } from "./db.js";
 import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
@@ -106,6 +111,16 @@ const assistantAudioUpload = multer({
     cb(null, true);
   },
   limits: { fileSize: Number(process.env.LOCAL_WHISPER_MAX_AUDIO_BYTES || 12 * 1024 * 1024) }
+});
+
+const voiceTrainingUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(["audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4", "video/webm"]);
+    if (!allowed.has(file.mimetype.split(";")[0])) return cb(new Error("Unsupported voice training audio format."));
+    cb(null, true);
+  },
+  limits: { fileSize: Number(process.env.VOICE_TRAINING_MAX_AUDIO_BYTES || 4 * 1024 * 1024) }
 });
 
 const proofDirectories: Record<ProofCategory, string> = {
@@ -1036,6 +1051,69 @@ app.post("/notes", async (req, res) => wrap(res, async () => {
   );
 }));
 
+app.get("/assistant/training-examples", async (req, res) => {
+  try {
+    await requireRole(req, ["Admin"]);
+    res.json(await getVoiceTrainingExamples());
+  } catch (error) {
+    res.status(400).json({ message: error instanceof Error ? error.message : "Could not load voice training examples." });
+  }
+});
+
+app.get("/assistant/training-examples/:id/audio", async (req, res) => {
+  try {
+    await requireRole(req, ["Admin"]);
+    const audio = await getVoiceTrainingAudio(req.params.id);
+    if (!audio?.audio_data) {
+      res.status(404).json({ message: "Voice sample not found." });
+      return;
+    }
+    res.setHeader("Content-Type", audio.audio_mime_type || "audio/webm");
+    res.setHeader("Content-Length", String(audio.audio_data.length));
+    res.setHeader("Content-Disposition", `inline; filename="${String(audio.audio_file_name || "voice-sample.webm").replace(/[^a-zA-Z0-9._-]/g, "-")}"`);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(audio.audio_data);
+  } catch (error) {
+    res.status(400).json({ message: error instanceof Error ? error.message : "Could not load voice sample." });
+  }
+});
+
+app.post("/assistant/training-examples", voiceTrainingUpload.single("audio"), async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin"]);
+  return createVoiceTrainingExample({
+    title: requiredString(req.body?.title, "Training title"),
+    commandText: requiredString(req.body?.commandText, "Command text"),
+    recognizedText: optionalString(req.body?.recognizedText) || "",
+    trainingModule: requiredVoiceTrainingModule(req.body?.trainingModule),
+    actionType: requiredString(req.body?.actionType, "Action type"),
+    actionGuide: requiredString(req.body?.actionGuide, "Action guide"),
+    language: optionalString(req.body?.language) || "hinglish",
+    audioFileName: req.file?.originalname,
+    audioMimeType: req.file?.mimetype,
+    audioData: req.file?.buffer
+  }, currentUser);
+}));
+
+app.patch("/assistant/training-examples/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
+  return updateVoiceTrainingExample(req.params.id, {
+    title: requiredString(req.body?.title, "Training title"),
+    commandText: requiredString(req.body?.commandText, "Command text"),
+    recognizedText: optionalString(req.body?.recognizedText) || "",
+    trainingModule: requiredVoiceTrainingModule(req.body?.trainingModule),
+    actionType: requiredString(req.body?.actionType, "Action type"),
+    actionGuide: requiredString(req.body?.actionGuide, "Action guide"),
+    language: optionalString(req.body?.language) || "hinglish",
+    active: req.body?.active !== false
+  });
+}));
+
+app.delete("/assistant/training-examples/:id", async (req, res) => wrap(res, async () => {
+  await requireRole(req, ["Admin"]);
+  await deleteVoiceTrainingExample(req.params.id);
+  return getVoiceTrainingExamples();
+}));
+
 app.post("/assistant/transcribe", assistantAudioUpload.single("audio"), async (req, res) => wrap(res, async () => {
   if (process.env.LOCAL_WHISPER_ENABLED === "false") throw new Error("Local speech transcription is disabled.");
   const currentUser = await getCurrentUser(req);
@@ -1073,7 +1151,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     res.status(400).json({ message: error.message });
     return;
   }
-  if (error instanceof Error && error.message.includes("assistant audio format")) {
+  if (error instanceof Error && (error.message.includes("assistant audio format") || error.message.includes("voice training audio format"))) {
     res.status(400).json({ message: error.message });
     return;
   }
@@ -1167,6 +1245,14 @@ function requiredString(value: unknown, label: string) {
 function optionalString(value: unknown) {
   const text = String(value || "").trim();
   return text || undefined;
+}
+
+const voiceTrainingModules = new Set(["Sales", "Purchase", "Accounts", "Delivery Manager", "Delivery Guy", "Admin"]);
+
+function requiredVoiceTrainingModule(value: unknown) {
+  const module = requiredString(value, "Training module");
+  if (!voiceTrainingModules.has(module)) throw new Error("Select a valid voice training module.");
+  return module;
 }
 
 function requiredNumber(value: unknown, label: string) {

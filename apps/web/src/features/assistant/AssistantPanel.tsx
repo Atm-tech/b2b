@@ -197,6 +197,7 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       SpeechRecognition?: new () => SpeechRecognitionInstance;
       webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
     };
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (listening) return finishListening();
     if (transcribing) return;
     window.speechSynthesis?.cancel();
@@ -216,7 +217,9 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       setReply({ kind: "answer", engine: "local", message });
       return;
     }
-    if (typeof MediaRecorder !== "undefined") {
+    // Prefer the browser's streaming recognizer when available. It returns
+    // short commands quickly; local Whisper remains the offline fallback.
+    if (!Recognition && typeof MediaRecorder !== "undefined") {
       const preferredMime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((item) => MediaRecorder.isTypeSupported(item));
       const recorder = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
       mediaRecorderRef.current = recorder;
@@ -273,7 +276,6 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       return;
     }
     stream.getTracks().forEach((track) => track.stop());
-    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (!Recognition) {
       const message = assistantLanguage === "hinglish" ? "Is browser mein local audio recording ya voice input support nahi hai. Command type kariye." : "This browser does not support local audio recording or voice input. Type the command.";
       setReply({ kind: "answer", engine: "local", message });
@@ -428,7 +430,7 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
       </div>
       <form className="assistant-input-row" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
         <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={assistantLanguage === "hinglish" ? "Boliye ya type kariye: Gupta Store ke liye 10 Lux rate 42 ka SO banao" : "Speak or type: Create SO for Gupta Store: 10 Lux at 42"} rows={2} />
-        <button className={listening ? "assistant-mic active" : "assistant-mic"} type="button" onClick={listen} disabled={transcribing} aria-label={listening ? "Stop and transcribe local voice input" : "Start local voice recording"}>{listening ? "Stop" : "🎙"}</button>
+        <button className={listening ? "assistant-mic active" : "assistant-mic"} type="button" onClick={listen} disabled={transcribing} aria-label={listening ? "Stop voice input" : "Start voice input"}>{listening ? "Stop" : "🎙"}</button>
         <button className="primary-button" type="submit" disabled={busy || !text.trim()}>{busy ? "Working…" : "Ask"}</button>
       </form>
       {listening ? <div className="assistant-listening-note"><strong>Listening…</strong><span>{assistantLanguage === "hinglish" ? "Pause le sakte hain. Pura bolne ke baad Stop dabaiye." : "Pauses are okay. Press Stop when you are finished."}</span></div> : null}

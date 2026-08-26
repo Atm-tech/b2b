@@ -214,6 +214,8 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_discount_matches_net_rate;
 
     ALTER TABLE users ADD COLUMN IF NOT EXISTS warehouse_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE voice_training_examples ADD COLUMN IF NOT EXISTS audio_data BYTEA;
+    ALTER TABLE voice_training_examples ADD COLUMN IF NOT EXISTS training_module TEXT NOT NULL DEFAULT 'Sales';
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS default_tax_mode TEXT NOT NULL DEFAULT 'Exclusive';
     ALTER TABLE products ADD COLUMN IF NOT EXISTS sub_category TEXT NOT NULL DEFAULT '';
@@ -3479,6 +3481,115 @@ export async function createNote(payload: {
     [makeId("NOTE"), payload.entityType, payload.entityId.trim(), payload.note.trim(), currentUser.fullName, payload.visibility, createdAt]
   );
   return getSnapshot();
+}
+
+export type VoiceTrainingExample = {
+  id: string;
+  title: string;
+  commandText: string;
+  recognizedText: string;
+  trainingModule: string;
+  actionType: string;
+  actionGuide: string;
+  language: string;
+  audioFileName?: string;
+  audioMimeType?: string;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function mapVoiceTrainingExample(row: Record<string, unknown>): VoiceTrainingExample {
+  return {
+    id: stringValue(row.id),
+    title: stringValue(row.title),
+    commandText: stringValue(row.command_text),
+    recognizedText: stringValue(row.recognized_text),
+    trainingModule: stringValue(row.training_module),
+    actionType: stringValue(row.action_type),
+    actionGuide: stringValue(row.action_guide),
+    language: stringValue(row.language),
+    audioFileName: row.audio_file_name ? stringValue(row.audio_file_name) : undefined,
+    audioMimeType: row.audio_mime_type ? stringValue(row.audio_mime_type) : undefined,
+    active: Boolean(row.active),
+    createdBy: stringValue(row.created_by),
+    createdAt: isoValue(row.created_at),
+    updatedAt: isoValue(row.updated_at)
+  };
+}
+
+export async function getVoiceTrainingExamples() {
+  await ready;
+  const result = await query<Record<string, unknown>>(
+    `SELECT id, title, command_text, recognized_text, training_module, action_type, action_guide, language,
+            audio_file_name, audio_mime_type, active, created_by, created_at, updated_at
+     FROM voice_training_examples ORDER BY created_at DESC, id DESC`
+  );
+  return result.rows.map(mapVoiceTrainingExample);
+}
+
+export async function createVoiceTrainingExample(payload: {
+  title: string;
+  commandText: string;
+  recognizedText: string;
+  trainingModule: string;
+  actionType: string;
+  actionGuide: string;
+  language: string;
+  audioFileName?: string;
+  audioMimeType?: string;
+  audioData?: Buffer;
+}, currentUser: CurrentUser) {
+  await ready;
+  const id = makeId("VOICE");
+  await query(
+    `INSERT INTO voice_training_examples
+       (id, title, command_text, recognized_text, training_module, action_type, action_guide, language, audio_file_name, audio_mime_type, audio_data, active, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, $12)`,
+    [id, payload.title.trim(), payload.commandText.trim(), payload.recognizedText.trim(), payload.trainingModule.trim(), payload.actionType.trim(), payload.actionGuide.trim(), payload.language.trim(), payload.audioFileName || null, payload.audioMimeType || null, payload.audioData || null, currentUser.fullName]
+  );
+  return getVoiceTrainingExamples();
+}
+
+export async function updateVoiceTrainingExample(id: string, payload: {
+  title: string;
+  commandText: string;
+  recognizedText: string;
+  trainingModule: string;
+  actionType: string;
+  actionGuide: string;
+  language: string;
+  active: boolean;
+}) {
+  await ready;
+  const result = await query(
+    `UPDATE voice_training_examples
+     SET title = $1, command_text = $2, recognized_text = $3, training_module = $4, action_type = $5,
+         action_guide = $6, language = $7, active = $8, updated_at = NOW()
+     WHERE id = $9`,
+    [payload.title.trim(), payload.commandText.trim(), payload.recognizedText.trim(), payload.trainingModule.trim(), payload.actionType.trim(), payload.actionGuide.trim(), payload.language.trim(), payload.active, id]
+  );
+  if (result.rowCount === 0) throw new Error("Voice training example not found.");
+  return getVoiceTrainingExamples();
+}
+
+export async function deleteVoiceTrainingExample(id: string) {
+  await ready;
+  const deleted = await one<Record<string, unknown>>(
+    "DELETE FROM voice_training_examples WHERE id = $1 RETURNING *",
+    [id]
+  );
+  if (!deleted) throw new Error("Voice training example not found.");
+  return mapVoiceTrainingExample(deleted);
+}
+
+export async function getVoiceTrainingAudio(id: string) {
+  await ready;
+  return one<{ audio_data: Buffer | null; audio_mime_type: string | null; audio_file_name: string | null }>(
+    "SELECT audio_data, audio_mime_type, audio_file_name FROM voice_training_examples WHERE id = $1",
+    [id]
+  );
 }
 
 export async function updateCounterparty(counterpartyId: string, payload: {

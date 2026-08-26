@@ -84,11 +84,12 @@ export type ViewKey =
   | "Delivery"
   | "CurrentDelivery"
   | "NewAssignment"
+  | "VoiceTrainer"
   | "Settings"
   | "Notes";
 
 export const roleViews: Record<UserRole, ViewKey[]> = {
-  Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
+  Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
@@ -102,7 +103,7 @@ export const roleViews: Record<UserRole, ViewKey[]> = {
 };
 
 export const simpleRoleViews: Record<UserRole, ViewKey[]> = {
-  Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "Settings", "Notes"],
+  Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
@@ -136,6 +137,7 @@ export const labels: Record<ViewKey, string> = {
   Delivery: "Delivery",
   CurrentDelivery: "Current Delivery",
   NewAssignment: "New Assignment",
+  VoiceTrainer: "Voice Trainer",
   Settings: "Settings",
   Notes: "Notes"
 };

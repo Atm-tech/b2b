@@ -345,6 +345,24 @@ CREATE TABLE IF NOT EXISTS note_records (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS voice_training_examples (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  command_text TEXT NOT NULL,
+  recognized_text TEXT NOT NULL DEFAULT '',
+  training_module TEXT NOT NULL DEFAULT 'Sales',
+  action_type TEXT NOT NULL,
+  action_guide TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'hinglish',
+  audio_file_name TEXT,
+  audio_mime_type TEXT,
+  audio_data BYTEA,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id BIGINT NOT NULL,
