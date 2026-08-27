@@ -89,6 +89,7 @@ export function VoiceTrainingView({ sessionToken, onMessage, onError }: {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<RecognitionInstance | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const finalTranscriptRef = useRef("");
   const timerRef = useRef<number | null>(null);
@@ -120,6 +121,7 @@ export function VoiceTrainingView({ sessionToken, onMessage, onError }: {
 
   function clearSample() {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
+    if (audioFileInputRef.current) audioFileInputRef.current.value = "";
     setAudioUrl("");
     setAudioBlob(null);
     setRecordingSeconds(0);
@@ -306,7 +308,8 @@ export function VoiceTrainingView({ sessionToken, onMessage, onError }: {
           <div><strong>1. Capture a real voice sample</strong><span>Speak naturally, including pauses and pronunciation mistakes.</span></div>
           <div className="voice-training-record-actions">
             <button className={recording ? "danger-button" : "primary-button"} type="button" onClick={recording ? stopRecording : startRecording}>{recording ? `Stop · ${recordingSeconds}s` : "🎙 Record sample"}</button>
-            <label className="ghost-button voice-upload-button">Upload audio<input type="file" accept="audio/*,video/webm" onChange={(event) => chooseAudioFile(event.target.files?.[0])} /></label>
+            <label className="ghost-button voice-upload-button">Upload audio<input ref={audioFileInputRef} type="file" accept="audio/*,video/webm" onChange={(event) => chooseAudioFile(event.target.files?.[0])} /></label>
+            {audioBlob ? <button className="ghost-button danger-text" type="button" onClick={clearSample}>Delete sample audio</button> : null}
           </div>
           {recording ? <div className="voice-recording-live"><span />Listening and recording…</div> : null}
           {audioUrl ? <audio className="voice-training-audio" controls src={audioUrl} /> : null}
