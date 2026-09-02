@@ -224,11 +224,24 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
   }, [allGroups, datePreset, hasTodayOrders, hasYesterdayOrders, latestAvailableDate, todayDate, yesterdayDate]);
 
   return (
-    <section className="collapse-stack">
+    <section className="collapse-stack order-command-center purchase-command-center">
+      <header className="order-command-header">
+        <div>
+          <span className="eyebrow">Procurement operations</span>
+          <h2>Purchase control center</h2>
+          <p>Monitor supplier orders, inbound receipts and payment readiness in one view.</p>
+        </div>
+        <div className="order-command-kpis">
+          <div><span>Orders</span><strong>{filteredGroups.length}</strong></div>
+          <div><span>Receiving</span><strong>{receivingPendingCount}</strong></div>
+          <div><span>Payments</span><strong>{paymentPendingCount}</strong></div>
+        </div>
+      </header>
       <div className="summary-switch-bar">
         <button className={viewMode === "orders" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("orders")}>Orders</button>
         <button className={viewMode === "payments" ? "tab-button active" : "tab-button"} type="button" onClick={() => setViewMode("payments")}><LabelWithBadge label="Payments" count={paymentPendingCount} /></button>
       </div>
+      <section className="order-control-surface">
       <div className="date-filter-strip">
         <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
         <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
@@ -247,8 +260,9 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
         <button className="ghost-button" type="button" onClick={() => downloadReportCsv(purchaseExportPrefix, purchaseExportHeaders, purchaseExportRowsData, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
         <button className="ghost-button" type="button" onClick={() => downloadReportPdf(purchaseExportTitle, purchaseExportPrefix, purchaseExportHeaders, purchaseExportRowsData, activeRange.fromDate, activeRange.toDate, [viewMode === "orders" ? `Orders: ${filteredGroups.length}` : `Payments: ${filteredCompletedPayments.length}`])}>Download PDF</button>
       </div>
+      </section>
       {viewMode === "orders" ? <>
-      {groups.length > 0 ? <article className="list-card purchase-summary-stats">
+      {groups.length > 0 ? <article className="list-card purchase-summary-stats order-kpi-strip">
         <div className="payment-meta-grid">
           <div><span className="small-label">Pickup queue</span><strong className="summary-stat-value"><span>Pickup pending</span><PendingBadge count={pickupPendingCount} /></strong></div>
           <div><span className="small-label">Warehouse queue</span><strong className="summary-stat-value"><span>Receiving</span><PendingBadge count={receivingPendingCount} /></strong></div>
@@ -263,13 +277,18 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
             const expanded = openGroupId === group.id;
             return (
               <article className="list-card purchase-summary-card" key={group.id}>
-                <button className="purchase-summary-toggle" type="button" onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
+                <button className="purchase-summary-toggle" type="button" aria-expanded={expanded} onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
                   <div className="payment-update-head">
                     <div>
                       <strong>{first?.supplierName || "Supplier"}{group.lines.length > 1 ? ` +${group.lines.length - 1}` : ""}</strong>
                       <p>{group.id}</p>
                     </div>
-                    <span className="status-pill">{expanded ? "Close" : "Open"}</span>
+                    <span className="order-detail-action">{expanded ? "Hide details" : "View details"}<b aria-hidden="true">{expanded ? "↑" : "↓"}</b></span>
+                  </div>
+                  <div className="order-card-vitals">
+                    <div><span>Order value</span><strong>INR {group.lines.reduce((sum, line) => sum + line.totalAmount, 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong></div>
+                    <div><span>Items</span><strong>{group.lines.length}</strong></div>
+                    <div><span>Created</span><strong>{new Date(groupNewestCreatedAt(group.lines)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</strong></div>
                   </div>
                   <div className="purchase-status-chips top-gap">
                     <span className="status-pill status-pending"><LabelWithBadge label="PO" count={1} /></span>

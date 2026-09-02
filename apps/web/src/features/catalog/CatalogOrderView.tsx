@@ -1060,7 +1060,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
 
   const mainPanel = (
         <Panel title={title} eyebrow={eyebrow}>
-          <div className={cartLines.length > 0 ? "catalog-shell checkout-visible" : "catalog-shell"}>
+          <div className={`${cartLines.length > 0 ? "catalog-shell checkout-visible" : "catalog-shell"} enterprise-catalog ${isPurchase ? "purchase-catalog" : "sales-catalog"}`}>
             {flowStep !== "catalog" ? <div ref={flowCardRef} className="flow-card">
               {flowStep === "landing" ? <>
                 <span className="eyebrow">Start</span>
