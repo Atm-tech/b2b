@@ -1,4 +1,4 @@
-const CACHE_NAME = "aapoorti-b2b-shell-v2";
+const CACHE_NAME = "aapoorti-business-connect-shell-v3";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/app-icon.svg"];
 
 self.addEventListener("install", (event) => {

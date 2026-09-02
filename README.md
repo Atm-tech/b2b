@@ -1,4 +1,4 @@
-# Aapoorti B2B Platform
+# AAPOORTI BUSINESS CONNECT
 
 Procurement and sales operating system for Aapoorti.
 
@@ -30,7 +30,7 @@ npm run dev
 
 ## Install as an app
 
-The web workspace is an installable **AAPOORTI B2B** PWA, matching the Aapoorti E-Franchise app shell. After deploying it over HTTPS, open it in Chrome or Edge and use the in-app **Install App** button. The installed app launches in its own window and caches the application shell for reliable loading; live operational data still requires the API connection.
+The web workspace is an installable **AAPOORTI BUSINESS CONNECT** PWA, matching the Aapoorti E-Franchise app shell. After deploying it over HTTPS, open it in Chrome or Edge and use the in-app **Install App** button. The installed app launches in its own window and caches the application shell for reliable loading; live operational data still requires the API connection.
 
 ## Production
 
