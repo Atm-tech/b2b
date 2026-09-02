@@ -86,13 +86,13 @@ function IosInstallGuide({ browserName, onClose }: { browserName: string; onClos
       <section className="pwa-install-card" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" onClick={(event) => event.stopPropagation()}>
         <button className="pwa-install-close" type="button" aria-label="Close install instructions" onClick={onClose}>×</button>
         <span className="eyebrow">iPhone / iPad</span>
-        <h2 id="ios-install-title">Aapoorti app install karein</h2>
+        <h2 id="ios-install-title">AAPOORTI B2B install karein</h2>
         <ol>
           <li>{browserName} ka <strong>Share</strong> button dabayein.</li>
           <li><strong>Add to Home Screen</strong> select karein.</li>
           <li><strong>Open as Web App</strong> on karke <strong>Add</strong> dabayein.</li>
         </ol>
-        <p>Iske baad Aapoorti ka icon Home Screen par dikh jayega.</p>
+        <p>Iske baad AAPOORTI B2B ka icon Home Screen par dikh jayega.</p>
         <button className="primary-button" type="button" onClick={onClose}>Samajh gaya</button>
       </section>
     </div>,
