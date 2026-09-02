@@ -5317,6 +5317,78 @@ textarea {
 
 .purchase-command-center .order-kpi-strip .payment-meta-grid > div { border-left-color: #3b8190; }
 
+/* Login is an app screen: the viewport stays fixed and only its content panel may scroll. */
+body:has(.login-shell) {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root:has(.login-shell) {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.login-shell {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+}
+
+.login-landing {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.login-hero-bar {
+  position: relative;
+  z-index: 5;
+  flex: 0 0 auto;
+}
+
+.login-card {
+  min-height: 0;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 980px) {
+  .login-shell {
+    padding: max(10px, env(safe-area-inset-top, 0px)) 12px max(8px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .login-landing {
+    gap: 10px;
+    padding: 0;
+  }
+
+  .login-card {
+    align-content: start;
+  }
+
+  .login-footer {
+    padding: 4px 8px 0;
+  }
+}
+
+@media (max-height: 680px) {
+  .login-copy {
+    display: none;
+  }
+
+  .login-card {
+    grid-template-columns: minmax(0, 560px);
+    justify-content: center;
+  }
+}
+
 .order-command-center > .panel {
   border-color: #dce6ea;
   background: #fff;
