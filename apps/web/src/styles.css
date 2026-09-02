@@ -5324,6 +5324,24 @@ body:has(.login-shell) {
   overscroll-behavior: none;
 }
 
+html.login-scroll-locked,
+body.login-scroll-locked {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+html.login-scroll-locked #root {
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden !important;
+}
+
 #root:has(.login-shell) {
   height: 100dvh;
   overflow: hidden;
@@ -5354,14 +5372,13 @@ body:has(.login-shell) {
   min-height: 0;
   max-height: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  overflow-y: hidden;
+  overscroll-behavior: none;
 }
 
 @media (max-width: 980px) {
   .login-shell {
-    padding: max(10px, env(safe-area-inset-top, 0px)) 12px max(8px, env(safe-area-inset-bottom, 0px));
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 12px max(8px, env(safe-area-inset-bottom, 0px));
   }
 
   .login-landing {
@@ -5371,10 +5388,22 @@ body:has(.login-shell) {
 
   .login-card {
     align-content: start;
+    grid-template-columns: minmax(0, 560px);
+    justify-content: center;
   }
 
   .login-footer {
     padding: 4px 8px 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-copy {
+    display: none;
+  }
+
+  .login-card {
+    padding: 12px;
   }
 }
 

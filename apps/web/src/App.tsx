@@ -191,6 +191,17 @@ function App() {
   const emptyPartyEditForm = { id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
 
   useEffect(() => {
+    const shouldLockLogin = !currentUser || !snapshot;
+    document.documentElement.classList.toggle("login-scroll-locked", shouldLockLogin);
+    document.body.classList.toggle("login-scroll-locked", shouldLockLogin);
+    if (shouldLockLogin) window.scrollTo(0, 0);
+    return () => {
+      document.documentElement.classList.remove("login-scroll-locked");
+      document.body.classList.remove("login-scroll-locked");
+    };
+  }, [currentUser, snapshot]);
+
+  useEffect(() => {
     const captureInstallPrompt = (event: Event) => {
       event.preventDefault();
       setInstallPrompt(event as BeforeInstallPromptEvent);
