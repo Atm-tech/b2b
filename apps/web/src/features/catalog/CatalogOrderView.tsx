@@ -59,6 +59,7 @@ export type CartLine = {
   productSku: string;
   quantity: string;
   rate: string;
+  mrp?: string;
   cdTodRate?: string;
   cdAmount?: string;
   todAmount?: string;
@@ -117,6 +118,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     product: AppSnapshot["products"][number];
     quantity: string;
     rate: string;
+    mrp: string;
     cdTodRate: string;
     lastRate: number;
     gstRate: GstRateInput;
@@ -435,6 +437,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
         product,
         quantity: existingLine?.quantity || "1",
         rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : saleRate),
+        mrp: existingLine?.mrp || String(product.mrp || ""),
         cdTodRate: existingLine?.cdTodRate || String(cdTodRate || saleRate),
         lastRate,
         gstRate: existingLine?.gstRate === "NA" ? "0" : (existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate || 0) as GstRateInput)),
@@ -591,6 +594,16 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
       showCartToast("Enter product rate");
       return;
     }
+    if (isPurchase && Number(popup.mrp || 0) <= 0) {
+      scrollToFieldError(ratePopupSheetRef.current, '[data-error-key="mrp"]');
+      showCartToast("Enter product MRP from supplier invoice or pack");
+      return;
+    }
+    if (isPurchase && Number(popup.mrp || 0) < nextRate) {
+      scrollToFieldError(ratePopupSheetRef.current, '[data-error-key="mrp"]');
+      showCartToast("MRP cannot be lower than purchase rate");
+      return;
+    }
     if (!isPurchase && Number(popup.cdTodRate || 0) > nextRate) {
       scrollToFieldError(ratePopupSheetRef.current, '[data-error-key="cdTodRate"]');
       showCartToast("CD/TOD rate cannot be higher than sale rate");
@@ -627,6 +640,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
       productSku: popup.product.sku,
       quantity: quantityText,
       rate: String(nextRate),
+      mrp: isPurchase ? popup.mrp : String(popup.product.mrp || ""),
       cdTodRate: isPurchase ? "0" : popup.cdTodRate,
       cdAmount: subsidyBreakdown.cdAmount,
       todAmount: subsidyBreakdown.todAmount,
@@ -1463,6 +1477,10 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     Enter Rate
                     <input type="number" step="any" value={ratePopup.rate} onChange={(e) => setRatePopup((current) => current ? { ...current, rate: e.target.value, confirmHighRate: false } : current)} />
                   </label>
+                  {isPurchase ? <label data-error-key="mrp" className={Number(ratePopup.mrp || 0) <= 0 || Number(ratePopup.mrp || 0) < Number(ratePopup.rate || 0) ? "field-error" : ""}>
+                    Product MRP
+                    <input type="number" step="any" min={ratePopup.rate || "0"} value={ratePopup.mrp} onChange={(e) => setRatePopup((current) => current ? { ...current, mrp: e.target.value } : current)} placeholder="From pack / supplier invoice" />
+                  </label> : null}
                   {!isPurchase ? <label data-error-key="cdTodRate" className={Number(ratePopup.cdTodRate || 0) <= 0 || Number(ratePopup.cdTodRate || 0) > Number(ratePopup.rate || 0) ? "field-error" : ""}>
                     CD/TOD Rate
                     <input type="number" step="any" min="0.01" value={ratePopup.cdTodRate} onChange={(e) => setRatePopup((current) => current ? { ...current, cdTodRate: e.target.value } : current)} />
@@ -1488,7 +1506,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                 </div>
                 <div className="payment-meta-grid top-gap">
-                  <div><span className="small-label">MRP</span><strong>{Number(ratePopup.product.mrp || 0) > 0 ? Number(ratePopup.product.mrp).toFixed(2) : "Pending"}</strong></div>
+                  <div><span className="small-label">MRP</span><strong>{Number(isPurchase ? ratePopup.mrp : ratePopup.product.mrp || 0) > 0 ? Number(isPurchase ? ratePopup.mrp : ratePopup.product.mrp).toFixed(2) : "Pending"}</strong></div>
                   {!isPurchase ? <div><span className="small-label">Off MRP</span><strong>{popupMrpDiscount !== null ? `${popupMrpDiscount.toFixed(1)}%` : "—"}</strong></div> : null}
                   <div><span className="small-label">Taxable</span><strong>{taxPreview.taxableAmount}</strong></div>
                   <div><span className="small-label">GST</span><strong>{taxPreview.gstAmount}</strong></div>
@@ -1554,7 +1572,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="cart-product-details">
                       <div className="payment-meta-grid cart-product-values">
                         <label>Qty<input type="number" step="any" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
-                        <div><span className="small-label">MRP</span><strong>{Number(product.mrp || 0) > 0 ? Number(product.mrp).toFixed(2) : "Pending"}</strong></div>
+                        <div><span className="small-label">MRP</span><strong>{Number(isPurchase ? line.mrp : product.mrp || 0) > 0 ? Number(isPurchase ? line.mrp : product.mrp).toFixed(2) : "Pending"}</strong></div>
                         <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
                         {!isPurchase ? <div><span className="small-label">CD/TOD Rate</span><strong>{Number(line.cdTodRate || 0).toFixed(2)}</strong></div> : null}
                         {!isPurchase ? <div><span className="small-label">Off MRP</span><strong>{mrpDiscountPercent(product, Number(line.cdTodRate || line.rate || 0)) !== null ? `${mrpDiscountPercent(product, Number(line.cdTodRate || line.rate || 0))!.toFixed(1)}%` : "—"}</strong></div> : null}

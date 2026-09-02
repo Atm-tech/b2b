@@ -1922,6 +1922,7 @@ export async function createPurchaseOrder(payload: {
   warehouseId: string;
   quantityOrdered: number;
   rate: number;
+  mrp?: number;
   taxableAmount?: number;
   gstRate?: PurchaseOrder["gstRate"];
   gstAmount?: number;
@@ -1955,6 +1956,13 @@ export async function createPurchaseOrder(payload: {
   const combinedNote = [payload.note.trim(), rateAlertNote].filter(Boolean).join(" | ");
 
   await withTransaction(async (client) => {
+    if (payload.mrp !== undefined && (!Number.isFinite(payload.mrp) || payload.mrp <= 0)) {
+      throw new Error("MRP must be greater than zero.");
+    }
+    if (typeof payload.mrp === "number" && payload.mrp > 0) {
+      if (payload.mrp < payload.rate) throw new Error("MRP cannot be lower than purchase rate.");
+      await query("UPDATE products SET mrp = $1, rsp = $2 WHERE sku = $3", [payload.mrp, payload.rate, payload.productSku], client);
+    }
     if (payload.location) {
       await updateCounterpartyLocation(payload.supplierId, payload.location, client);
     }
@@ -1983,8 +1991,8 @@ export async function createPurchaseOrder(payload: {
   return getSnapshot();
 }
 
-export async function createPurchaseCart(payload: Omit<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate" | "advancePayment"> & {
-  lines: Array<Pick<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate">>;
+export async function createPurchaseCart(payload: Omit<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "mrp" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate" | "advancePayment"> & {
+  lines: Array<Pick<Parameters<typeof createPurchaseOrder>[0], "productSku" | "quantityOrdered" | "rate" | "mrp" | "taxableAmount" | "gstRate" | "gstAmount" | "taxMode" | "previousRate">>;
   advancePayment?: AdvancePaymentPayload;
 }, currentUser: CurrentUser) {
   await ready;

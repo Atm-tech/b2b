@@ -1326,7 +1326,7 @@ function App() {
                 setMessage("");
                 try {
                   const previousIds = new Set(groupPurchaseOrders(snapshot.purchaseOrders).map((group) => group.id));
-                  const { data } = await api.post<AppSnapshot>("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? 0 : Number(line.gstRate || 0), gstAmount: Number(line.gstAmount || 0), taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, {
+                  const { data } = await api.post<AppSnapshot>("/purchase-orders/cart", { ...purchaseForm, lines: lines.map((line) => ({ productSku: line.productSku, quantityOrdered: Number(line.quantity), rate: Number(line.rate), mrp: Number(line.mrp || 0), taxableAmount: Number(line.taxableAmount || 0), gstRate: line.gstRate === "NA" ? 0 : Number(line.gstRate || 0), gstAmount: Number(line.gstAmount || 0), taxMode: line.taxMode === "NA" ? "Exclusive" : line.taxMode, previousRate: Number(line.previousRate || 0) })), cashTiming: purchaseForm.paymentMode === "Cash" ? purchaseForm.cashTiming : undefined, advancePayment, operationDate: operationDate || undefined }, {
                     headers: { authorization: `Bearer ${sessionToken}` }
                   });
                   setSnapshot(data);
@@ -1566,18 +1566,22 @@ function App() {
         onMessage={setMessage}
         onError={setError}
       />
-      {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar" : "mobile-tab-bar delivery-manager-tab-bar"}>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><LabelWithBadge label="Home" count={deliveryManagerHomePendingCount} /></button>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><LabelWithBadge label="Inbound" count={deliveryManagerInboundPendingCount} /></button>
-        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><LabelWithBadge label="Dispatch" count={deliveryManagerDispatchPendingCount} /></button>
-      </nav> : <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar" : "mobile-tab-bar"}>{bottomNavViews.map((view) => {
+      {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar app-dock" : "mobile-tab-bar delivery-manager-tab-bar app-dock"} aria-label="Primary navigation">
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Overview" /></span><span className="dock-label">Home</span>{deliveryManagerHomePendingCount > 0 ? <span className="dock-badge">{deliveryManagerHomePendingCount}</span> : null}</button>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Purchase" /></span><span className="dock-label">Inbound</span>{deliveryManagerInboundPendingCount > 0 ? <span className="dock-badge">{deliveryManagerInboundPendingCount}</span> : null}</button>
+        <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Sales" /></span><span className="dock-label">Dispatch</span>{deliveryManagerDispatchPendingCount > 0 ? <span className="dock-badge">{deliveryManagerDispatchPendingCount}</span> : null}</button>
+      </nav> : <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar app-dock" : "mobile-tab-bar app-dock"} aria-label="Primary navigation">{bottomNavViews.map((view) => {
         const count = view === "Purchase" || view === "Purchases"
           ? purchaserOrderCount
           : view === "Sales" || view === "SalesOrders"
             ? salesOrderCount
             : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
-        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)}>{count > 0 && !isFloatingPoSoButton ? <LabelWithBadge label={displayLabel(view, currentUser)} count={count} /> : displayLabel(view, currentUser)}</button>;
+        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)} aria-current={view === activeView ? "page" : undefined}>
+          <span className="dock-icon"><SidebarVectorIcon view={view} /></span>
+          <span className="dock-label">{displayLabel(view, currentUser)}</span>
+          {count > 0 && !isFloatingPoSoButton ? <span className="dock-badge">{count > 99 ? "99+" : count}</span> : null}
+        </button>;
       })}</nav>}
     </main>
   );
