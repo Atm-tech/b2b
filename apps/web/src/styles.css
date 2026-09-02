@@ -4775,14 +4775,17 @@ textarea {
   align-content: center;
   gap: 3px;
   flex: 1 1 0;
-  width: auto;
-  min-width: 0;
-  height: auto;
-  min-height: 58px;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 58px !important;
+  min-height: 58px !important;
+  max-height: 58px !important;
+  aspect-ratio: auto !important;
   padding: 6px 8px;
   border: 0;
   border-radius: 16px;
-  transform: none;
+  transform: none !important;
   outline: 0;
   background: transparent;
   color: #58707c;
@@ -4796,7 +4799,7 @@ textarea {
 .app-dock .tab-button.active,
 .app-dock .purchaser-po-tab.active {
   outline: 0;
-  transform: translateY(-1px);
+  transform: translateY(-1px) !important;
   background: linear-gradient(145deg, #0b5f62, #078a91);
   color: #fff;
   box-shadow: 0 9px 20px rgba(7, 108, 113, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
@@ -4854,6 +4857,11 @@ textarea {
     left: max(8px, env(safe-area-inset-left, 0px));
     right: max(8px, env(safe-area-inset-right, 0px));
     bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    max-height: 74px;
+  }
+
+  .assistant-launcher {
+    bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   }
 
   .app-shell,
@@ -4865,7 +4873,13 @@ textarea {
 @media (max-width: 420px) {
   .mobile-tab-bar.app-dock { gap: 3px; padding: 6px; border-radius: 20px; }
   .app-dock .tab-button,
-  .app-dock .purchaser-po-tab { min-height: 56px; padding-inline: 4px; border-radius: 14px; }
+  .app-dock .purchaser-po-tab {
+    height: 56px !important;
+    min-height: 56px !important;
+    max-height: 56px !important;
+    padding-inline: 4px;
+    border-radius: 14px;
+  }
   .app-dock .dock-icon .sidebar-vector-icon { width: 21px; height: 21px; }
   .app-dock .dock-label { font-size: 0.66rem; }
 }
