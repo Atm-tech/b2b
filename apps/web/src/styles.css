@@ -795,12 +795,6 @@ textarea {
   .install-app-button { display: none; }
   body { user-select: none; }
   input, textarea { user-select: text; }
-
-  .app-topbar,
-  .login-hero-bar,
-  .boot-loader-header {
-    padding-top: calc(12px + env(safe-area-inset-top, 0px));
-  }
 }
 
 .workspace-shell {
@@ -5044,9 +5038,11 @@ textarea {
 }
 
 @media (display-mode: standalone) and (max-width: 640px) {
-  .app-topbar,
-  .login-hero-bar,
-  .boot-loader-header {
-    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  .app-shell,
+  .login-shell,
+  .boot-loader-shell {
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
   }
+
+  .app-topbar { top: env(safe-area-inset-top, 0px); }
 }
