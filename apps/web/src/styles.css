@@ -751,6 +751,46 @@ textarea {
   backdrop-filter: blur(14px);
 }
 
+.pwa-install-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: grid;
+  place-items: end center;
+  padding: 18px max(14px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px));
+  background: rgba(8, 25, 38, 0.48);
+  backdrop-filter: blur(8px);
+}
+
+.pwa-install-card {
+  position: relative;
+  width: min(440px, 100%);
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.32);
+}
+
+.pwa-install-card h2 { margin: 0.55rem 0 0.8rem; }
+.pwa-install-card ol { display: grid; gap: 0.7rem; margin: 0 0 1rem; padding-left: 1.35rem; }
+.pwa-install-card p { color: var(--muted); }
+.pwa-install-card .primary-button { width: 100%; }
+
+.pwa-install-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  color: #334155;
+  background: #eef2f7;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
 @media (display-mode: standalone) {
   .install-app-button { display: none; }
   body { user-select: none; }

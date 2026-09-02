@@ -63,6 +63,39 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
+function isIosSafariBrowser() {
+  if (typeof navigator === "undefined") return false;
+  const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return isIosDevice && /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(navigator.userAgent);
+}
+
+function isStandaloneApp() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  return window.matchMedia("(display-mode: standalone)").matches
+    || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+}
+
+function IosInstallGuide({ onClose }: { onClose: () => void }) {
+  return createPortal(
+    <div className="pwa-install-overlay" role="presentation" onClick={onClose}>
+      <section className="pwa-install-card" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" onClick={(event) => event.stopPropagation()}>
+        <button className="pwa-install-close" type="button" aria-label="Close install instructions" onClick={onClose}>×</button>
+        <span className="eyebrow">iPhone / iPad</span>
+        <h2 id="ios-install-title">Aapoorti app install karein</h2>
+        <ol>
+          <li>Safari ka <strong>Share</strong> button dabayein.</li>
+          <li><strong>Add to Home Screen</strong> select karein.</li>
+          <li><strong>Open as Web App</strong> on karke <strong>Add</strong> dabayein.</li>
+        </ol>
+        <p>Iske baad Aapoorti ka icon Home Screen par dikh jayega.</p>
+        <button className="primary-button" type="button" onClick={onClose}>Samajh gaya</button>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function BootLoader() {
   return (
     <main className="boot-loader-shell">
@@ -94,6 +127,9 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const [showIosInstallGuide, setShowIosInstallGuide] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(() => isStandaloneApp());
+  const [isIosSafari] = useState(() => isIosSafariBrowser());
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
@@ -155,7 +191,10 @@ function App() {
       event.preventDefault();
       setInstallPrompt(event as BeforeInstallPromptEvent);
     };
-    const clearInstallPrompt = () => setInstallPrompt(null);
+    const clearInstallPrompt = () => {
+      setInstallPrompt(null);
+      setIsInstalled(true);
+    };
     const updateNetworkState = () => setIsOffline(!navigator.onLine);
     window.addEventListener("beforeinstallprompt", captureInstallPrompt);
     window.addEventListener("appinstalled", clearInstallPrompt);
@@ -170,7 +209,10 @@ function App() {
   }, []);
 
   async function installApp() {
-    if (!installPrompt) return;
+    if (!installPrompt) {
+      if (isIosSafari && !isInstalled) setShowIosInstallGuide(true);
+      return;
+    }
     await installPrompt.prompt();
     await installPrompt.userChoice;
     setInstallPrompt(null);
@@ -585,7 +627,7 @@ function App() {
               <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
             </div>
             <div className="topbar-side-slot">
-              {installPrompt ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
+              {(installPrompt || (isIosSafari && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
               <div className="login-hero-chip">B2B Internal Use</div>
             </div>
           </header>
@@ -612,6 +654,7 @@ function App() {
             </form>
           </section>
           {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
+          {showIosInstallGuide ? <IosInstallGuide onClose={() => setShowIosInstallGuide(false)} /> : null}
           <footer className="login-footer">Powered by OPAS</footer>
         </section>
       </main>
@@ -1182,7 +1225,7 @@ function App() {
           <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
         </div>
         <div className="hero-side hero-top-actions">
-          {installPrompt ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
+          {(installPrompt || (isIosSafari && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
           {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
             {sidebarCollapsed ? "Expand Menu" : "Collapse Menu"}
           </button> : null}
@@ -1210,6 +1253,7 @@ function App() {
       </header>
 
       {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
+      {showIosInstallGuide ? <IosInstallGuide onClose={() => setShowIosInstallGuide(false)} /> : null}
 
       {!effectiveSimpleMode ? <section className="hero panel hero-compact">
         <div>
