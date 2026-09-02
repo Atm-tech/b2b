@@ -223,13 +223,27 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     return getLastPurchaseRate(product);
   }
 
-  function productSalePrice(product: AppSnapshot["products"][number]) {
-    const latestSale = snapshot.salesOrders
+  function latestProductSale(product: AppSnapshot["products"][number]) {
+    return snapshot.salesOrders
       .filter((item) => item.productSku === product.sku && item.status !== "Cancelled")
-      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]?.rate;
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
+  }
+
+  function productSalePrice(product: AppSnapshot["products"][number]) {
+    const latestSale = latestProductSale(product)?.rate;
     return product.offerPrice && product.offerPrice > 0
       ? product.offerPrice
       : latestSale || product.mrp || product.rsp || productPurchasePrice(product);
+  }
+
+  function productCdTodPrice(product: AppSnapshot["products"][number]) {
+    const latestSale = latestProductSale(product);
+    return Number(latestSale?.cdTodRate || latestSale?.rate || productSalePrice(product) || 0);
+  }
+
+  function mrpDiscountPercent(product: AppSnapshot["products"][number], rate = productCdTodPrice(product)) {
+    const mrp = Number(product.mrp || 0);
+    return mrp > 0 && rate > 0 ? Math.max(0, ((mrp - rate) / mrp) * 100) : null;
   }
 
   function productMargin(product: AppSnapshot["products"][number]) {
@@ -414,12 +428,14 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
         return false;
       }
       const lastRate = getLastPurchaseRate(product);
+      const saleRate = productSalePrice(product);
+      const cdTodRate = productCdTodPrice(product);
       const existingLine = cartLines.find((line) => line.productSku === product.sku);
       setRatePopup({
         product,
         quantity: existingLine?.quantity || "1",
-        rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : ((product.offerPrice && product.offerPrice > 0 ? product.offerPrice : product.mrp) ?? lastRate ?? 0)),
-        cdTodRate: existingLine?.cdTodRate || existingLine?.rate || String((product.offerPrice && product.offerPrice > 0 ? product.offerPrice : product.mrp) ?? lastRate ?? 0),
+        rate: existingLine?.rate || String(isPurchase ? (lastRate || getSuggestedRate(product) || 0) : saleRate),
+        cdTodRate: existingLine?.cdTodRate || String(cdTodRate || saleRate),
         lastRate,
         gstRate: existingLine?.gstRate === "NA" ? "0" : (existingLine?.gstRate || (billTaxOverride.enabled ? billTaxOverride.gstRate : String(product.defaultGstRate === "NA" ? 0 : product.defaultGstRate || 0) as GstRateInput)),
         taxMode: existingLine?.taxMode === "NA" ? "Exclusive" : (existingLine?.taxMode || (billTaxOverride.enabled ? billTaxOverride.taxMode : (product.defaultTaxMode === "NA" ? "Exclusive" : product.defaultTaxMode || "Exclusive"))),
@@ -1372,9 +1388,13 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                       </div> : null}
                     </div>
                     <div className="product-pricing compact">
-                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product)}` : `Sale ${productSalePrice(product)}`}</strong>
-                      <span>{product.offerPrice ? `Offer ${product.offerPrice} · MRP ${product.mrp ?? 0}` : `MRP ${product.mrp ?? 0}`}</span>
+                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product).toFixed(2)}` : `Rate ${productSalePrice(product).toFixed(2)}`}</strong>
+                      <span>{Number(product.mrp || 0) > 0 ? `MRP ${Number(product.mrp).toFixed(2)}` : "MRP pending"}</span>
                     </div>
+                    {!isPurchase ? <div className="product-commercials">
+                      <span>CD/TOD <strong>{productCdTodPrice(product).toFixed(2)}</strong></span>
+                      {mrpDiscountPercent(product) !== null ? <span className="discount-badge">{mrpDiscountPercent(product)!.toFixed(1)}% off MRP</span> : <span className="discount-badge pending">MRP % pending</span>}
+                    </div> : null}
                     <div className="product-footer stacked">
                       {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`${getWarehouseLabel(orderForm.warehouseId)} stock ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}
                       <div className="product-stock-chips">
@@ -1411,6 +1431,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                   const taxPreview = calculateLineTotals(ratePopup.quantity, ratePopup.rate, ratePopup.gstRate, ratePopup.taxMode);
                   const subsidyPreview = isPurchase ? { cdAmount: "0.00", todAmount: "0.00" } : calculateCdTodBreakdown(ratePopup.quantity, ratePopup.rate, ratePopup.cdTodRate);
                   const finalPreviewAmount = (Math.max(0, Number(taxPreview.totalAmount || 0) - Number(subsidyPreview.cdAmount || 0) - Number(subsidyPreview.todAmount || 0))).toFixed(2);
+                  const popupMrpDiscount = mrpDiscountPercent(ratePopup.product, Number(ratePopup.cdTodRate || ratePopup.rate || 0));
                   return <>
                 <div className="cart-head">
                   <div>
@@ -1467,6 +1488,8 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                   </label>
                 </div>
                 <div className="payment-meta-grid top-gap">
+                  <div><span className="small-label">MRP</span><strong>{Number(ratePopup.product.mrp || 0) > 0 ? Number(ratePopup.product.mrp).toFixed(2) : "Pending"}</strong></div>
+                  {!isPurchase ? <div><span className="small-label">Off MRP</span><strong>{popupMrpDiscount !== null ? `${popupMrpDiscount.toFixed(1)}%` : "—"}</strong></div> : null}
                   <div><span className="small-label">Taxable</span><strong>{taxPreview.taxableAmount}</strong></div>
                   <div><span className="small-label">GST</span><strong>{taxPreview.gstAmount}</strong></div>
                   {!isPurchase ? <div><span className="small-label">CD</span><strong>{subsidyPreview.cdAmount}</strong></div> : null}
@@ -1531,8 +1554,10 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="cart-product-details">
                       <div className="payment-meta-grid cart-product-values">
                         <label>Qty<input type="number" step="any" value={line.quantity} onChange={(e) => updateCartLineQuantity(line.productSku, e.target.value)} /></label>
+                        <div><span className="small-label">MRP</span><strong>{Number(product.mrp || 0) > 0 ? Number(product.mrp).toFixed(2) : "Pending"}</strong></div>
                         <div><span className="small-label">Rate</span><strong>{Number(line.rate || 0).toFixed(2)}</strong></div>
                         {!isPurchase ? <div><span className="small-label">CD/TOD Rate</span><strong>{Number(line.cdTodRate || 0).toFixed(2)}</strong></div> : null}
+                        {!isPurchase ? <div><span className="small-label">Off MRP</span><strong>{mrpDiscountPercent(product, Number(line.cdTodRate || line.rate || 0)) !== null ? `${mrpDiscountPercent(product, Number(line.cdTodRate || line.rate || 0))!.toFixed(1)}%` : "—"}</strong></div> : null}
                         <label>GST<select value={line.gstRate === "NA" ? "0" : line.gstRate} onChange={(e) => updateCartLineTax(line.productSku, { gstRate: e.target.value as GstRateInput })} disabled={billTaxOverride.enabled}><option value="0">0%</option><option value="5">5%</option><option value="12">12%</option><option value="18">18%</option><option value="40">40%</option></select></label>
                         <label>Calculation<select value={line.taxMode === "NA" ? "Exclusive" : line.taxMode} onChange={(e) => updateCartLineTax(line.productSku, { taxMode: e.target.value as TaxModeInput })} disabled={billTaxOverride.enabled}><option value="Exclusive">GST Extra</option><option value="Inclusive">GST Included</option></select></label>
                         <div><span className="small-label">Taxable</span><strong>{Number(line.taxableAmount || 0).toFixed(2)}</strong></div>
