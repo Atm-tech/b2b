@@ -1,4 +1,4 @@
-const CACHE_NAME = "aapoorti-business-connect-shell-v5";
+const CACHE_NAME = "b-connect-shell-v6";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/apple-touch-icon.png", "/business-connect-icon-192.png", "/business-connect-icon-512.png"];
 
 self.addEventListener("install", (event) => {

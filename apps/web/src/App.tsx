@@ -86,13 +86,13 @@ function IosInstallGuide({ browserName, onClose }: { browserName: string; onClos
       <section className="pwa-install-card" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" onClick={(event) => event.stopPropagation()}>
         <button className="pwa-install-close" type="button" aria-label="Close install instructions" onClick={onClose}>×</button>
         <span className="eyebrow">iPhone / iPad</span>
-        <h2 id="ios-install-title">AAPOORTI BUSINESS CONNECT install karein</h2>
+        <h2 id="ios-install-title">B CONNECT install karein</h2>
         <ol>
           <li>{browserName} ka <strong>Share</strong> button dabayein.</li>
           <li><strong>Add to Home Screen</strong> select karein.</li>
           <li><strong>Open as Web App</strong> on karke <strong>Add</strong> dabayein.</li>
         </ol>
-        <p>Iske baad BUSINESS CONNECT ka icon Home Screen par dikh jayega.</p>
+        <p>Iske baad B CONNECT ka icon Home Screen par dikh jayega.</p>
         <button className="primary-button" type="button" onClick={onClose}>Samajh gaya</button>
       </section>
     </div>,
@@ -104,13 +104,13 @@ function BootLoader() {
   return (
     <main className="boot-loader-shell">
       <header className="boot-loader-header glass-surface">
-        <div className="topbar-brand-block"><span className="small-label">Aapoorti Business Connect</span><strong>Workspace Restore</strong></div>
+        <div className="topbar-brand-block"><span className="small-label">B CONNECT</span><strong>Workspace Restore</strong></div>
         <div className="topbar-logo-orb boot-topbar-logo"><img src={appLogo} alt="Aapoorti" className="topbar-logo-image" /></div>
         <div className="topbar-side-slot"><span className="boot-loader-chip">Syncing</span></div>
       </header>
       <section className="boot-loader-card">
         <div className="boot-loader-mark" aria-hidden="true"><span /><span /><span /></div>
-        <div className="boot-loader-copy"><span className="eyebrow">Aapoorti Business Connect</span><h1>Restoring workspace</h1><p>Loading your module, live orders, parties, stock, and delivery state.</p></div>
+        <div className="boot-loader-copy"><span className="eyebrow">B CONNECT</span><h1>Restoring workspace</h1><p>Loading your module, live orders, parties, stock, and delivery state.</p></div>
         <div className="boot-loader-track"><span /></div>
       </section>
       <footer className="boot-loader-footer">Powered by OPAS</footer>
@@ -624,7 +624,7 @@ function App() {
         <section className="login-landing">
           <header className="login-hero-bar glass-surface">
             <div className="topbar-brand-block">
-              <span className="small-label">Aapoorti Business Connect</span>
+              <span className="small-label">B CONNECT</span>
               <strong>Internal Portal</strong>
             </div>
             <div className="topbar-logo-orb login-topbar-logo">
@@ -638,7 +638,7 @@ function App() {
           <section className="login-card panel glass-panel">
             <div className="login-copy">
               <span className="eyebrow">Internal Operations</span>
-              <h1>Aapoorti Business Connect operations workspace.</h1>
+              <h1>B CONNECT operations workspace.</h1>
               <p>This system is for internal booking, stock, delivery, and accounts workflows only.</p>
               <div className="login-feature-strip">
                 <div className="login-feature-pill">Orders</div>
@@ -1221,7 +1221,7 @@ function App() {
     <main className={effectiveSimpleMode ? "app-shell simple-shell" : "app-shell"}>
       <header className="app-topbar">
         <div className="app-topbar-copy">
-          <span className="small-label">Aapoorti Business Connect</span>
+          <span className="small-label">B CONNECT</span>
           <strong>{displayLabel(activeView, currentUser)}</strong>
           <p>{effectiveSimpleMode ? "Quick operations mode." : "Detailed operations mode."}</p>
         </div>
@@ -1262,7 +1262,7 @@ function App() {
       {!effectiveSimpleMode ? <section className="hero panel hero-compact">
         <div>
           <span className="eyebrow">{(currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role]).join(" / ")}</span>
-          <h1>Aapoorti Business Connect</h1>
+          <h1>B CONNECT</h1>
           <p>{effectiveSimpleMode ? "Simple mode shows only the essential operational steps." : "Advanced mode shows full operations, controls, and audit views."}</p>
         </div>
       </section> : null}

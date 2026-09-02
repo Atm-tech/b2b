@@ -1082,7 +1082,7 @@ export function BootLoader() {
     <main className="boot-loader-shell">
       <header className="boot-loader-header glass-surface">
         <div className="topbar-brand-block">
-          <span className="small-label">Aapoorti Business Connect</span>
+          <span className="small-label">B CONNECT</span>
           <strong>Workspace Restore</strong>
         </div>
         <div className="topbar-logo-orb boot-topbar-logo">
@@ -1099,7 +1099,7 @@ export function BootLoader() {
           <span />
         </div>
         <div className="boot-loader-copy">
-          <span className="eyebrow">Aapoorti Business Connect</span>
+          <span className="eyebrow">B CONNECT</span>
           <h1>Restoring workspace</h1>
           <p>Loading your module, live orders, parties, stock, and delivery state.</p>
         </div>

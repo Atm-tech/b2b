@@ -774,7 +774,7 @@ export function GoodsWarrantView({
           <div class="sign-box">Outlet Receiver</div>
         </div>
         <div class="foot">
-          <span>Generated from Aapoorti Business Connect accounts module</span>
+          <span>Generated from B CONNECT accounts module</span>
           <span>${escapeHtml(warrant.warrantNumber)}</span>
         </div>
       </div>
