@@ -1,5 +1,5 @@
-const CACHE_NAME = "aapoorti-business-connect-shell-v4";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/app-icon-180.png", "/app-icon-192.png", "/app-icon-512.png"];
+const CACHE_NAME = "aapoorti-business-connect-shell-v5";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/apple-touch-icon.png", "/business-connect-icon-192.png", "/business-connect-icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));

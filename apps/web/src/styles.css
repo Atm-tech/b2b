@@ -5038,6 +5038,15 @@ textarea {
 }
 
 @media (display-mode: standalone) and (max-width: 640px) {
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 89;
+    height: calc(10px + env(safe-area-inset-top, 0px));
+    background: #eef6fb;
+  }
+
   .app-shell,
   .login-shell,
   .boot-loader-shell {

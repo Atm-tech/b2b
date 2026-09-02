@@ -13,16 +13,16 @@
   "categories": ["business", "productivity", "finance"],
   "icons": [
     {
-      "src": "/app-icon-192.png",
+      "src": "/business-connect-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/app-icon-512.png",
+      "src": "/business-connect-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
