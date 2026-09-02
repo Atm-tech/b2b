@@ -63,11 +63,15 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
-function isIosSafariBrowser() {
-  if (typeof navigator === "undefined") return false;
+function iosBrowserName() {
+  if (typeof navigator === "undefined") return "";
   const isIosDevice = /iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  return isIosDevice && /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(navigator.userAgent);
+  if (!isIosDevice) return "";
+  if (/CriOS/.test(navigator.userAgent)) return "Chrome";
+  if (/FxiOS/.test(navigator.userAgent)) return "Firefox";
+  if (/EdgiOS/.test(navigator.userAgent)) return "Edge";
+  return "Safari";
 }
 
 function isStandaloneApp() {
@@ -76,7 +80,7 @@ function isStandaloneApp() {
     || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 }
 
-function IosInstallGuide({ onClose }: { onClose: () => void }) {
+function IosInstallGuide({ browserName, onClose }: { browserName: string; onClose: () => void }) {
   return createPortal(
     <div className="pwa-install-overlay" role="presentation" onClick={onClose}>
       <section className="pwa-install-card" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" onClick={(event) => event.stopPropagation()}>
@@ -84,7 +88,7 @@ function IosInstallGuide({ onClose }: { onClose: () => void }) {
         <span className="eyebrow">iPhone / iPad</span>
         <h2 id="ios-install-title">Aapoorti app install karein</h2>
         <ol>
-          <li>Safari ka <strong>Share</strong> button dabayein.</li>
+          <li>{browserName} ka <strong>Share</strong> button dabayein.</li>
           <li><strong>Add to Home Screen</strong> select karein.</li>
           <li><strong>Open as Web App</strong> on karke <strong>Add</strong> dabayein.</li>
         </ol>
@@ -129,7 +133,7 @@ function App() {
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const [showIosInstallGuide, setShowIosInstallGuide] = useState(false);
   const [isInstalled, setIsInstalled] = useState(() => isStandaloneApp());
-  const [isIosSafari] = useState(() => isIosSafariBrowser());
+  const [iosBrowser] = useState(() => iosBrowserName());
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
@@ -210,7 +214,7 @@ function App() {
 
   async function installApp() {
     if (!installPrompt) {
-      if (isIosSafari && !isInstalled) setShowIosInstallGuide(true);
+      if (iosBrowser && !isInstalled) setShowIosInstallGuide(true);
       return;
     }
     await installPrompt.prompt();
@@ -627,7 +631,7 @@ function App() {
               <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
             </div>
             <div className="topbar-side-slot">
-              {(installPrompt || (isIosSafari && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
+              {(installPrompt || (iosBrowser && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
               <div className="login-hero-chip">B2B Internal Use</div>
             </div>
           </header>
@@ -654,7 +658,7 @@ function App() {
             </form>
           </section>
           {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
-          {showIosInstallGuide ? <IosInstallGuide onClose={() => setShowIosInstallGuide(false)} /> : null}
+          {showIosInstallGuide ? <IosInstallGuide browserName={iosBrowser} onClose={() => setShowIosInstallGuide(false)} /> : null}
           <footer className="login-footer">Powered by OPAS</footer>
         </section>
       </main>
@@ -1225,7 +1229,7 @@ function App() {
           <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
         </div>
         <div className="hero-side hero-top-actions">
-          {(installPrompt || (isIosSafari && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
+          {(installPrompt || (iosBrowser && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
           {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
             {sidebarCollapsed ? "Expand Menu" : "Collapse Menu"}
           </button> : null}
@@ -1253,7 +1257,7 @@ function App() {
       </header>
 
       {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
-      {showIosInstallGuide ? <IosInstallGuide onClose={() => setShowIosInstallGuide(false)} /> : null}
+      {showIosInstallGuide ? <IosInstallGuide browserName={iosBrowser} onClose={() => setShowIosInstallGuide(false)} /> : null}
 
       {!effectiveSimpleMode ? <section className="hero panel hero-compact">
         <div>
