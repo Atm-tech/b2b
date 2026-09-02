@@ -1971,7 +1971,7 @@ textarea {
 }
 
 .product-card-copy {
-  grid-template-rows: auto auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   min-height: 100%;
 }
 
@@ -4750,37 +4750,6 @@ textarea {
   .inline-input-action .ghost-button {
     width: 100%;
   }
-}
-
-.product-commercials {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 8px;
-  color: #31566b;
-  font-size: 0.78rem;
-}
-
-.product-commercials strong {
-  color: #123f53;
-}
-
-.discount-badge {
-  padding: 0.26rem 0.48rem;
-  border: 1px solid rgba(5, 150, 105, 0.22);
-  border-radius: 999px;
-  background: rgba(209, 250, 229, 0.72);
-  color: #047857;
-  font-size: 0.7rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.discount-badge.pending {
-  border-color: rgba(100, 116, 139, 0.2);
-  background: rgba(241, 245, 249, 0.8);
-  color: #64748b;
 }
 
 /* Compact enterprise dock: clear hierarchy, large tap targets and iOS safe-area. */

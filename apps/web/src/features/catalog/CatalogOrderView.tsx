@@ -1402,13 +1402,9 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                       </div> : null}
                     </div>
                     <div className="product-pricing compact">
-                      <strong>{isPurchase ? `Last purchase ${getLastPurchaseRate(product).toFixed(2)}` : `Rate ${productSalePrice(product).toFixed(2)}`}</strong>
+                      <strong>{`PUR ${getLastPurchaseRate(product).toFixed(2)}`}</strong>
                       <span>{Number(product.mrp || 0) > 0 ? `MRP ${Number(product.mrp).toFixed(2)}` : "MRP pending"}</span>
                     </div>
-                    {!isPurchase ? <div className="product-commercials">
-                      <span>CD/TOD <strong>{productCdTodPrice(product).toFixed(2)}</strong></span>
-                      {mrpDiscountPercent(product) !== null ? <span className="discount-badge">{mrpDiscountPercent(product)!.toFixed(1)}% off MRP</span> : <span className="discount-badge pending">MRP % pending</span>}
-                    </div> : null}
                     <div className="product-footer stacked">
                       {!isPurchase && orderForm.warehouseId ? <span className="product-inline-stock">{`${getWarehouseLabel(orderForm.warehouseId)} stock ${warehouseStock}`}</span> : <span className="product-inline-stock">{`Total stock ${availableStock}`}</span>}
                       <div className="product-stock-chips">
