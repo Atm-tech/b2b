@@ -710,6 +710,53 @@ textarea {
   margin-top: clamp(0.1rem, 0.2vw, 0.25rem);
 }
 
+.install-app-button {
+  min-height: 2.55rem;
+  padding: 0.62rem 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  color: #0b4f3c;
+  background: #c9f05b;
+  box-shadow: 0 10px 24px rgba(8, 47, 43, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.install-app-button:hover {
+  background: #d8f87b;
+  transform: translateY(-1px);
+}
+
+.topbar-side-slot:has(.install-app-button) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.offline-pill {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right, 0px));
+  bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  z-index: 1400;
+  padding: 0.62rem 0.9rem;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 999px;
+  color: #fffbeb;
+  background: rgba(120, 53, 15, 0.94);
+  box-shadow: 0 14px 34px rgba(69, 26, 3, 0.24);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  backdrop-filter: blur(14px);
+}
+
+@media (display-mode: standalone) {
+  .install-app-button { display: none; }
+  body { user-select: none; }
+  input, textarea { user-select: text; }
+}
+
 .workspace-shell {
   grid-template-columns: 240px minmax(0, 1fr);
   align-items: start;
@@ -865,9 +912,18 @@ textarea {
 .sidebar {
   position: sticky;
   top: 18px;
-  overflow-x: auto;
-  overflow-y: visible;
+  max-height: calc(100vh - 36px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 118, 110, 0.42) transparent;
 }
+
+.sidebar::-webkit-scrollbar { width: 7px; }
+.sidebar::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(15, 118, 110, 0.34); }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
 
 .sidebar.is-collapsed {
   padding-inline: 0.7rem;
@@ -886,9 +942,8 @@ textarea {
 
 .side-nav {
   margin-top: 18px;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: visible;
-  scrollbar-width: thin;
 }
 
 .side-nav .tab-button {
@@ -4503,6 +4558,12 @@ textarea {
 
   .app-topbar {
     padding: 10px 12px;
+  }
+
+  .install-app-button {
+    min-height: 2.3rem;
+    padding: 0.48rem 0.68rem;
+    font-size: 0.72rem;
   }
 
   .login-hero-bar,

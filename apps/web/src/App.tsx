@@ -58,6 +58,11 @@ const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportView
 const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
 const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
+
 function BootLoader() {
   return (
     <main className="boot-loader-shell">
@@ -87,6 +92,8 @@ function App() {
   const [error, setError] = useState("");
   const [simpleMode, setSimpleMode] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
@@ -142,6 +149,32 @@ function App() {
   });
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
   const emptyPartyEditForm = { id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
+
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const clearInstallPrompt = () => setInstallPrompt(null);
+    const updateNetworkState = () => setIsOffline(!navigator.onLine);
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    window.addEventListener("appinstalled", clearInstallPrompt);
+    window.addEventListener("online", updateNetworkState);
+    window.addEventListener("offline", updateNetworkState);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+      window.removeEventListener("appinstalled", clearInstallPrompt);
+      window.removeEventListener("online", updateNetworkState);
+      window.removeEventListener("offline", updateNetworkState);
+    };
+  }, []);
+
+  async function installApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  }
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SESSION_KEY);
@@ -552,6 +585,7 @@ function App() {
               <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
             </div>
             <div className="topbar-side-slot">
+              {installPrompt ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
               <div className="login-hero-chip">B2B Internal Use</div>
             </div>
           </header>
@@ -577,6 +611,7 @@ function App() {
               <button className="primary-button" type="submit" disabled={loading}>{loading ? "Signing in..." : "Login"}</button>
             </form>
           </section>
+          {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
           <footer className="login-footer">Powered by OPAS</footer>
         </section>
       </main>
@@ -1147,6 +1182,7 @@ function App() {
           <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
         </div>
         <div className="hero-side hero-top-actions">
+          {installPrompt ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
           {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
             {sidebarCollapsed ? "Expand Menu" : "Collapse Menu"}
           </button> : null}
@@ -1172,6 +1208,8 @@ function App() {
           </div>
         </div>
       </header>
+
+      {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
 
       {!effectiveSimpleMode ? <section className="hero panel hero-compact">
         <div>

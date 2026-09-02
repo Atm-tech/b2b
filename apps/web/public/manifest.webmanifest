@@ -1,0 +1,22 @@
+{
+  "name": "Aapoorti Sales Management",
+  "short_name": "Aapoorti Sales",
+  "description": "Aapoorti sales, stock, delivery, collection and accounts operations app",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#eef6fb",
+  "theme_color": "#0b4f3c",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
