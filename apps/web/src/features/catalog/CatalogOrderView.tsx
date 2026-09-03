@@ -726,7 +726,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
         : {
           ...current,
           shopId: "",
-          billingType: "",
+          billingType: "B2C",
           productSku: "",
           warehouseId: "",
           quantity: "0",
