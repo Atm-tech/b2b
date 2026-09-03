@@ -4755,6 +4755,8 @@ textarea {
 /* Compact enterprise dock: clear hierarchy, large tap targets and iOS safe-area. */
 .mobile-tab-bar.app-dock,
 .simple-tab-bar.app-dock {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   align-items: stretch;
   gap: 6px;
   padding: 7px;
@@ -4774,8 +4776,8 @@ textarea {
   place-items: center;
   align-content: center;
   gap: 3px;
-  flex: 1 1 0;
-  width: auto !important;
+  flex: 1 1 33.333% !important;
+  width: 100% !important;
   min-width: 0 !important;
   max-width: none !important;
   height: 58px !important;
@@ -4828,7 +4830,8 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 850;
   line-height: 1.1;
   letter-spacing: 0.01em;
 }
@@ -4881,7 +4884,7 @@ textarea {
     border-radius: 14px;
   }
   .app-dock .dock-icon .sidebar-vector-icon { width: 21px; height: 21px; }
-  .app-dock .dock-label { font-size: 0.66rem; }
+  .app-dock .dock-label { font-size: 0.72rem; }
 }
 
 /* Keep checkout clear of the fixed app navigation and its raised centre action. */
