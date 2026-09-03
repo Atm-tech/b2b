@@ -5332,6 +5332,7 @@ body.login-scroll-locked {
   height: 100dvh;
   min-height: 100dvh;
   overflow: hidden !important;
+  overflow: clip !important;
   overscroll-behavior: none;
   touch-action: manipulation;
 }
@@ -5340,6 +5341,7 @@ html.login-scroll-locked #root {
   width: 100%;
   height: 100dvh;
   overflow: hidden !important;
+  overflow: clip !important;
 }
 
 #root:has(.login-shell) {
@@ -5374,6 +5376,16 @@ html.login-scroll-locked #root {
   overflow-x: hidden;
   overflow-y: hidden;
   overscroll-behavior: none;
+}
+
+.login-scroll-locked .login-shell input {
+  font-size: 16px !important;
+  scroll-margin: 0 !important;
+}
+
+.login-scroll-locked .login-hero-bar {
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 @media (max-width: 980px) {

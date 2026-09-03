@@ -194,8 +194,33 @@ function App() {
     const shouldLockLogin = !currentUser || !snapshot;
     document.documentElement.classList.toggle("login-scroll-locked", shouldLockLogin);
     document.body.classList.toggle("login-scroll-locked", shouldLockLogin);
-    if (shouldLockLogin) window.scrollTo(0, 0);
+    const resetLoginViewport = () => {
+      if (!shouldLockLogin) return;
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      document.querySelector<HTMLElement>(".login-shell")?.scrollTo(0, 0);
+      document.querySelector<HTMLElement>(".login-card")?.scrollTo(0, 0);
+    };
+    const focusTimers: number[] = [];
+    const holdPositionAfterFocus = (event: FocusEvent) => {
+      if (!(event.target instanceof HTMLElement) || !event.target.closest(".login-shell")) return;
+      resetLoginViewport();
+      focusTimers.push(window.setTimeout(resetLoginViewport, 30));
+      focusTimers.push(window.setTimeout(resetLoginViewport, 160));
+      focusTimers.push(window.setTimeout(resetLoginViewport, 420));
+    };
+    if (shouldLockLogin) {
+      resetLoginViewport();
+      document.addEventListener("focusin", holdPositionAfterFocus, true);
+      window.visualViewport?.addEventListener("scroll", resetLoginViewport);
+      window.visualViewport?.addEventListener("resize", resetLoginViewport);
+    }
     return () => {
+      focusTimers.forEach((timer) => window.clearTimeout(timer));
+      document.removeEventListener("focusin", holdPositionAfterFocus, true);
+      window.visualViewport?.removeEventListener("scroll", resetLoginViewport);
+      window.visualViewport?.removeEventListener("resize", resetLoginViewport);
       document.documentElement.classList.remove("login-scroll-locked");
       document.body.classList.remove("login-scroll-locked");
     };
