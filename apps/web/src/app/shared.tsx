@@ -879,6 +879,7 @@ export type InvoicePdfRow = {
   product: string;
   quantity: number;
   rate: number;
+  taxableRate: number;
   taxableAmount: number;
   gstAmount: number;
   totalAmount: number;
@@ -904,6 +905,10 @@ export type InvoicePdfConfig = {
 
 export function safePdfFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]+/g, "-").replace(/\s+/g, " ").trim() || "invoice";
+}
+
+export function invoiceTaxableRate(taxableAmount: number, quantity: number) {
+  return quantity > 0 ? taxableAmount / quantity : 0;
 }
 
 export function downloadBlobFile(fileName: string, blob: Blob) {
@@ -1127,7 +1132,7 @@ export async function buildInvoicePdfBlob(config: InvoicePdfConfig) {
 
   config.rows.forEach((row, index) => {
     const productLines = doc.splitTextToSize(row.product, 76);
-    const rowHeight = Math.max(8, productLines.length * 4.5 + 2);
+    const rowHeight = Math.max(11, productLines.length * 4.5 + 2);
     if (cursorY + rowHeight + 28 > pageHeight - margin) {
       doc.addPage();
       cursorY = 16;
@@ -1143,6 +1148,11 @@ export async function buildInvoicePdfBlob(config: InvoicePdfConfig) {
     doc.text(productLines, margin + 14, cursorY + 5);
     doc.text(String(row.quantity), margin + 104, cursorY + 5, { align: "right" });
     doc.text(formatMoney(row.rate), margin + 126, cursorY + 5, { align: "right" });
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`(${formatMoney(row.taxableRate)})`, margin + 126, cursorY + 9, { align: "right" });
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
     doc.text(formatMoney(row.taxableAmount), margin + 148, cursorY + 5, { align: "right" });
     doc.text(formatMoney(row.gstAmount), margin + 166, cursorY + 5, { align: "right" });
     doc.text(formatMoney(row.totalAmount), margin + 182, cursorY + 5, { align: "right" });
@@ -1220,6 +1230,7 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
       product: line.productSku,
       quantity: line.quantityOrdered,
       rate: line.rate,
+      taxableRate: invoiceTaxableRate(line.taxableAmount, line.quantityOrdered),
       taxableAmount: line.taxableAmount,
       gstAmount: line.gstAmount,
       totalAmount: line.totalAmount
@@ -1265,6 +1276,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
       product: `${line.productSku}\nUnit wt ${formatWeightKg(salesLineUnitWeightKg(snapshot, line))} | Line wt ${formatWeightKg(salesLineWeightKg(snapshot, line))}`,
       quantity: line.quantity,
       rate: line.rate,
+      taxableRate: invoiceTaxableRate(line.taxableAmount, line.quantity),
       taxableAmount: line.taxableAmount,
       gstAmount: line.gstAmount,
       totalAmount: line.totalAmount
@@ -1325,7 +1337,7 @@ export function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; 
       <td>${index + 1}</td>
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantityOrdered}</td>
-      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.rate)}<br><small>(${formatMoney(invoiceTaxableRate(line.taxableAmount, line.quantityOrdered))})</small></td>
       <td>${formatMoney(line.taxableAmount)}</td>
       <td>${formatMoney(line.gstAmount)}</td>
       <td>${formatMoney(line.totalAmount)}</td>
@@ -1399,7 +1411,7 @@ export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lin
       <td>${escapeHtml(line.productSku)}</td>
       <td>${line.quantity}</td>
       <td>${formatWeightKg(salesLineWeightKg(snapshot, line))}<br><small>${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit</small></td>
-      <td>${formatMoney(line.rate)}</td>
+      <td>${formatMoney(line.rate)}<br><small>(${formatMoney(invoiceTaxableRate(line.taxableAmount, line.quantity))})</small></td>
       <td>${formatMoney(line.taxableAmount)}</td>
       <td>${formatMoney(line.gstAmount)}</td>
       <td>${formatMoney(salesLineCdAmount(line))}</td>
