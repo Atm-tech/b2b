@@ -1117,7 +1117,9 @@ app.delete("/assistant/training-examples/:id", async (req, res) => wrap(res, asy
 }));
 
 app.post("/assistant/transcribe", assistantAudioUpload.single("audio"), async (req, res) => wrap(res, async () => {
-  if (process.env.LOCAL_WHISPER_ENABLED === "false") throw new Error("Local speech transcription is disabled.");
+  if (process.env.LOCAL_WHISPER_ENABLED === "false" || (isProduction && process.env.LOCAL_WHISPER_ENABLED !== "true")) {
+    throw new Error("Local speech transcription is disabled.");
+  }
   const currentUser = await getCurrentUser(req);
   if (!req.file?.path) throw new Error("Voice recording is required.");
   try {

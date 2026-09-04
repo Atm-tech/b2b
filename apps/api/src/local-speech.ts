@@ -64,6 +64,7 @@ export function transcribeLocalAudio(audioPath: string, prompt: string, language
 
 export function warmLocalSpeechModel() {
   if (process.env.LOCAL_WHISPER_ENABLED === "false") return;
+  if (process.env.NODE_ENV === "production" && process.env.LOCAL_WHISPER_ENABLED !== "true") return;
   const child = ensureWorker();
   child.stdin.write(`${JSON.stringify({ id: "warmup", action: "warmup" })}\n`);
 }

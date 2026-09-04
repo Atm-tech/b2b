@@ -33,6 +33,10 @@ services:
         value: 2mb
       - key: MAX_UPLOAD_BYTES
         value: "8388608"
+      # Browser speech recognition is the production path. The optional local
+      # Whisper worker is not installed in this lightweight Node service.
+      - key: LOCAL_WHISPER_ENABLED
+        value: "false"
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
