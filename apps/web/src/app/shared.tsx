@@ -106,12 +106,12 @@ export const roleViews: Record<UserRole, ViewKey[]> = {
 };
 
 export const simpleRoleViews: Record<UserRole, ViewKey[]> = {
-  Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
+  Admin: ["Overview", "Users", "Warehouses", "Products", "Purchase", "Sales", "WhatsApp", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock"],
   "Delivery Manager": ["Overview", "Delivery"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns"],
   Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "GoodsWarrants", "Ledger"],
-  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "WhatsApp", "SalesReturns"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment"],
