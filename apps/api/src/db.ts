@@ -432,7 +432,9 @@ async function withTransaction<T>(run: (client: PoolClient) => Promise<T>) {
 }
 
 async function query<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: DbClient) {
-  return (client || pool).query<T>(text, params);
+  const result = await (client || pool).query<T>(text, params);
+  invalidateSnapshotCacheForSql(text);
+  return result;
 }
 
 async function one<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: DbClient) {
@@ -1227,30 +1229,149 @@ async function reconcileDeliveryCashCollectionsWhenDue() {
   await deliveryCashReconciliation;
 }
 
+type SnapshotSection =
+  | "users"
+  | "warehouses"
+  | "products"
+  | "counterparties"
+  | "purchaseOrders"
+  | "salesOrders"
+  | "purchaseReturns"
+  | "salesReturns"
+  | "probationarySales"
+  | "payments"
+  | "receiptChecks"
+  | "inventoryLots"
+  | "ledgerEntries"
+  | "deliveryTasks"
+  | "deliveryDockets"
+  | "deliveryConsignments"
+  | "goodsWarrants"
+  | "notes"
+  | "settings";
+
+type SnapshotSections = Pick<AppSnapshot, SnapshotSection>;
+
+const snapshotSectionLoaders: { [Section in SnapshotSection]: () => Promise<AppSnapshot[Section]> } = {
+  users: () => mapUsers(),
+  warehouses: () => mapWarehouses(),
+  products: () => mapProducts(),
+  counterparties: () => mapCounterparties(),
+  purchaseOrders: () => mapPurchaseOrders(),
+  salesOrders: () => mapSalesOrders(),
+  purchaseReturns: () => mapPurchaseReturns(),
+  salesReturns: () => mapSalesReturns(),
+  probationarySales: () => mapProbationarySales(),
+  payments: () => mapPayments(),
+  receiptChecks: () => mapReceiptChecks(),
+  inventoryLots: () => mapInventoryLots(),
+  ledgerEntries: () => mapLedgers(),
+  deliveryTasks: () => mapDeliveryTasks(),
+  deliveryDockets: () => mapDeliveryDockets(),
+  deliveryConsignments: () => mapDeliveryConsignments(),
+  goodsWarrants: () => mapGoodsWarrants(),
+  notes: () => mapNotes(),
+  settings: () => mapSettings()
+};
+
+const allSnapshotSections = Object.keys(snapshotSectionLoaders) as SnapshotSection[];
+const snapshotSectionCache: Partial<SnapshotSections> = {};
+const dirtySnapshotSections = new Set<SnapshotSection>(allSnapshotSections);
+let snapshotRefresh: Promise<void> | null = null;
+
+const snapshotDependenciesByTable: Record<string, SnapshotSection[]> = {
+  users: ["users", "purchaseOrders", "salesOrders", "probationarySales", "receiptChecks"],
+  warehouses: ["warehouses"],
+  products: ["products"],
+  counterparties: ["counterparties", "purchaseOrders", "salesOrders", "purchaseReturns", "salesReturns", "probationarySales", "deliveryDockets"],
+  purchase_orders: ["purchaseOrders"],
+  sales_orders: ["salesOrders"],
+  purchase_returns: ["purchaseReturns"],
+  sales_returns: ["salesReturns"],
+  probationary_sales: ["probationarySales"],
+  payments: ["payments"],
+  receipt_checks: ["receiptChecks"],
+  inventory_lots: ["inventoryLots"],
+  ledger_entries: ["ledgerEntries"],
+  delivery_tasks: ["deliveryTasks"],
+  delivery_dockets: ["deliveryDockets"],
+  delivery_consignments: ["deliveryConsignments"],
+  goods_warrants: ["goodsWarrants"],
+  note_records: ["notes"],
+  settings: ["settings"]
+};
+
+function invalidateSnapshotCacheForSql(sql: string) {
+  const mutationPattern = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+([a-z_][a-z0-9_]*)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = mutationPattern.exec(sql)) !== null) {
+    const sections = snapshotDependenciesByTable[match[1].toLowerCase()];
+    sections?.forEach((section) => dirtySnapshotSections.add(section));
+  }
+}
+
+async function refreshDirtySnapshotSections() {
+  const sections = Array.from(dirtySnapshotSections);
+  sections.forEach((section) => dirtySnapshotSections.delete(section));
+  const startedAt = Date.now();
+  let values: unknown[];
+  try {
+    values = await Promise.all(sections.map((section) => snapshotSectionLoaders[section]()));
+  } catch (error) {
+    sections.forEach((section) => dirtySnapshotSections.add(section));
+    throw error;
+  }
+  Object.assign(
+    snapshotSectionCache,
+    Object.fromEntries(sections.map((section, index) => [section, values[index]]))
+  );
+  const durationMs = Date.now() - startedAt;
+  if (durationMs >= 100) {
+    console.log(JSON.stringify({
+      level: "info",
+      message: "Snapshot sections refreshed",
+      durationMs,
+      sections
+    }));
+  }
+}
+
+async function getCachedSnapshotSections() {
+  while (dirtySnapshotSections.size > 0) {
+    if (!snapshotRefresh) {
+      snapshotRefresh = refreshDirtySnapshotSections().finally(() => {
+        snapshotRefresh = null;
+      });
+    }
+    await snapshotRefresh;
+  }
+  return snapshotSectionCache as SnapshotSections;
+}
+
 export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
   await ready;
   await reconcileDeliveryCashCollectionsWhenDue();
-  const [users, warehouses, products, counterparties, purchaseOrders, salesOrders, purchaseReturns, salesReturns, probationarySales, payments, receiptChecks, inventoryLots, ledgerEntries, deliveryTasks, deliveryDockets, deliveryConsignments, goodsWarrants, notes, settings] = await Promise.all([
-    mapUsers(),
-    mapWarehouses(),
-    mapProducts(),
-    mapCounterparties(),
-    mapPurchaseOrders(),
-    mapSalesOrders(),
-    mapPurchaseReturns(),
-    mapSalesReturns(),
-    mapProbationarySales(),
-    mapPayments(),
-    mapReceiptChecks(),
-    mapInventoryLots(),
-    mapLedgers(),
-    mapDeliveryTasks(),
-    mapDeliveryDockets(),
-    mapDeliveryConsignments(),
-    mapGoodsWarrants(),
-    mapNotes(),
-    mapSettings()
-  ]);
+  const {
+    users,
+    warehouses,
+    products,
+    counterparties,
+    purchaseOrders,
+    salesOrders,
+    purchaseReturns,
+    salesReturns,
+    probationarySales,
+    payments,
+    receiptChecks,
+    inventoryLots,
+    ledgerEntries,
+    deliveryTasks,
+    deliveryDockets,
+    deliveryConsignments,
+    goodsWarrants,
+    notes,
+    settings
+  } = await getCachedSnapshotSections();
   const stockSummary = buildStockSummary(warehouses, products, inventoryLots);
   let snapshotWithoutMetrics = {
     settings,

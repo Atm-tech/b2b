@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: aapoorti-api
+    name: b2b
     runtime: node
     plan: starter
     region: ohio
@@ -16,10 +16,6 @@ services:
         - package.json
         - package-lock.json
         - render.yaml
-    disk:
-      name: uploads
-      mountPath: /var/data
-      sizeGB: 5
     envVars:
       - key: NODE_ENV
         value: production
@@ -30,7 +26,7 @@ services:
           name: aapoorti-db
           property: connectionString
       - key: UPLOADS_DIR
-        value: /var/data/uploads
+        value: /tmp/aapoorti-uploads
       - key: ALLOWED_ORIGINS
         sync: false
       - key: REQUEST_BODY_LIMIT
@@ -47,32 +43,9 @@ services:
         value: aapoorti-proofs
       - key: R2_OBJECT_PREFIX
         value: proofs
-
-  - type: web
-    name: aapoorti-web
-    runtime: static
-    autoDeployTrigger: checksPass
-    buildCommand: npm ci --prefer-offline --no-audit && npm run build -w packages/domain && npm run build -w apps/web
-    staticPublishPath: ./apps/web/dist
-    buildFilter:
-      paths:
-        - apps/web/**
-        - packages/domain/**
-        - package.json
-        - package-lock.json
-        - render.yaml
-    envVars:
-      - key: SKIP_INSTALL_DEPS
-        value: "true"
-      - key: VITE_API_BASE_URL
-        sync: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
 databases:
   - name: aapoorti-db
-    plan: basic-1gb
+    plan: basic-256mb
+    region: ohio
     databaseName: aapoorti_b2b
     user: aapoorti_app

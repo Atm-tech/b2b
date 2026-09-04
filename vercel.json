@@ -4,5 +4,16 @@
   "installCommand": "npm run vercel:install",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "apps/web/dist",
-  "devCommand": "npm run dev -w apps/web"
+  "devCommand": "npm run dev -w apps/web",
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ]
 }
