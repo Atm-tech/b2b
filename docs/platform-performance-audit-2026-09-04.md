@@ -29,6 +29,7 @@ The frontend's large PDF and Excel dependencies are already loaded on demand. Lo
 - Add missing sort and join indexes for delivery, notes, counterparties, and probationary sales.
 - Cache content-hashed Vercel assets for one year with `immutable`.
 - Align `render.yaml` with production and remove the obsolete Render static site and disk declarations.
+- Consolidate Vercel settings into the active `apps/web/vercel.json` and remove the ignored repository-root duplicate.
 - Disable the unavailable local Whisper worker in production; supported browsers use their faster streaming speech recognizer.
 
 ## Ohio to Singapore migration
