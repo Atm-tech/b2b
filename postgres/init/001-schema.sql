@@ -368,3 +368,113 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id BIGINT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- WhatsApp wholesale channel. Retailer-facing state is deliberately kept
+-- outside the operational snapshot so no internal ERP data is exposed.
+CREATE TABLE IF NOT EXISTS whatsapp_retailers (
+  counterparty_id TEXT PRIMARY KEY,
+  phone_e164 TEXT NOT NULL UNIQUE,
+  salesman_id BIGINT NOT NULL,
+  default_warehouse_id TEXT NOT NULL,
+  billing_type TEXT NOT NULL DEFAULT 'B2B',
+  payment_mode TEXT NOT NULL DEFAULT 'NEFT',
+  cash_timing TEXT,
+  delivery_mode TEXT NOT NULL DEFAULT 'Delivery',
+  opted_in_at TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_price_rules (
+  id TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  special_rate DOUBLE PRECISION NOT NULL,
+  cd_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tod_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  minimum_quantity DOUBLE PRECISION NOT NULL DEFAULT 1,
+  valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  valid_until TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_offers (
+  id TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Draft',
+  expires_at TIMESTAMPTZ NOT NULL,
+  outbound_message_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_offer_lines (
+  id TEXT PRIMARY KEY,
+  offer_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  cd_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tod_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  minimum_quantity DOUBLE PRECISION NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_order_drafts (
+  id TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  phone_e164 TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  source_message_id TEXT,
+  source_offer_id TEXT,
+  status TEXT NOT NULL DEFAULT 'Needs Review',
+  billing_type TEXT NOT NULL DEFAULT 'B2B',
+  payment_mode TEXT NOT NULL DEFAULT 'NEFT',
+  cash_timing TEXT,
+  delivery_mode TEXT NOT NULL DEFAULT 'Delivery',
+  note TEXT NOT NULL DEFAULT '',
+  confirmation_message_id TEXT,
+  sales_cart_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reviewed_at TIMESTAMPTZ,
+  retailer_confirmed_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_order_draft_lines (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  requested_quantity DOUBLE PRECISION NOT NULL,
+  approved_quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  cd_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tod_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tax_mode TEXT NOT NULL DEFAULT 'Exclusive',
+  stock_at_review DOUBLE PRECISION,
+  note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+  id TEXT PRIMARY KEY,
+  wa_message_id TEXT UNIQUE,
+  direction TEXT NOT NULL,
+  phone_e164 TEXT NOT NULL,
+  message_type TEXT NOT NULL,
+  context_message_id TEXT,
+  related_entity_type TEXT,
+  related_entity_id TEXT,
+  status TEXT NOT NULL DEFAULT 'Received',
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -437,6 +437,11 @@ async function query<T extends QueryResultRow>(text: string, params: unknown[] =
   return result;
 }
 
+export async function executeDatabaseQuery<T extends QueryResultRow>(text: string, params: unknown[] = []) {
+  await ready;
+  return query<T>(text, params);
+}
+
 async function one<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: DbClient) {
   const result = await query<T>(text, params, client);
   return result.rows[0];

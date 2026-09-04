@@ -24,8 +24,10 @@ import { useEffect,useRef,useState } from "react";
 import { productDisplayLabel,productUnitWeightKg } from "../features/catalog/catalogUtils";
 
 export const configuredApiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-export const browserOriginFallback = typeof window !== "undefined" && window.location.hostname === "localhost"
-  ? "http://localhost:8080"
+const browserIsViteDevelopment = typeof window !== "undefined"
+  && (window.location.port === "5173" || window.location.port === "4173");
+export const browserOriginFallback = typeof window !== "undefined" && browserIsViteDevelopment
+  ? `${window.location.protocol}//${window.location.hostname}:8080`
   : typeof window !== "undefined"
     ? window.location.origin
     : "http://localhost:8080";
@@ -85,16 +87,17 @@ export type ViewKey =
   | "CurrentDelivery"
   | "NewAssignment"
   | "VoiceTrainer"
+  | "WhatsApp"
   | "Settings"
   | "Notes";
 
 export const roleViews: Record<UserRole, ViewKey[]> = {
-  Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
+  Admin: ["Overview", "Users", "Warehouses", "Products", "Parties", "Purchase", "Sales", "WhatsApp", "Payments", "Receipts", "Ledger", "Stock", "Delivery", "VoiceTrainer", "Settings", "Notes"],
   "Warehouse Manager": ["Overview", "Receipts", "Stock", "Ledger", "Notes"],
   "Delivery Manager": ["Overview", "Delivery", "Ledger", "Notes"],
   Purchaser: ["Overview", "Parties", "Purchase", "Purchases", "PurchaseReturns", "Ledger", "Notes"],
   Accounts: ["Overview", "Parties", "Purchases", "SalesOrders", "Payments", "ExcelMaker", "GoodsWarrants", "Ledger", "Stock", "Notes"],
-  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "SalesReturns", "Ledger", "Notes"],
+  Sales: ["Overview", "Parties", "Sales", "SalesOrders", "WhatsApp", "SalesReturns", "Ledger", "Notes"],
   "Collection Agent": ["Overview", "SalesOrders", "Payments", "Ledger", "Notes"],
   "Data Analyst": ["Overview", "Purchases", "SalesOrders", "Stock"],
   "In Delivery": ["Overview", "CurrentDelivery", "NewAssignment", "Notes"],
@@ -138,6 +141,7 @@ export const labels: Record<ViewKey, string> = {
   CurrentDelivery: "Current Delivery",
   NewAssignment: "New Assignment",
   VoiceTrainer: "Voice Trainer",
+  WhatsApp: "WhatsApp Wholesale",
   Settings: "Settings",
   Notes: "Notes"
 };

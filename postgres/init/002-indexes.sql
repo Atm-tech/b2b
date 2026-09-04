@@ -50,6 +50,13 @@ CREATE INDEX IF NOT EXISTS idx_voice_training_active_created ON voice_training_e
 CREATE INDEX IF NOT EXISTS idx_voice_training_action ON voice_training_examples(action_type);
 CREATE INDEX IF NOT EXISTS idx_voice_training_module ON voice_training_examples(training_module, active, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_retailers_salesman ON whatsapp_retailers(salesman_id, active);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_price_rules_lookup ON whatsapp_price_rules(counterparty_id, product_sku, active, valid_until);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_offers_retailer ON whatsapp_offers(counterparty_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_offer_lines_offer ON whatsapp_offer_lines(offer_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_drafts_salesman_status ON whatsapp_order_drafts(salesman_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_draft_lines_draft ON whatsapp_order_draft_lines(draft_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone_created ON whatsapp_messages(phone_e164, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_counterparties_type_name ON counterparties(type, name);
 CREATE INDEX IF NOT EXISTS idx_counterparties_created_at ON counterparties(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_purchase_returns_warehouse_created ON purchase_returns(warehouse_id, created_at DESC);

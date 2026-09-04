@@ -59,6 +59,18 @@ import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-impor
 import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from "./object-storage.js";
 import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
+import {
+  createWhatsAppOffer,
+  getWhatsAppCatalogFeed,
+  getWhatsAppDashboard,
+  handleWhatsAppWebhook,
+  reviewWhatsAppDraft,
+  saveWhatsAppPriceRule,
+  saveWhatsAppRetailer,
+  sendWhatsAppInvoiceSummary,
+  verifyWhatsAppSignature,
+  verifyWhatsAppWebhook
+} from "./whatsapp-integration.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -76,6 +88,20 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+
+function isLocalDevelopmentOrigin(origin: string) {
+  if (isProduction) return false;
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "localhost" || hostname === "::1" || hostname.startsWith("127.")) return true;
+    if (hostname.startsWith("10.") || hostname.startsWith("192.168.")) return true;
+    const match = hostname.match(/^172\.(\d+)\./);
+    return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+  } catch {
+    return false;
+  }
+}
 
 mkdirSync(csvDir, { recursive: true });
 mkdirSync(paymentDir, { recursive: true });
@@ -174,7 +200,7 @@ app.use((_req, res, next) => {
 });
 app.use(cors({
   origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
-    if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isLocalDevelopmentOrigin(origin)) {
       callback(null, true);
       return;
     }
@@ -183,7 +209,12 @@ app.use(cors({
   credentials: true
 }));
 app.use(compression({ threshold: 1024 }));
-app.use(express.json({ limit: requestBodyLimit }));
+app.use(express.json({
+  limit: requestBodyLimit,
+  verify: (req, _res, buffer) => {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+  }
+}));
 if (r2Enabled) {
   app.get("/uploads/:category/:fileName", async (req, res) => {
     const category = req.params.category as ProofCategory;
@@ -1061,6 +1092,119 @@ app.get("/assistant/training-examples", async (req, res) => {
     res.status(400).json({ message: error instanceof Error ? error.message : "Could not load voice training examples." });
   }
 });
+
+app.get("/whatsapp/webhook", (req, res) => {
+  if (!verifyWhatsAppWebhook(req.query as Record<string, unknown>)) {
+    res.status(403).send("Webhook verification failed.");
+    return;
+  }
+  res.status(200).send(String(req.query["hub.challenge"] || ""));
+});
+
+app.post("/whatsapp/webhook", (req, res) => {
+  const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  if (!verifyWhatsAppSignature(rawBody, String(req.header("x-hub-signature-256") || ""))) {
+    res.status(401).json({ message: "Invalid WhatsApp webhook signature." });
+    return;
+  }
+  res.sendStatus(200);
+  void handleWhatsAppWebhook((req.body || {}) as Record<string, unknown>).catch((error) => {
+    console.error("WhatsApp webhook processing failed", error);
+  });
+});
+
+app.get("/whatsapp/catalog/feed.csv", async (req, res) => {
+  try {
+    const csv = await getWhatsAppCatalogFeed(String(req.query.token || ""));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(csv);
+  } catch (error) {
+    res.status(403).json({ message: error instanceof Error ? error.message : "Catalogue feed unavailable." });
+  }
+});
+
+app.get("/whatsapp/dashboard", async (req, res) => {
+  try {
+    const currentUser = await requireRole(req, ["Admin", "Sales"]);
+    res.json(await getWhatsAppDashboard(currentUser));
+  } catch (error) {
+    res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
+  }
+});
+
+app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const salesmanId = requiredNumber(req.body?.salesmanId, "Salesperson");
+  if (!currentUser.roles.includes("Admin") && salesmanId !== currentUser.id) throw new Error("You can only map retailers to yourself.");
+  return saveWhatsAppRetailer({
+    counterpartyId: requiredString(req.body?.counterpartyId, "Retailer"),
+    phone: requiredString(req.body?.phone, "WhatsApp number"),
+    salesmanId,
+    defaultWarehouseId: requiredString(req.body?.defaultWarehouseId, "Warehouse"),
+    billingType: String(req.body?.billingType || "B2B") === "B2C" ? "B2C" : "B2B",
+    paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
+    cashTiming: optionalString(req.body?.cashTiming),
+    deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery",
+    optedIn: Boolean(req.body?.optedIn),
+    active: req.body?.active !== false
+  }, currentUser);
+}));
+
+app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  return saveWhatsAppPriceRule({
+    counterpartyId: requiredString(req.body?.counterpartyId, "Retailer"),
+    productSku: requiredString(req.body?.productSku, "Product"),
+    specialRate: requiredNumber(req.body?.specialRate, "Special rate"),
+    cdPercent: optionalNumber(req.body?.cdPercent) || 0,
+    todPercent: optionalNumber(req.body?.todPercent) || 0,
+    minimumQuantity: optionalNumber(req.body?.minimumQuantity) || 1,
+    validUntil: optionalString(req.body?.validUntil),
+    active: req.body?.active !== false
+  }, currentUser);
+}));
+
+app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    productSku: requiredString(line.productSku, "Product"),
+    quantity: requiredNumber(line.quantity, "Quantity"),
+    rate: requiredNumber(line.rate, "Rate"),
+    cdPercent: optionalNumber(line.cdPercent) || 0,
+    todPercent: optionalNumber(line.todPercent) || 0,
+    minimumQuantity: optionalNumber(line.minimumQuantity) || 1
+  }));
+  return createWhatsAppOffer({
+    counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
+    expiresAt: requiredString(req.body?.expiresAt, "Expiry"),
+    lines
+  }, currentUser);
+}));
+
+app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const lines = parseCartLines(req.body?.lines).map((line) => ({
+    id: requiredString(line.id, "Draft line"),
+    quantity: requiredNumber(line.quantity, "Quantity"),
+    rate: requiredNumber(line.rate, "Rate"),
+    cdPercent: optionalNumber(line.cdPercent) || 0,
+    todPercent: optionalNumber(line.todPercent) || 0
+  }));
+  return reviewWhatsAppDraft(req.params.id, {
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
+    cashTiming: optionalString(req.body?.cashTiming),
+    deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery",
+    note: optionalString(req.body?.note),
+    lines
+  }, currentUser);
+}));
+
+app.post("/whatsapp/drafts/:id/invoice", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireRole(req, ["Admin", "Sales", "Accounts"]);
+  return sendWhatsAppInvoiceSummary(req.params.id, currentUser);
+}));
 
 app.get("/assistant/training-examples/:id/audio", async (req, res) => {
   try {

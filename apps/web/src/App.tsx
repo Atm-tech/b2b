@@ -57,6 +57,7 @@ const PartyVitalsList = lazy(() => import("./features/admin/AdminAndSupportViews
 const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ProductAdminView })));
 const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
 const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
+const WhatsAppRetailerHub = lazy(() => import("./features/whatsapp/WhatsAppRetailerHub").then((module) => ({ default: module.WhatsAppRetailerHub })));
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -1448,6 +1449,7 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/sales-returns", body, "Sales return saved.")}
           /> : null}
+          {activeView === "WhatsApp" ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} /> : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>

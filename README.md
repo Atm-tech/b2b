@@ -28,6 +28,20 @@ npm install
 npm run dev
 ```
 
+## Use a tablet as the frontend
+
+The laptop runs both development servers and keeps PostgreSQL, uploads, and all
+backend processing local. The tablet only opens the web frontend.
+
+1. Connect the laptop and tablet to the same Wi-Fi network.
+2. On the laptop, run `npm run dev:lan`.
+3. Vite prints a `Network` address. Open that address on the tablet, for example
+   `http://192.168.1.20:5173`.
+4. Keep the terminal running while using the tablet.
+
+The frontend automatically calls port `8080` on the same laptop address. Windows
+may ask for firewall access the first time; allow Node.js on private networks.
+
 ## Install as an app
 
 The web workspace is an installable **B CONNECT** PWA, matching the Aapoorti E-Franchise app shell. After deploying it over HTTPS, open it in Chrome or Edge and use the in-app **Install App** button. The installed app launches in its own window and caches the application shell for reliable loading; live operational data still requires the API connection.
@@ -191,3 +205,38 @@ Schema files:
 - [postgres/init/002-indexes.sql](d:/AAPOORTI/Managment%20system/Sales%20managment/postgres/init/002-indexes.sql)
 
 The running API uses PostgreSQL and initializes the schema and compatibility columns on startup.
+
+## WhatsApp wholesale ordering
+
+The staff application now includes **WhatsApp Wholesale** for Admin and Sales users. It supports:
+
+- retailer phone-number, salesperson, warehouse and opt-in mapping
+- retailer-specific rates, minimum quantities, CD/TOD and validity windows
+- selected-retailer special offers
+- Meta Commerce Manager scheduled catalogue feed
+- signed and idempotent Meta webhooks
+- catalogue-cart and typed-message order drafts
+- salesperson stock/rate review followed by retailer confirmation
+- automatic Sales Order creation and invoice-summary messaging
+- inbound/outbound message audit history
+
+With Meta credentials blank, outbound messages are recorded in safe **Simulation** mode. This allows staff workflows and database records to be tested without contacting retailers.
+
+### Meta setup
+
+1. Create and verify a Meta Business Portfolio and WhatsApp Business Account.
+2. Create a Meta developer Business app and add the WhatsApp product.
+3. Create a permanent system-user access token with WhatsApp messaging and management permissions.
+4. Add the `WHATSAPP_*` values documented in `.env.render.example` to the Render service.
+5. In Meta WhatsApp configuration, set the callback URL to:
+
+   ```text
+   https://b2b-v8kb.onrender.com/whatsapp/webhook
+   ```
+
+6. Enter the same secret value in Meta and `WHATSAPP_VERIFY_TOKEN`, then subscribe to `messages`.
+7. In Commerce Manager, create a scheduled data feed using the feed URL displayed in the staff WhatsApp Wholesale screen.
+8. Keep the product catalogue's retailer ID equal to the ERP SKU.
+9. Create an approved utility/marketing offer template with three body variables: retailer name, offer summary and expiry. Store its name in `WHATSAPP_OFFER_TEMPLATE`.
+
+The server rejects unsigned production webhooks when `WHATSAPP_APP_SECRET` is missing or incorrect. Never put Meta secrets in Vercel or frontend code.
