@@ -4768,6 +4768,11 @@ textarea {
   -webkit-backdrop-filter: blur(24px) saturate(150%);
 }
 
+.mobile-tab-bar.app-dock.four-tab-bar,
+.simple-tab-bar.app-dock.four-tab-bar {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
 .app-dock .tab-button,
 .app-dock .purchaser-po-tab {
   position: relative;
@@ -4805,6 +4810,10 @@ textarea {
   background: linear-gradient(145deg, #0b5f62, #078a91);
   color: #fff;
   box-shadow: 0 9px 20px rgba(7, 108, 113, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.app-dock .whatsapp-business-tab:not(.active) .dock-icon {
+  color: #128c4b;
 }
 
 .app-dock .dock-icon,

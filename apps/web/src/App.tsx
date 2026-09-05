@@ -721,7 +721,7 @@ function App() {
   const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
   const collectionBottomViews: ViewKey[] = ["Overview", "Payments", "SalesOrders"];
   const accountsBottomViews: ViewKey[] = ["Overview", "Payments", "GoodsWarrants"];
-  const bottomNavViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
+  const operationalBottomViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
     ? purchaserBottomViews.filter((view) => safeVisibleViews.includes(view))
     : currentRoles.includes("Sales") && !currentRoles.includes("Purchaser")
       ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
@@ -730,6 +730,9 @@ function App() {
         : currentRoles.includes("Accounts")
           ? accountsBottomViews.filter((view) => safeVisibleViews.includes(view))
           : safeVisibleViews.filter((view) => view !== "Parties").slice(0, 3);
+  const bottomNavViews: ViewKey[] = safeVisibleViews.includes("WhatsApp") && !operationalBottomViews.includes("WhatsApp")
+    ? [...operationalBottomViews, "WhatsApp"]
+    : operationalBottomViews;
   const warehouseScope = userWarehouseScope(currentUser);
   const applyWarehouseScope = isWarehouseScoped(currentUser);
 
@@ -1609,16 +1612,16 @@ function App() {
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Overview" /></span><span className="dock-label">Home</span>{deliveryManagerHomePendingCount > 0 ? <span className="dock-badge">{deliveryManagerHomePendingCount}</span> : null}</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Purchase" /></span><span className="dock-label">Inbound</span>{deliveryManagerInboundPendingCount > 0 ? <span className="dock-badge">{deliveryManagerInboundPendingCount}</span> : null}</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Sales" /></span><span className="dock-label">Dispatch</span>{deliveryManagerDispatchPendingCount > 0 ? <span className="dock-badge">{deliveryManagerDispatchPendingCount}</span> : null}</button>
-      </nav> : <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar app-dock" : "mobile-tab-bar app-dock"} aria-label="Primary navigation">{bottomNavViews.map((view) => {
+      </nav> : <nav className={`${effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar app-dock" : "mobile-tab-bar app-dock"}${bottomNavViews.length > 3 ? " four-tab-bar" : ""}`} aria-label="Primary navigation">{bottomNavViews.map((view) => {
         const count = view === "Purchase" || view === "Purchases"
           ? purchaserOrderCount
           : view === "Sales" || view === "SalesOrders"
             ? salesOrderCount
             : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
-        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}`} onClick={() => navigateToView(view)} aria-current={view === activeView ? "page" : undefined}>
+        return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}${view === "WhatsApp" ? " whatsapp-business-tab" : ""}`} onClick={() => navigateToView(view)} aria-label={view === "WhatsApp" ? "WhatsApp Business" : undefined} aria-current={view === activeView ? "page" : undefined}>
           <span className="dock-icon"><SidebarVectorIcon view={view} /></span>
-          <span className="dock-label">{displayLabel(view, currentUser)}</span>
+          <span className="dock-label">{view === "WhatsApp" ? "WhatsApp" : displayLabel(view, currentUser)}</span>
           {count > 0 && !isFloatingPoSoButton ? <span className="dock-badge">{count > 99 ? "99+" : count}</span> : null}
         </button>;
       })}</nav>}

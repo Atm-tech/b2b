@@ -28,6 +28,8 @@ export function SidebarVectorIcon({ view }: { view: SidebarView }) {
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path {...common} d="M5 6.5h14v11H5z" /><path {...common} d="M8 10h8" /><path {...common} d="M8 13.5h5" /><path {...common} d="M15.5 4.5 19 8" /></svg></span>;
     case "Payments":
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect {...common} x="3.5" y="6" width="17" height="12" rx="2" /><path {...common} d="M3.5 10.5h17" /><path {...common} d="M8 15h2.5" /></svg></span>;
+    case "WhatsApp":
+      return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path {...common} d="M19.2 17.2A8.5 8.5 0 1 0 5.6 18.5L4 21l3-.9a8.5 8.5 0 0 0 12.2-2.9Z" /><path {...common} d="M8.5 7.8c.4 3.5 2.2 5.4 5.8 6.2l1.2-1.5-2.2-1.1-.8 1c-1.3-.6-2.3-1.5-2.9-2.8l1-.8-1.1-2.2-1 .7v.5Z" /></svg></span>;
     case "ExcelMaker":
       return <span className="sidebar-vector-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect {...common} x="4" y="4.5" width="16" height="15" rx="2" /><path {...common} d="M8 8.5h8" /><path {...common} d="M8 12h3" /><path {...common} d="M14 12h2" /><path {...common} d="M8 15.5h2" /><path {...common} d="M13.5 14.5l3 3" /><path {...common} d="m16.5 14.5-3 3" /></svg></span>;
     case "GoodsWarrants":
