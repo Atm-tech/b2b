@@ -68,6 +68,7 @@ import {
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
   sendWhatsAppInvoiceSummary,
+  subscribeWhatsAppBusinessAccount,
   verifyWhatsAppSignature,
   verifyWhatsAppWebhook
 } from "./whatsapp-integration.js";
@@ -1132,6 +1133,11 @@ app.get("/whatsapp/dashboard", async (req, res) => {
     res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
   }
 });
+
+app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return subscribeWhatsAppBusinessAccount();
+}));
 
 app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);

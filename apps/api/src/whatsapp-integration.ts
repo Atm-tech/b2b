@@ -531,6 +531,24 @@ export async function handleWhatsAppWebhook(payload: JsonObject) {
   }
 }
 
+export async function subscribeWhatsAppBusinessAccount() {
+  const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
+  if (!configured() || !businessAccountId) throw new Error("WhatsApp credentials and Business Account ID are required.");
+  const response = await fetch(`${graphBase}/${businessAccountId}/subscribed_apps`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({})
+  });
+  const body = await response.json() as { success?: boolean; error?: { message?: string } };
+  if (!response.ok || !body.success) {
+    throw new Error(text(body.error?.message) || `Meta subscription failed (${response.status}).`);
+  }
+  return { subscribed: true, businessAccountId };
+}
+
 export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = currentUser.roles.includes("Admin");
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
