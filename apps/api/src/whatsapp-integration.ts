@@ -929,7 +929,8 @@ async function handleInboundMessage(message: JsonObject) {
         await clearCart(profile);
         return;
       }
-      if (!/\d/.test(body) && body.split(/\s+/).length <= 4) {
+      const hasExplicitOrderQuantity = /\b\d+(?:\.\d+)?\s*(?:cartons?|cases?|pcs?|pieces?|boxes?|qty|units?|dozens?)\b/i.test(body);
+      if (!hasExplicitOrderQuantity && body.split(/\s+/).length <= 4) {
         await sendProductPicker(from, body, profile, messageId);
         return;
       }
