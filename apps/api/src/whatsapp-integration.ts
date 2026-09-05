@@ -560,9 +560,10 @@ export async function getWhatsAppMetaDiagnostics() {
     const body = await response.json() as JsonObject;
     return response.ok ? { ok: true, body } : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
   };
-  const [phone, subscriptions, tokenDebug] = await Promise.all([
+  const [phone, subscriptions, catalogs, tokenDebug] = await Promise.all([
     graphGet(`${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`),
     graphGet(`${businessAccountId}/subscribed_apps`),
+    graphGet(`${businessAccountId}/product_catalogs`),
     graphGet(`debug_token?input_token=${encodeURIComponent(accessToken)}`)
   ]);
   const debugData = tokenDebug.ok && tokenDebug.body
@@ -582,6 +583,7 @@ export async function getWhatsAppMetaDiagnostics() {
   return {
     phone,
     subscriptions,
+    catalogs,
     webhookSubscription,
     token: tokenDebug.ok ? {
       ok: true,
