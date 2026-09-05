@@ -617,8 +617,9 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       isAdmin
         ? `SELECT * FROM whatsapp_messages ORDER BY created_at DESC LIMIT 100`
         : `SELECT m.* FROM whatsapp_messages m
-           JOIN whatsapp_retailers wr ON wr.phone_e164 = m.phone_e164
-           WHERE wr.salesman_id = $1 ORDER BY m.created_at DESC LIMIT 100`, params)
+           LEFT JOIN whatsapp_retailers wr ON wr.phone_e164 = m.phone_e164
+           WHERE wr.salesman_id = $1 OR wr.id IS NULL
+           ORDER BY m.created_at DESC LIMIT 100`, params)
   ]);
   const visibleDraftIds = new Set(drafts.rows.map((row) => text(row.id)));
   return {
