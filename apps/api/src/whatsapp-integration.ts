@@ -552,8 +552,23 @@ export async function subscribeWhatsAppBusinessAccount() {
 export async function configureWhatsAppCommerce() {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
   const phoneNumberId = text(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
   const catalogId = text(process.env.WHATSAPP_CATALOG_ID);
-  if (!accessToken || !phoneNumberId || !catalogId) throw new Error("WhatsApp phone, token and Catalogue ID are required.");
+  if (!accessToken || !phoneNumberId || !businessAccountId || !catalogId) throw new Error("WhatsApp phone, WABA, token and Catalogue ID are required.");
+  const linkResponse = await fetch(`${graphBase}/${businessAccountId}/product_catalogs`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ catalog_id: catalogId })
+  });
+  const linkBody = await linkResponse.json() as JsonObject;
+  if (!linkResponse.ok || linkBody.success === false) {
+    const error = linkBody.error as JsonObject | undefined;
+    const details = text((error?.error_data as JsonObject | undefined)?.details);
+    throw new Error([text(error?.message), details].filter(Boolean).join(" — ") || `Meta catalogue link failed (${linkResponse.status}).`);
+  }
   const response = await fetch(`${graphBase}/${phoneNumberId}/whatsapp_commerce_settings`, {
     method: "POST",
     headers: {
