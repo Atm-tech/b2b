@@ -465,6 +465,33 @@ CREATE TABLE IF NOT EXISTS whatsapp_order_draft_lines (
   note TEXT NOT NULL DEFAULT ''
 );
 
+-- Retailer-side conversation cart. This remains separate from the review queue
+-- until the retailer explicitly finalizes it.
+CREATE TABLE IF NOT EXISTS whatsapp_cart_sessions (
+  phone_e164 TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  selected_product_sku TEXT,
+  stage TEXT NOT NULL DEFAULT 'Browsing',
+  last_inbound_message_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_cart_lines (
+  phone_e164 TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  rate DOUBLE PRECISION NOT NULL,
+  cd_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tod_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+  gst_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+  tax_mode TEXT NOT NULL DEFAULT 'Exclusive',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (phone_e164, product_sku)
+);
+
 CREATE TABLE IF NOT EXISTS whatsapp_messages (
   id TEXT PRIMARY KEY,
   wa_message_id TEXT UNIQUE,

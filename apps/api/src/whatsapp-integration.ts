@@ -31,6 +31,10 @@ type DraftLineInput = {
   taxMode?: TaxMode;
   note?: string;
 };
+type CartSession = {
+  selectedProductSku: string;
+  stage: string;
+};
 
 const graphVersion = process.env.WHATSAPP_GRAPH_VERSION || "v23.0";
 const graphBase = `https://graph.facebook.com/${graphVersion}`;
@@ -153,10 +157,10 @@ function compact(value: string, max: number) {
   return value.trim().slice(0, max);
 }
 
-async function sendProductPicker(phone: string, query = "") {
+async function matchingProducts(query = "", limit = 10) {
   const normalizedQuery = query.trim().toLowerCase();
   const snapshot = await getSnapshot();
-  const products = snapshot.products
+  return snapshot.products
     .filter((product) => {
       if (productSaleRate(product) <= 0) return false;
       if (!normalizedQuery) return true;
@@ -166,16 +170,20 @@ async function sendProductPicker(phone: string, query = "") {
         .toLowerCase()
         .includes(normalizedQuery);
     })
-    .slice(0, 10);
+    .slice(0, limit);
+}
+
+async function sendProductPicker(phone: string, query = "") {
+  const products = await matchingProducts(query);
   if (!products.length) {
-    return sendText(phone, `“${compact(query, 80)}” ka product nahi mila. Dusra naam type karein, jaise: search Lux`);
+    return sendText(phone, `“${compact(query, 80)}” ka product nahi mila. Dusra naam type karein, jaise: Lux`);
   }
   return sendGraphMessage(phone, {
     type: "interactive",
     interactive: {
       type: "list",
-      header: { type: "text", text: compact(query ? `Search: ${query}` : "Aapoorti Catalogue", 60) },
-      body: { text: "Product select kijiye. Agle step mein quantity choose karke order request bhej sakte hain." },
+      header: { type: "text", text: compact(query ? `Did you mean: ${query}?` : "Aapoorti Catalogue", 60) },
+      body: { text: "Kya aap inmein se koi product chahte hain? Select kijiye; phir aapka rate aur quantity options milenge." },
       footer: { text: "Final stock & special rate salesperson verify karega." },
       action: {
         button: "View products",
@@ -184,7 +192,7 @@ async function sendProductPicker(phone: string, query = "") {
           rows: products.map((product) => ({
             id: `wa-product:${encodeURIComponent(product.sku)}`,
             title: compact(product.shortName || product.name, 24),
-            description: compact([product.brand, product.size, `₹${productSaleRate(product).toFixed(2)}`].filter(Boolean).join(" · "), 72)
+            description: compact([product.brand, product.size, "Select for your rate"].filter(Boolean).join(" · "), 72)
           }))
         }]
       }
@@ -289,6 +297,175 @@ async function productPricing(counterpartyId: string, productSku: string) {
   };
 }
 
+async function loadCartSession(phone: string): Promise<CartSession | null> {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT selected_product_sku, stage FROM whatsapp_cart_sessions WHERE phone_e164 = $1`,
+    [phone]
+  );
+  if (!result.rows[0]) return null;
+  return {
+    selectedProductSku: text(result.rows[0].selected_product_sku),
+    stage: text(result.rows[0].stage)
+  };
+}
+
+async function selectCartProduct(profile: RetailerProfile, sku: string, messageId: string) {
+  await executeDatabaseQuery(
+    `INSERT INTO whatsapp_cart_sessions (
+       phone_e164, counterparty_id, selected_product_sku, stage, last_inbound_message_id, created_at, updated_at
+     ) VALUES ($1,$2,$3,'AwaitingQuantity',$4,NOW(),NOW())
+     ON CONFLICT (phone_e164) DO UPDATE SET
+       counterparty_id = EXCLUDED.counterparty_id,
+       selected_product_sku = EXCLUDED.selected_product_sku,
+       stage = 'AwaitingQuantity',
+       last_inbound_message_id = EXCLUDED.last_inbound_message_id,
+       updated_at = NOW()`,
+    [profile.phoneE164, profile.counterpartyId, sku, messageId || null]
+  );
+}
+
+async function loadCartLines(phone: string) {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT lines.product_sku, products.name AS product_name,
+            lines.quantity AS approved_quantity, lines.rate, lines.cd_percent,
+            lines.tod_percent, lines.gst_rate, lines.tax_mode, lines.note
+     FROM whatsapp_cart_lines lines
+     JOIN products ON products.sku = lines.product_sku
+     WHERE lines.phone_e164 = $1
+     ORDER BY lines.created_at, lines.product_sku`,
+    [phone]
+  );
+  return result.rows;
+}
+
+function cartSummary(lines: Record<string, unknown>[]) {
+  let total = 0;
+  const details = lines.map((line, index) => {
+    const amounts = lineAmounts(line);
+    total += amounts.totalAmount;
+    return `${index + 1}. ${text(line.product_name)} — ${numberValue(line.approved_quantity)} × Rs.${numberValue(line.rate).toFixed(2)} = Rs.${amounts.totalAmount.toFixed(2)}`;
+  });
+  const visible = details.slice(0, 7);
+  if (details.length > visible.length) visible.push(`+ ${details.length - visible.length} more item(s)`);
+  return { total, body: visible.join("\n") };
+}
+
+async function addCartLines(profile: RetailerProfile, messageId: string, lines: DraftLineInput[]) {
+  if (!lines.length) throw new Error("No product was selected.");
+  await executeDatabaseQuery(
+    `INSERT INTO whatsapp_cart_sessions (
+       phone_e164, counterparty_id, selected_product_sku, stage, last_inbound_message_id, created_at, updated_at
+     ) VALUES ($1,$2,NULL,'Browsing',$3,NOW(),NOW())
+     ON CONFLICT (phone_e164) DO UPDATE SET
+       counterparty_id = EXCLUDED.counterparty_id,
+       selected_product_sku = NULL,
+       stage = 'Browsing',
+       last_inbound_message_id = EXCLUDED.last_inbound_message_id,
+       updated_at = NOW()`,
+    [profile.phoneE164, profile.counterpartyId, messageId || null]
+  );
+  for (const line of lines) {
+    await executeDatabaseQuery(
+      `INSERT INTO whatsapp_cart_lines (
+         phone_e164, product_sku, quantity, rate, cd_percent, tod_percent,
+         gst_rate, tax_mode, note, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+       ON CONFLICT (phone_e164, product_sku) DO UPDATE SET
+         quantity = whatsapp_cart_lines.quantity + EXCLUDED.quantity,
+         rate = EXCLUDED.rate,
+         cd_percent = EXCLUDED.cd_percent,
+         tod_percent = EXCLUDED.tod_percent,
+         gst_rate = EXCLUDED.gst_rate,
+         tax_mode = EXCLUDED.tax_mode,
+         note = EXCLUDED.note,
+         updated_at = NOW()`,
+      [profile.phoneE164, line.productSku, line.quantity, line.rate, line.cdPercent || 0,
+        line.todPercent || 0, line.gstRate === "NA" ? 0 : line.gstRate || 0,
+        line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive", line.note || ""]
+    );
+  }
+}
+
+async function sendCartChoices(profile: RetailerProfile) {
+  const lines = await loadCartLines(profile.phoneE164);
+  const summary = cartSummary(lines);
+  await sendButtons(profile.phoneE164,
+    `Added to cart.\n\n${summary.body}\n\nEstimated total: Rs.${summary.total.toFixed(2)}\n\nAur product add karna hai?`,
+    [
+      { id: "wa-cart:add", title: "Add another" },
+      { id: "wa-cart:checkout", title: "View total" },
+      { id: "wa-cart:clear", title: "Clear cart" }
+    ], "Cart", profile.phoneE164);
+}
+
+async function sendCartCheckout(profile: RetailerProfile) {
+  const lines = await loadCartLines(profile.phoneE164);
+  if (!lines.length) {
+    await sendText(profile.phoneE164, "Your cart is empty. Product name type karein, jaise: Lux");
+    return;
+  }
+  const summary = cartSummary(lines);
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_cart_sessions SET stage = 'AwaitingCheckout', updated_at = NOW() WHERE phone_e164 = $1`,
+    [profile.phoneE164]
+  );
+  await sendButtons(profile.phoneE164,
+    `Your cart\n\n${summary.body}\n\nEstimated total: Rs.${summary.total.toFixed(2)}\nFinal stock aur rate ${profile.salesmanName} approve karega. Submit karein?`,
+    [
+      { id: "wa-cart:finalize", title: "Finalize" },
+      { id: "wa-cart:add", title: "Add more" },
+      { id: "wa-cart:clear", title: "Clear cart" }
+    ], "Cart", profile.phoneE164);
+}
+
+async function clearCart(profile: RetailerProfile) {
+  await executeDatabaseQuery(`DELETE FROM whatsapp_cart_lines WHERE phone_e164 = $1`, [profile.phoneE164]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164 = $1`, [profile.phoneE164]);
+  await sendText(profile.phoneE164, "Cart cleared. Naya order shuru karne ke liye product name type karein, jaise: Lux");
+}
+
+async function finalizeCart(profile: RetailerProfile, messageId: string) {
+  const locked = await executeDatabaseQuery(
+    `UPDATE whatsapp_cart_sessions
+     SET stage = 'Submitting', last_inbound_message_id = $2, updated_at = NOW()
+     WHERE phone_e164 = $1 AND stage <> 'Submitting'
+     RETURNING phone_e164`,
+    [profile.phoneE164, messageId || null]
+  );
+  if (!locked.rows[0]) {
+    await sendText(profile.phoneE164, "Cart already submit ho raha hai, ya empty hai.");
+    return "";
+  }
+  const rows = await loadCartLines(profile.phoneE164);
+  if (!rows.length) {
+    await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164 = $1`, [profile.phoneE164]);
+    await sendText(profile.phoneE164, "Your cart is empty. Product name type karein, jaise: Lux");
+    return "";
+  }
+  const lines: DraftLineInput[] = rows.map((row) => ({
+    productSku: text(row.product_sku),
+    quantity: numberValue(row.approved_quantity),
+    rate: numberValue(row.rate),
+    cdPercent: numberValue(row.cd_percent),
+    todPercent: numberValue(row.tod_percent),
+    gstRate: numberValue(row.gst_rate) as GstRate,
+    taxMode: text(row.tax_mode) === "Inclusive" ? "Inclusive" : "Exclusive",
+    note: text(row.note)
+  }));
+  try {
+    const draftId = await createDraft(profile, "Retailer cart", messageId, lines);
+    await executeDatabaseQuery(`DELETE FROM whatsapp_cart_lines WHERE phone_e164 = $1`, [profile.phoneE164]);
+    await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164 = $1`, [profile.phoneE164]);
+    return draftId;
+  } catch (error) {
+    await executeDatabaseQuery(
+      `UPDATE whatsapp_cart_sessions SET stage = 'AwaitingCheckout', updated_at = NOW() WHERE phone_e164 = $1`,
+      [profile.phoneE164]
+    );
+    throw error;
+  }
+}
+
 async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "") {
   if (lines.length === 0) throw new Error("The order did not contain any products.");
   const draftId = id("WAD");
@@ -335,7 +512,7 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
   return createDraft(profile, "Catalogue", messageId, lines);
 }
 
-async function createDraftFromNaturalText(profile: RetailerProfile, messageId: string, body: string) {
+async function addNaturalTextToCart(profile: RetailerProfile, messageId: string, body: string) {
   const snapshot = await getSnapshot();
   const salesperson = snapshot.users.find((item) => item.id === profile.salesmanId);
   if (!salesperson) throw new Error("The assigned salesperson is unavailable.");
@@ -364,10 +541,12 @@ async function createDraftFromNaturalText(profile: RetailerProfile, messageId: s
     await sendText(profile.phoneE164, "Product match nahi hua. Please catalogue se item select karke quantity bhejein.");
     return "";
   }
-  return createDraft(profile, "Message", messageId, lines);
+  await addCartLines(profile, messageId, lines);
+  await sendCartChoices(profile);
+  return profile.phoneE164;
 }
 
-function lineAmounts(line: { approved_quantity: unknown; rate: unknown; cd_percent: unknown; tod_percent: unknown; gst_rate: unknown; tax_mode: unknown }) {
+function lineAmounts(line: Record<string, unknown>) {
   const quantity = numberValue(line.approved_quantity);
   const rate = numberValue(line.rate);
   const cdAmount = quantity * rate * numberValue(line.cd_percent) / 100;
@@ -506,9 +685,10 @@ async function handleInboundMessage(message: JsonObject) {
     if (buttonId.startsWith("wa-product:")) {
       const sku = decodeURIComponent(buttonId.slice("wa-product:".length));
       const pricing = await productPricing(profile.counterpartyId, sku);
+      await selectCartProduct(profile, sku, messageId);
       const quantities = [...new Set([pricing.minimumQuantity, Math.max(pricing.minimumQuantity, 5), Math.max(pricing.minimumQuantity, 10)])].slice(0, 3);
       await sendButtons(from,
-        `${pricing.name}\nYour rate: ₹${pricing.rate.toFixed(2)}\nQuantity choose karein, ya “${pricing.name} 25 pcs” type karein.`,
+        `${pricing.name}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nQuantity choose karein, ya sirf quantity type karein, jaise: 25`,
         quantities.map((quantity) => ({ id: `wa-qty:${encodeURIComponent(sku)}:${quantity}`, title: `Qty ${quantity}` })),
         "ProductSelection", sku);
       return;
@@ -519,7 +699,7 @@ async function handleInboundMessage(message: JsonObject) {
       const sku = decodeURIComponent(match[1]);
       const pricing = await productPricing(profile.counterpartyId, sku);
       const quantity = Math.max(pricing.minimumQuantity, numberValue(match[2], pricing.minimumQuantity));
-      await createDraft(profile, "Catalogue fallback", messageId, [{
+      await addCartLines(profile, messageId, [{
         productSku: sku,
         quantity,
         rate: pricing.rate,
@@ -528,6 +708,27 @@ async function handleInboundMessage(message: JsonObject) {
         gstRate: pricing.gstRate,
         taxMode: pricing.taxMode
       }]);
+      await sendCartChoices(profile);
+      return;
+    }
+    if (buttonId === "wa-cart:add") {
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_cart_sessions SET stage = 'Browsing', selected_product_sku = NULL, updated_at = NOW() WHERE phone_e164 = $1`,
+        [profile.phoneE164]
+      );
+      await sendText(from, "Next product ka naam type karein, jaise: Lux");
+      return;
+    }
+    if (buttonId === "wa-cart:checkout") {
+      await sendCartCheckout(profile);
+      return;
+    }
+    if (buttonId === "wa-cart:clear") {
+      await clearCart(profile);
+      return;
+    }
+    if (buttonId === "wa-cart:finalize") {
+      await finalizeCart(profile, messageId);
       return;
     }
     if (buttonId.startsWith("wa-confirm:")) {
@@ -588,7 +789,44 @@ async function handleInboundMessage(message: JsonObject) {
         return;
       }
     }
-    if (body) await createDraftFromNaturalText(profile, messageId, body);
+    if (body) {
+      const cartSession = await loadCartSession(profile.phoneE164);
+      if (cartSession?.selectedProductSku && /^\d+(?:\.\d+)?$/.test(normalized)) {
+        const pricing = await productPricing(profile.counterpartyId, cartSession.selectedProductSku);
+        const quantity = Math.max(pricing.minimumQuantity, numberValue(normalized, pricing.minimumQuantity));
+        await addCartLines(profile, messageId, [{
+          productSku: pricing.sku,
+          quantity,
+          rate: pricing.rate,
+          cdPercent: pricing.cdPercent,
+          todPercent: pricing.todPercent,
+          gstRate: pricing.gstRate,
+          taxMode: pricing.taxMode
+        }]);
+        await sendCartChoices(profile);
+        return;
+      }
+      if (cartSession?.stage === "AwaitingCheckout" && /^(yes|y|finalize|confirm|haan|ha|ok|okay|done)$/i.test(normalized)) {
+        await finalizeCart(profile, messageId);
+        return;
+      }
+      if (/^(cart|total|checkout|view total)$/i.test(normalized)) {
+        await sendCartCheckout(profile);
+        return;
+      }
+      if (/^(clear|clear cart|cancel cart)$/i.test(normalized)) {
+        await clearCart(profile);
+        return;
+      }
+      if (!/\d/.test(body) && body.split(/\s+/).length <= 4) {
+        const products = await matchingProducts(body, 1);
+        if (products.length) {
+          await sendProductPicker(from, body);
+          return;
+        }
+      }
+      await addNaturalTextToCart(profile, messageId, body);
+    }
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Order processing failed.";
     await sendText(from, `⚠️ ${messageText} Your salesperson has been notified.`).catch(() => undefined);
