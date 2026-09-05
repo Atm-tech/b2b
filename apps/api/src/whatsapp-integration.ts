@@ -785,13 +785,18 @@ export async function getWhatsAppCatalogFeed(token: string) {
   const snapshot = await getSnapshot();
   const publicWeb = (process.env.PUBLIC_WEB_URL || "https://b2b-api-theta.vercel.app").replace(/\/$/, "");
   const header = ["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand"];
-  const rows = snapshot.products.map((product: ProductMaster) => {
-    const rate = product.offerPrice || product.rsp || product.mrp || product.slabs[0]?.purchaseRate || 0;
+  const rows = snapshot.products.flatMap((product: ProductMaster) => {
+    // A retailer catalogue must never expose an internal purchase rate. Products
+    // without a customer-facing price stay out of Meta until their RSP/MRP is set.
+    const rate = product.offerPrice || product.rsp || product.mrp || 0;
+    if (rate <= 0) return [];
     return [
-      product.sku, product.name, [product.size, product.unit, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
-      "in stock", "new", `${Math.max(0, rate).toFixed(2)} INR`, `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
-      `${publicWeb}/business-connect-icon-512.png`, product.brand || "Aapoorti"
-    ].map(csvCell).join(",");
+      [
+        product.sku, product.name, [product.size, product.unit, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
+        "in stock", "new", `${rate.toFixed(2)} INR`, `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
+        `${publicWeb}/business-connect-icon-512.png`, product.brand || "Aapoorti"
+      ].map(csvCell).join(",")
+    ];
   });
   return [header.join(","), ...rows].join("\n");
 }
