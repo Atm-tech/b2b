@@ -710,6 +710,59 @@ textarea {
   margin-top: clamp(0.1rem, 0.2vw, 0.25rem);
 }
 
+html.so-viewport-locked,
+body.so-viewport-locked {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: none;
+}
+
+body.so-viewport-locked #root,
+body.so-viewport-locked .app-shell,
+body.so-viewport-locked .workspace-shell,
+body.so-viewport-locked .simple-workspace,
+body.so-viewport-locked .content-shell,
+body.so-viewport-locked .sales-catalog {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+body.so-viewport-locked .sales-catalog > *,
+body.so-viewport-locked .sales-catalog .catalog-toolbar,
+body.so-viewport-locked .sales-catalog .catalog-grid,
+body.so-viewport-locked .sales-catalog .product-card,
+body.so-viewport-locked .sales-catalog input,
+body.so-viewport-locked .sales-catalog select,
+body.so-viewport-locked .sales-catalog textarea,
+body.so-viewport-locked .cart-sheet,
+body.so-viewport-locked .rate-popup-sheet {
+  max-width: 100%;
+  min-width: 0;
+}
+
+body.so-viewport-locked .sales-catalog input,
+body.so-viewport-locked .sales-catalog select,
+body.so-viewport-locked .sales-catalog textarea {
+  width: 100%;
+  font-size: max(16px, 1rem);
+}
+
+@media (max-width: 420px) {
+  body.so-viewport-locked .sales-catalog .catalog-search-row {
+    grid-template-columns: minmax(0, 1fr) 46px 64px;
+    gap: 5px;
+  }
+
+  body.so-viewport-locked .sales-catalog .catalog-search-row .ghost-button {
+    min-width: 0;
+    padding-inline: 5px;
+  }
+}
+
 .install-app-button {
   min-height: 2.55rem;
   padding: 0.62rem 0.95rem;

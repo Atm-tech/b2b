@@ -324,6 +324,12 @@ function App() {
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
+    if (activeView !== "Sales") return;
+    const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    const previousViewport = viewport?.content || "width=device-width, initial-scale=1.0, viewport-fit=cover";
+    if (viewport) viewport.content = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
+    document.documentElement.classList.add("so-viewport-locked");
+    document.body.classList.add("so-viewport-locked");
     let lastTouchEnd = 0;
     const preventGesture = (event: Event) => event.preventDefault();
     const preventCtrlZoom = (event: WheelEvent) => {
@@ -347,8 +353,11 @@ function App() {
       document.removeEventListener("gestureend", preventGesture as EventListener);
       document.removeEventListener("wheel", preventCtrlZoom);
       document.removeEventListener("touchend", preventDoubleTapZoom);
+      if (viewport) viewport.content = previousViewport;
+      document.documentElement.classList.remove("so-viewport-locked");
+      document.body.classList.remove("so-viewport-locked");
     };
-  }, []);
+  }, [activeView]);
 
   useEffect(() => {
     if (!currentUser) return;
