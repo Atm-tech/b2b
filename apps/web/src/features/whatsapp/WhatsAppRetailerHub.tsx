@@ -48,6 +48,7 @@ type WhatsAppDraft = {
 type Dashboard = {
   configuration: { connected: boolean; mode: string; phoneNumberIdPresent: boolean; catalogIdPresent: boolean; verifyTokenPresent: boolean; appSecretPresent: boolean };
   retailers: RetailerProfile[];
+  whatsappOnlyRetailers: Array<{ id: string; name: string; mobileNumber: string; city: string; contactPerson: string }>;
   priceRules: Array<Record<string, unknown>>;
   offers: Array<Record<string, unknown>>;
   drafts: WhatsAppDraft[];
@@ -136,7 +137,21 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [busy, setBusy] = useState(false);
-  const shops = useMemo(() => snapshot.counterparties.filter((item) => item.type === "Shop"), [snapshot.counterparties]);
+  const shops = useMemo(() => {
+    const normalShops = snapshot.counterparties.filter((item) => item.type === "Shop");
+    const isolatedShops = (dashboard?.whatsappOnlyRetailers || []).map((item) => ({
+      ...item,
+      type: "Shop" as const,
+      gstNumber: "N/A",
+      bankName: "N/A",
+      bankAccountNumber: "N/A",
+      ifscCode: "N/A",
+      address: "WhatsApp pilot only",
+      createdBy: "WhatsApp",
+      createdAt: ""
+    }));
+    return [...normalShops, ...isolatedShops];
+  }, [dashboard?.whatsappOnlyRetailers, snapshot.counterparties]);
   const salespeople = useMemo(() => snapshot.users.filter((item) => item.active && (item.roles || [item.role]).includes("Sales")), [snapshot.users]);
   const isAdmin = (currentUser.roles || [currentUser.role]).includes("Admin");
   const [mapping, setMapping] = useState(() => ({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: pilotWarehouseId(snapshot), billingType: "B2B", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true }));

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS counterparties (
   latitude DOUBLE PRECISION,
   longitude DOUBLE PRECISION,
   location_label TEXT,
+  channel_scope TEXT NOT NULL DEFAULT 'All',
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -233,6 +233,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_name TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS channel_scope TEXT NOT NULL DEFAULT 'All';
     DO $$
     DECLARE constraint_name TEXT;
     DECLARE index_name TEXT;
@@ -597,7 +598,7 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
 }
 
 async function mapCounterparties(client?: DbClient): Promise<Counterparty[]> {
-  const rows = await query<Record<string, unknown>>("SELECT * FROM counterparties ORDER BY created_at DESC", [], client);
+  const rows = await query<Record<string, unknown>>("SELECT * FROM counterparties WHERE channel_scope <> 'WhatsApp' ORDER BY created_at DESC", [], client);
   return rows.rows.map((row) => ({
     id: stringValue(row.id),
     type: stringValue(row.type) as CounterpartyType,

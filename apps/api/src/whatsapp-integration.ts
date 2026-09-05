@@ -621,9 +621,14 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = currentUser.roles.includes("Admin");
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, rules, offers, drafts, lines, messages] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, messages] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT id, name, mobile_number, city, contact_person
+       FROM counterparties
+       WHERE type = 'Shop' AND channel_scope = 'WhatsApp'
+       ORDER BY name`),
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT r.*, c.name AS retailer_name, p.name AS product_name FROM whatsapp_price_rules r JOIN counterparties c ON c.id = r.counterparty_id JOIN products p ON p.sku = r.product_sku ${isAdmin ? "" : "JOIN whatsapp_retailers wr ON wr.counterparty_id = r.counterparty_id WHERE wr.salesman_id = $1"} ORDER BY r.updated_at DESC LIMIT 300`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -656,12 +661,42 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       mode: configured() ? "Live" : "Simulation"
     },
     retailers: retailers.rows.map(mapRetailer),
+    whatsappOnlyRetailers: whatsappOnlyRetailers.rows.map((row) => ({
+      id: text(row.id),
+      name: text(row.name),
+      mobileNumber: text(row.mobile_number),
+      city: text(row.city),
+      contactPerson: text(row.contact_person)
+    })),
     priceRules: rules.rows,
     offers: offers.rows,
     drafts: drafts.rows.map((draft) => ({ ...draft, lines: lines.rows.filter((line) => visibleDraftIds.has(text(line.draft_id)) && text(line.draft_id) === text(draft.id)) })),
     messages: messages.rows,
     catalogFeedUrl: `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
   };
+}
+
+export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {
+  await executeDatabaseQuery(
+    `INSERT INTO counterparties (
+       id, type, name, gst_number, bank_name, bank_account_number, ifsc_code,
+       mobile_number, address, city, delivery_address, delivery_city,
+       contact_person, channel_scope, created_by, created_at
+     )
+     SELECT
+       'WA-TEST-' || LPAD(series::text, 2, '0'),
+       'Shop',
+       'WhatsApp Retailer ' || series::text,
+       'N/A', 'N/A', 'N/A', 'N/A', '', 'WhatsApp pilot only', 'Pilot',
+       'WhatsApp pilot only', 'Pilot', 'Test Retailer ' || series::text,
+       'WhatsApp', $1, NOW()
+     FROM generate_series(1, 10) AS series
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       channel_scope = 'WhatsApp'`,
+    [currentUser.username]
+  );
+  return getWhatsAppDashboard(currentUser);
 }
 
 export async function saveWhatsAppRetailer(input: {

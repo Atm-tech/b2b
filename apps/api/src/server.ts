@@ -69,6 +69,7 @@ import {
   reviewWhatsAppDraft,
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
+  seedWhatsAppTestRetailers,
   sendWhatsAppInvoiceSummary,
   subscribeWhatsAppBusinessAccount,
   verifyWhatsAppSignature,
@@ -1144,6 +1145,11 @@ app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => 
 app.post("/whatsapp/setup/catalog", async (req, res) => wrap(res, async () => {
   await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   return configureWhatsAppCommerce();
+}));
+
+app.post("/whatsapp/setup/test-retailers", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return seedWhatsAppTestRetailers(currentUser);
 }));
 
 app.get("/whatsapp/setup/status", async (req, res) => {
