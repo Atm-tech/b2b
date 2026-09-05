@@ -52,6 +52,7 @@ type Dashboard = {
   priceRules: Array<Record<string, unknown>>;
   offers: Array<Record<string, unknown>>;
   drafts: WhatsAppDraft[];
+  wishlists: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
   catalogFeedUrl: string;
 };
@@ -200,6 +201,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <Panel title={dashboard?.configuration.mode || "Loading"} eyebrow="WhatsApp connection"><p>{dashboard?.configuration.connected ? "Meta Cloud API credentials detected." : "Safe simulation mode: messages are logged but not sent."}</p></Panel>
       <Panel title={String(mappedRetailers.length)} eyebrow="Mapped retailers"><p>{mappedRetailers.filter((item) => item.optedInAt && item.active).length} active with recorded opt-in.</p></Panel>
       <Panel title={String((dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested"].includes(item.status)).length)} eyebrow="Needs review"><p>Orders waiting for a salesperson.</p></Panel>
+      <Panel title={String((dashboard?.wishlists || []).filter((item) => item.status === "Pending").length)} eyebrow="Wishlist demand"><p>Unavailable products retailers want sourced.</p></Panel>
     </section>
 
     <TwoCol left={<Panel title="Map retailer" eyebrow="WhatsApp identity and owner"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/retailers", { ...mapping, salesmanId: Number(mapping.salesmanId) }, "Retailer WhatsApp mapping saved."); }}>
@@ -236,6 +238,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </form></Panel>} />
 
     <Panel title="Catalogue feed" eyebrow="Meta Commerce Manager scheduled data source"><p className="helper-text">Use this URL as the scheduled catalogue feed. It contains product SKUs, names and base rates; private rates remain server-side.</p><div className="settings-line"><input readOnly value={dashboard?.catalogFeedUrl || "Loading…"} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.catalogFeedUrl || "")}>Copy URL</button></div></Panel>
+
+    <Panel title="Retailer wishlist" eyebrow="Products to source—never rejected orders"><DataTable headers={["Time", "Retailer", "Requested product", "Quantity", "Salesperson", "Status"]} rows={(dashboard?.wishlists || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.retailer_name || ""), String(item.requested_product || ""), String(item.requested_quantity || ""), String(item.salesman_name || ""), String(item.status || "Pending")])} /></Panel>
 
     <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Retailer orders</span><h2>WhatsApp review queue</h2></div><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div>
       {(dashboard?.drafts || []).length ? dashboard!.drafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async (item, body) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/review`, body, "Final summary sent to retailer.")} onInvoice={async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.")} />) : <Panel title="No WhatsApp orders yet" eyebrow="Queue clear"><p>Catalogue carts and retailer messages will appear here automatically.</p></Panel>}

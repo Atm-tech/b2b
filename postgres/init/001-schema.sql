@@ -492,6 +492,19 @@ CREATE TABLE IF NOT EXISTS whatsapp_cart_lines (
   PRIMARY KEY (phone_e164, product_sku)
 );
 
+CREATE TABLE IF NOT EXISTS whatsapp_wishlist_requests (
+  id TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  phone_e164 TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  requested_product TEXT NOT NULL,
+  requested_quantity DOUBLE PRECISION NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  source_message_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS whatsapp_messages (
   id TEXT PRIMARY KEY,
   wa_message_id TEXT UNIQUE,

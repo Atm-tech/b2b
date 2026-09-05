@@ -176,9 +176,10 @@ async function matchingProducts(query = "", limit = 10) {
     .slice(0, limit);
 }
 
-async function sendProductPicker(phone: string, query = "") {
+async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "") {
   const products = await matchingProducts(query);
   if (!products.length) {
+    if (query && profile) return offerWishlist(profile, query, messageId);
     return sendText(phone, `“${compact(query, 80)}” ka product nahi mila. Dusra naam type karein, jaise: Lux`);
   }
   return sendGraphMessage(phone, {
@@ -333,6 +334,79 @@ async function selectCartProduct(profile: RetailerProfile, sku: string, messageI
        updated_at = NOW()`,
     [profile.phoneE164, profile.counterpartyId, sku, messageId || null]
   );
+}
+
+async function offerWishlist(profile: RetailerProfile, query: string, messageId: string) {
+  const requestedProduct = compact(query, 160);
+  await executeDatabaseQuery(
+    `INSERT INTO whatsapp_cart_sessions (
+       phone_e164, counterparty_id, selected_product_sku, stage, last_inbound_message_id, created_at, updated_at
+     ) VALUES ($1,$2,$3,'AwaitingWishlistConfirmation',$4,NOW(),NOW())
+     ON CONFLICT (phone_e164) DO UPDATE SET
+       counterparty_id = EXCLUDED.counterparty_id,
+       selected_product_sku = EXCLUDED.selected_product_sku,
+       stage = 'AwaitingWishlistConfirmation',
+       last_inbound_message_id = EXCLUDED.last_inbound_message_id,
+       updated_at = NOW()`,
+    [profile.phoneE164, profile.counterpartyId, requestedProduct, messageId || null]
+  );
+  return sendButtons(profile.phoneE164,
+    `“${requestedProduct}” abhi available nahi hai. Order reject nahi hoga—kya ise wishlist mein add karein?`,
+    [
+      { id: "wa-wishlist:yes", title: "Add to wishlist" },
+      { id: "wa-wishlist:no", title: "No thanks" }
+    ], "Wishlist", requestedProduct);
+}
+
+async function askWishlistQuantity(profile: RetailerProfile) {
+  const session = await loadCartSession(profile.phoneE164);
+  if (!session?.selectedProductSku || session.stage !== "AwaitingWishlistConfirmation") {
+    await sendText(profile.phoneE164, "Wishlist item expire ho gaya. Product name dobara type karein.");
+    return;
+  }
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_cart_sessions SET stage = 'AwaitingWishlistQuantity', updated_at = NOW() WHERE phone_e164 = $1`,
+    [profile.phoneE164]
+  );
+  await sendButtons(profile.phoneE164,
+    `“${session.selectedProductSku}” ki required quantity batayein. Button choose karein ya quantity type karein.`,
+    [1, 5, 10].map((quantity) => ({ id: `wa-wishlist-qty:${quantity}`, title: `Qty ${quantity}` })),
+    "Wishlist", session.selectedProductSku);
+}
+
+async function saveWishlist(profile: RetailerProfile, quantity: number, messageId: string) {
+  const session = await loadCartSession(profile.phoneE164);
+  if (!session?.selectedProductSku || session.stage !== "AwaitingWishlistQuantity") {
+    await sendText(profile.phoneE164, "Wishlist item expire ho gaya. Product name dobara type karein.");
+    return "";
+  }
+  const wishlistId = id("WAW");
+  await executeDatabaseQuery(
+    `INSERT INTO whatsapp_wishlist_requests (
+       id, counterparty_id, phone_e164, salesman_id, requested_product,
+       requested_quantity, status, source_message_id, created_at, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,'Pending',$7,NOW(),NOW())`,
+    [wishlistId, profile.counterpartyId, profile.phoneE164, profile.salesmanId,
+      session.selectedProductSku, Math.max(1, quantity), messageId || null]
+  );
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_cart_sessions
+     SET selected_product_sku = NULL, stage = 'Browsing', last_inbound_message_id = $2, updated_at = NOW()
+     WHERE phone_e164 = $1`,
+    [profile.phoneE164, messageId || null]
+  );
+  await sendText(profile.phoneE164,
+    `Wishlist saved: ${session.selectedProductSku} × ${Math.max(1, quantity)}. ${profile.salesmanName} ko request mil gayi hai; availability aate hi team update karegi.`,
+    "Wishlist", wishlistId);
+  return wishlistId;
+}
+
+async function declineWishlist(profile: RetailerProfile) {
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_cart_sessions SET selected_product_sku = NULL, stage = 'Browsing', updated_at = NOW() WHERE phone_e164 = $1`,
+    [profile.phoneE164]
+  );
+  await sendText(profile.phoneE164, "Theek hai. Dusra product name type karein, ya cart total dekhne ke liye “total” bhejein.");
 }
 
 async function loadCartLines(phone: string) {
@@ -722,6 +796,20 @@ async function handleInboundMessage(message: JsonObject) {
       await sendCartChoices(profile);
       return;
     }
+    if (buttonId === "wa-wishlist:yes") {
+      await askWishlistQuantity(profile);
+      return;
+    }
+    if (buttonId === "wa-wishlist:no") {
+      await declineWishlist(profile);
+      return;
+    }
+    if (buttonId.startsWith("wa-wishlist-qty:")) {
+      const quantity = numberValue(buttonId.slice("wa-wishlist-qty:".length));
+      if (!(quantity > 0)) throw new Error("Invalid wishlist quantity.");
+      await saveWishlist(profile, quantity, messageId);
+      return;
+    }
     if (buttonId === "wa-cart:add") {
       await executeDatabaseQuery(
         `UPDATE whatsapp_cart_sessions SET stage = 'Browsing', selected_product_sku = NULL, updated_at = NOW() WHERE phone_e164 = $1`,
@@ -783,7 +871,7 @@ async function handleInboundMessage(message: JsonObject) {
     }
     const productSearch = /^(?:search|find|product|item)\s+(.+)$/i.exec(body);
     if (productSearch) {
-      await sendProductPicker(from, productSearch[1]);
+      await sendProductPicker(from, productSearch[1], profile, messageId);
       return;
     }
     if (body) {
@@ -802,7 +890,19 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (body) {
       const cartSession = await loadCartSession(profile.phoneE164);
-      if (cartSession?.selectedProductSku && /^\d+(?:\.\d+)?$/.test(normalized)) {
+      if (cartSession?.stage === "AwaitingWishlistConfirmation" && /^(yes|y|haan|ha|ok|okay|add)$/i.test(normalized)) {
+        await askWishlistQuantity(profile);
+        return;
+      }
+      if (cartSession?.stage === "AwaitingWishlistConfirmation" && /^(no|n|nahi|nahin|cancel)$/i.test(normalized)) {
+        await declineWishlist(profile);
+        return;
+      }
+      if (cartSession?.stage === "AwaitingWishlistQuantity" && /^\d+(?:\.\d+)?$/.test(normalized)) {
+        await saveWishlist(profile, numberValue(normalized), messageId);
+        return;
+      }
+      if (cartSession?.stage === "AwaitingQuantity" && cartSession.selectedProductSku && /^\d+(?:\.\d+)?$/.test(normalized)) {
         const pricing = await productPricing(profile.counterpartyId, cartSession.selectedProductSku);
         const quantity = Math.max(pricing.minimumQuantity, numberValue(normalized, pricing.minimumQuantity));
         await addCartLines(profile, messageId, [{
@@ -830,11 +930,8 @@ async function handleInboundMessage(message: JsonObject) {
         return;
       }
       if (!/\d/.test(body) && body.split(/\s+/).length <= 4) {
-        const products = await matchingProducts(body, 1);
-        if (products.length) {
-          await sendProductPicker(from, body);
-          return;
-        }
+        await sendProductPicker(from, body, profile, messageId);
+        return;
       }
       await addNaturalTextToCart(profile, messageId, body);
     }
@@ -985,7 +1082,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = currentUser.roles.includes("Admin");
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, messages] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, messages] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -1006,6 +1103,13 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
        JOIN whatsapp_order_drafts d ON d.id = l.draft_id
        ${isAdmin ? "" : "WHERE d.salesman_id = $1"}
        ORDER BY d.created_at DESC, l.id LIMIT 1000`, params),
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT w.*, c.name AS retailer_name, u.full_name AS salesman_name
+       FROM whatsapp_wishlist_requests w
+       JOIN counterparties c ON c.id = w.counterparty_id
+       JOIN users u ON u.id = w.salesman_id
+       ${isAdmin ? "" : "WHERE w.salesman_id = $1"}
+       ORDER BY w.created_at DESC LIMIT 300`, params),
     executeDatabaseQuery<Record<string, unknown>>(
       isAdmin
         ? `SELECT * FROM whatsapp_messages ORDER BY created_at DESC LIMIT 100`
@@ -1035,6 +1139,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
     priceRules: rules.rows,
     offers: offers.rows,
     drafts: drafts.rows.map((draft) => ({ ...draft, lines: lines.rows.filter((line) => visibleDraftIds.has(text(line.draft_id)) && text(line.draft_id) === text(draft.id)) })),
+    wishlists: wishlists.rows,
     messages: messages.rows,
     catalogFeedUrl: `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
   };

@@ -58,6 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_drafts_salesman_status ON whatsapp_order
 CREATE INDEX IF NOT EXISTS idx_whatsapp_draft_lines_draft ON whatsapp_order_draft_lines(draft_id);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cart_sessions_retailer ON whatsapp_cart_sessions(counterparty_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cart_lines_phone ON whatsapp_cart_lines(phone_e164, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_wishlist_salesman_status ON whatsapp_wishlist_requests(salesman_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone_created ON whatsapp_messages(phone_e164, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_counterparties_type_name ON counterparties(type, name);
 CREATE INDEX IF NOT EXISTS idx_counterparties_created_at ON counterparties(created_at DESC);
