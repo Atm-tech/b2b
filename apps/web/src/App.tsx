@@ -58,6 +58,22 @@ const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportView
 const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
 const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
 const WhatsAppRetailerHub = lazy(() => import("./features/whatsapp/WhatsAppRetailerHub").then((module) => ({ default: module.WhatsAppRetailerHub })));
+const whatsAppPilotUsernames = new Set(
+  String(import.meta.env.VITE_WHATSAPP_PILOT_USERNAMES || "wa.sales")
+    .split(",")
+    .map((username) => username.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function WhatsAppComingSoon() {
+  return <Panel title="WhatsApp Business" eyebrow="Retailer ordering">
+    <div className="whatsapp-coming-soon">
+      <span className="whatsapp-coming-soon-icon"><SidebarVectorIcon view="WhatsApp" /></span>
+      <strong>Coming Soon</strong>
+      <p>Retailer catalogue ordering, special rates and salesperson approvals are being prepared for this account.</p>
+    </div>
+  </Panel>;
+}
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -708,6 +724,7 @@ function App() {
   const isAccountsUser = currentRoles.includes("Accounts");
   const isCollectionAgent = currentRoles.includes("Collection Agent");
   const isDataAnalyst = currentRoles.includes("Data Analyst");
+  const hasWhatsAppPilotAccess = whatsAppPilotUsernames.has("*") || whatsAppPilotUsernames.has(currentUser.username.trim().toLowerCase());
   const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
   const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");
@@ -1452,7 +1469,9 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/sales-returns", body, "Sales return saved.")}
           /> : null}
-          {activeView === "WhatsApp" ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} /> : null}
+          {activeView === "WhatsApp" ? (hasWhatsAppPilotAccess
+            ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} />
+            : <WhatsAppComingSoon />) : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>

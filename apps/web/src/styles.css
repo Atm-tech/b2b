@@ -4816,6 +4816,44 @@ textarea {
   color: #128c4b;
 }
 
+.whatsapp-coming-soon {
+  min-height: min(58vh, 430px);
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 36px 20px;
+  text-align: center;
+}
+
+.whatsapp-coming-soon-icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #18a75b, #087a40);
+  color: #fff;
+  box-shadow: 0 16px 34px rgba(8, 122, 64, 0.24);
+}
+
+.whatsapp-coming-soon-icon .sidebar-vector-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.whatsapp-coming-soon strong {
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  color: #123b35;
+}
+
+.whatsapp-coming-soon p {
+  max-width: 520px;
+  margin: 0;
+  color: #607871;
+  line-height: 1.6;
+}
+
 .app-dock .dock-icon,
 .app-dock .dock-label {
   display: grid;

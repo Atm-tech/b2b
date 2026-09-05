@@ -73,6 +73,8 @@ services:
         sync: false
       - key: WHATSAPP_SALESPERSON_ALERT_TEMPLATE
         sync: false
+      - key: WHATSAPP_PILOT_USERNAMES
+        value: wa.sales
 databases:
   - name: aapoorti-db
     plan: basic-256mb

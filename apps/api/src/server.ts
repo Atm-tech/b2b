@@ -1126,7 +1126,7 @@ app.get("/whatsapp/catalog/feed.csv", async (req, res) => {
 
 app.get("/whatsapp/dashboard", async (req, res) => {
   try {
-    const currentUser = await requireRole(req, ["Admin", "Sales"]);
+    const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
     res.json(await getWhatsAppDashboard(currentUser));
   } catch (error) {
     res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
@@ -1134,7 +1134,7 @@ app.get("/whatsapp/dashboard", async (req, res) => {
 });
 
 app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   const salesmanId = requiredNumber(req.body?.salesmanId, "Salesperson");
   if (!currentUser.roles.includes("Admin") && salesmanId !== currentUser.id) throw new Error("You can only map retailers to yourself.");
   return saveWhatsAppRetailer({
@@ -1152,7 +1152,7 @@ app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   return saveWhatsAppPriceRule({
     counterpartyId: requiredString(req.body?.counterpartyId, "Retailer"),
     productSku: requiredString(req.body?.productSku, "Product"),
@@ -1166,7 +1166,7 @@ app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   const lines = parseCartLines(req.body?.lines).map((line) => ({
     productSku: requiredString(line.productSku, "Product"),
     quantity: requiredNumber(line.quantity, "Quantity"),
@@ -1183,7 +1183,7 @@ app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   const lines = parseCartLines(req.body?.lines).map((line) => ({
     id: requiredString(line.id, "Draft line"),
     quantity: requiredNumber(line.quantity, "Quantity"),
@@ -1202,7 +1202,7 @@ app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () =
 }));
 
 app.post("/whatsapp/drafts/:id/invoice", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Admin", "Sales", "Accounts"]);
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales", "Accounts"]);
   return sendWhatsAppInvoiceSummary(req.params.id, currentUser);
 }));
 
@@ -1339,6 +1339,20 @@ async function requireRole(req: express.Request, allowedRoles: UserRole[]) {
   const user = await getCurrentUser(req);
   if (!user || !user.roles.some((role) => allowedRoles.includes(role))) {
     throw new Error("You are not allowed to perform this action.");
+  }
+  return user;
+}
+
+async function requireWhatsAppPilot(req: express.Request, allowedRoles: UserRole[]) {
+  const user = await requireRole(req, allowedRoles);
+  const pilotUsernames = new Set(
+    String(process.env.WHATSAPP_PILOT_USERNAMES || "wa.sales")
+      .split(",")
+      .map((username) => username.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!pilotUsernames.has("*") && !pilotUsernames.has(user.username.trim().toLowerCase())) {
+    throw new Error("WhatsApp Business is coming soon for this account.");
   }
   return user;
 }
