@@ -65,6 +65,12 @@ function localDateTime(hoursAhead: number) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function pilotWarehouseId(snapshot: AppSnapshot) {
+  return snapshot.warehouses.find((warehouse) => warehouse.id === "C21")?.id
+    || snapshot.warehouses[0]?.id
+    || "";
+}
+
 function DraftReviewCard({ draft, snapshot, busy, onReview, onInvoice }: {
   draft: WhatsAppDraft;
   snapshot: AppSnapshot;
@@ -72,7 +78,7 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onInvoice }: {
   onReview: (draft: WhatsAppDraft, body: Record<string, unknown>) => Promise<void>;
   onInvoice: (draft: WhatsAppDraft) => Promise<void>;
 }) {
-  const [warehouseId, setWarehouseId] = useState(draft.warehouse_id || snapshot.warehouses[0]?.id || "");
+  const [warehouseId, setWarehouseId] = useState(() => draft.warehouse_id || pilotWarehouseId(snapshot));
   const [paymentMode, setPaymentMode] = useState<PaymentMode>(draft.payment_mode || "NEFT");
   const [cashTiming, setCashTiming] = useState(draft.cash_timing || "Later");
   const [deliveryMode, setDeliveryMode] = useState<"Delivery" | "Self Collection">(draft.delivery_mode || "Delivery");
@@ -133,7 +139,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const shops = useMemo(() => snapshot.counterparties.filter((item) => item.type === "Shop"), [snapshot.counterparties]);
   const salespeople = useMemo(() => snapshot.users.filter((item) => item.active && (item.roles || [item.role]).includes("Sales")), [snapshot.users]);
   const isAdmin = (currentUser.roles || [currentUser.role]).includes("Admin");
-  const [mapping, setMapping] = useState({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: snapshot.warehouses[0]?.id || "", billingType: "B2B", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true });
+  const [mapping, setMapping] = useState(() => ({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: pilotWarehouseId(snapshot), billingType: "B2B", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true }));
   const [rule, setRule] = useState({ counterpartyId: "", productSku: "", specialRate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", validUntil: localDateTime(24), active: true });
   const [offer, setOffer] = useState({ counterpartyIds: [] as string[], productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", expiresAt: localDateTime(8) });
 
