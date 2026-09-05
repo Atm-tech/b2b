@@ -145,19 +145,75 @@ async function sendButtons(phone: string, body: string, buttons: Array<{ id: str
   }, relatedEntityType, relatedEntityId);
 }
 
-async function sendCatalog(phone: string) {
-  if (!process.env.WHATSAPP_CATALOG_ID) {
-    return sendText(phone, "Catalogue setup is in progress. For now, type item name and quantity, for example: Lux 100g 24 pcs.");
+function productSaleRate(product: ProductMaster) {
+  return product.offerPrice || product.rsp || product.mrp || 0;
+}
+
+function compact(value: string, max: number) {
+  return value.trim().slice(0, max);
+}
+
+async function sendProductPicker(phone: string, query = "") {
+  const normalizedQuery = query.trim().toLowerCase();
+  const snapshot = await getSnapshot();
+  const products = snapshot.products
+    .filter((product) => {
+      if (productSaleRate(product) <= 0) return false;
+      if (!normalizedQuery) return true;
+      return [product.name, product.sku, product.brand, product.shortName, product.size]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    })
+    .slice(0, 10);
+  if (!products.length) {
+    return sendText(phone, `“${compact(query, 80)}” ka product nahi mila. Dusra naam type karein, jaise: search Lux`);
   }
   return sendGraphMessage(phone, {
     type: "interactive",
     interactive: {
-      type: "catalog_message",
-      body: { text: "Aapoorti Wholesale catalogue kholiye, items select kijiye aur cart WhatsApp par bhej dijiye." },
-      action: { name: "catalog_message" },
-      footer: { text: "Special retailer rates are applied during sales review." }
+      type: "list",
+      header: { type: "text", text: compact(query ? `Search: ${query}` : "Aapoorti Catalogue", 60) },
+      body: { text: "Product select kijiye. Agle step mein quantity choose karke order request bhej sakte hain." },
+      footer: { text: "Final stock & special rate salesperson verify karega." },
+      action: {
+        button: "View products",
+        sections: [{
+          title: "Products",
+          rows: products.map((product) => ({
+            id: `wa-product:${encodeURIComponent(product.sku)}`,
+            title: compact(product.shortName || product.name, 24),
+            description: compact([product.brand, product.size, `₹${productSaleRate(product).toFixed(2)}`].filter(Boolean).join(" · "), 72)
+          }))
+        }]
+      }
     }
-  });
+  }, "CatalogueSearch", query || "featured");
+}
+
+let nativeCatalogUnavailableUntil = 0;
+
+async function sendCatalog(phone: string) {
+  if (!process.env.WHATSAPP_CATALOG_ID || nativeCatalogUnavailableUntil > Date.now()) {
+    return sendProductPicker(phone);
+  }
+  try {
+    return await sendGraphMessage(phone, {
+      type: "interactive",
+      interactive: {
+        type: "catalog_message",
+        body: { text: "Aapoorti Wholesale catalogue kholiye, items select kijiye aur cart WhatsApp par bhej dijiye." },
+        action: { name: "catalog_message" },
+        footer: { text: "Special retailer rates are applied during sales review." }
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/131009|catalog/i.test(message)) throw error;
+    nativeCatalogUnavailableUntil = Date.now() + 10 * 60 * 1000;
+    return sendProductPicker(phone);
+  }
 }
 
 async function sendTemplate(phone: string, name: string, parameters: string[], relatedEntityType?: string, relatedEntityId?: string) {
@@ -445,7 +501,35 @@ async function handleInboundMessage(message: JsonObject) {
     }
     const interactive = message.interactive as JsonObject | undefined;
     const buttonReply = interactive?.button_reply as JsonObject | undefined;
-    const buttonId = text(buttonReply?.id);
+    const listReply = interactive?.list_reply as JsonObject | undefined;
+    const buttonId = text(buttonReply?.id || listReply?.id);
+    if (buttonId.startsWith("wa-product:")) {
+      const sku = decodeURIComponent(buttonId.slice("wa-product:".length));
+      const pricing = await productPricing(profile.counterpartyId, sku);
+      const quantities = [...new Set([pricing.minimumQuantity, Math.max(pricing.minimumQuantity, 5), Math.max(pricing.minimumQuantity, 10)])].slice(0, 3);
+      await sendButtons(from,
+        `${pricing.name}\nYour rate: ₹${pricing.rate.toFixed(2)}\nQuantity choose karein, ya “${pricing.name} 25 pcs” type karein.`,
+        quantities.map((quantity) => ({ id: `wa-qty:${encodeURIComponent(sku)}:${quantity}`, title: `Qty ${quantity}` })),
+        "ProductSelection", sku);
+      return;
+    }
+    if (buttonId.startsWith("wa-qty:")) {
+      const match = buttonId.match(/^wa-qty:(.+):(\d+(?:\.\d+)?)$/);
+      if (!match) throw new Error("Invalid product quantity selection.");
+      const sku = decodeURIComponent(match[1]);
+      const pricing = await productPricing(profile.counterpartyId, sku);
+      const quantity = Math.max(pricing.minimumQuantity, numberValue(match[2], pricing.minimumQuantity));
+      await createDraft(profile, "Catalogue fallback", messageId, [{
+        productSku: sku,
+        quantity,
+        rate: pricing.rate,
+        cdPercent: pricing.cdPercent,
+        todPercent: pricing.todPercent,
+        gstRate: pricing.gstRate,
+        taxMode: pricing.taxMode
+      }]);
+      return;
+    }
     if (buttonId.startsWith("wa-confirm:")) {
       await finalizeDraft(buttonId.slice("wa-confirm:".length));
       return;
@@ -483,6 +567,11 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (/^(hi|hello|hey|namaste|menu|catalog|catalogue|catlog)$/i.test(normalized)) {
       await sendCatalog(from);
+      return;
+    }
+    const productSearch = /^(?:search|find|product|item)\s+(.+)$/i.exec(body);
+    if (productSearch) {
+      await sendProductPicker(from, productSearch[1]);
       return;
     }
     if (body) {

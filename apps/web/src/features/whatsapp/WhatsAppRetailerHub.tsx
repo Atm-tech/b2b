@@ -66,6 +66,16 @@ function localDateTime(hoursAhead: number) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function messageAuditText(item: Record<string, unknown>) {
+  const payload = (item.payload_json || {}) as Record<string, unknown>;
+  const request = (payload.request || {}) as Record<string, unknown>;
+  const inboundText = (payload.text || {}) as Record<string, unknown>;
+  const outboundText = (request.text || {}) as Record<string, unknown>;
+  const interactive = (request.interactive || {}) as Record<string, unknown>;
+  const interactiveBody = (interactive.body || {}) as Record<string, unknown>;
+  return String(inboundText.body || outboundText.body || interactiveBody.text || "");
+}
+
 function pilotWarehouseId(snapshot: AppSnapshot) {
   return snapshot.warehouses.find((warehouse) => warehouse.id === "C21")?.id
     || snapshot.warehouses[0]?.id
@@ -231,6 +241,6 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       {(dashboard?.drafts || []).length ? dashboard!.drafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async (item, body) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/review`, body, "Final summary sent to retailer.")} onInvoice={async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.")} />) : <Panel title="No WhatsApp orders yet" eyebrow="Queue clear"><p>Catalogue carts and retailer messages will appear here automatically.</p></Panel>}
     </section>
 
-    <Panel title="Recent automation" eyebrow="Message audit trail"><DataTable headers={["Time", "Direction", "Phone", "Type", "Status", "Related"]} rows={(dashboard?.messages || []).slice(0, 50).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.direction || ""), String(item.phone_e164 || ""), String(item.message_type || ""), String(item.status || ""), [item.related_entity_type, item.related_entity_id].filter(Boolean).join(" ")])} /></Panel>
+    <Panel title="Recent automation" eyebrow="Message audit trail"><DataTable headers={["Time", "Direction", "Phone", "Type", "Status", "Message", "Error", "Related"]} rows={(dashboard?.messages || []).slice(0, 50).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.direction || ""), String(item.phone_e164 || ""), String(item.message_type || ""), String(item.status || ""), messageAuditText(item), String(item.error_message || ""), [item.related_entity_type, item.related_entity_id].filter(Boolean).join(" ")])} /></Panel>
   </div>;
 }
