@@ -594,6 +594,7 @@ export async function getWhatsAppMetaDiagnostics() {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
   const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
   const phoneNumberId = text(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const catalogId = text(process.env.WHATSAPP_CATALOG_ID);
   const appSecret = text(process.env.WHATSAPP_APP_SECRET);
   if (!accessToken || !businessAccountId || !phoneNumberId) throw new Error("WhatsApp credentials are incomplete.");
   const graphGet = async (path: string) => {
@@ -601,8 +602,10 @@ export async function getWhatsAppMetaDiagnostics() {
     const body = await response.json() as JsonObject;
     return response.ok ? { ok: true, body } : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
   };
-  const [phone, subscriptions, catalogs, commerceSettings, tokenDebug] = await Promise.all([
+  const [phone, businessAccount, catalogAsset, subscriptions, catalogs, commerceSettings, tokenDebug] = await Promise.all([
     graphGet(`${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`),
+    graphGet(`${businessAccountId}?fields=id,name,owner_business_info`),
+    catalogId ? graphGet(`${catalogId}?fields=id,name,business`) : Promise.resolve({ ok: false, error: "Catalogue ID is missing." }),
     graphGet(`${businessAccountId}/subscribed_apps`),
     graphGet(`${businessAccountId}/product_catalogs`),
     graphGet(`${phoneNumberId}/whatsapp_commerce_settings`),
@@ -624,6 +627,8 @@ export async function getWhatsAppMetaDiagnostics() {
   }
   return {
     phone,
+    businessAccount,
+    catalogAsset,
     subscriptions,
     catalogs,
     commerceSettings,
