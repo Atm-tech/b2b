@@ -559,15 +559,21 @@ export async function configureWhatsAppCommerce() {
     method: "POST",
     headers: {
       authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json"
+      "content-type": "application/x-www-form-urlencoded"
     },
-    body: JSON.stringify({ catalog_id: catalogId })
+    body: new URLSearchParams({ catalog_id: catalogId })
   });
   const linkBody = await linkResponse.json() as JsonObject;
   if (!linkResponse.ok || linkBody.success === false) {
     const error = linkBody.error as JsonObject | undefined;
     const details = text((error?.error_data as JsonObject | undefined)?.details);
-    throw new Error([text(error?.message), details].filter(Boolean).join(" — ") || `Meta catalogue link failed (${linkResponse.status}).`);
+    throw new Error([
+      text(error?.message),
+      text(error?.error_user_title),
+      text(error?.error_user_msg),
+      details,
+      error?.code ? `Code ${text(error.code)}` : ""
+    ].filter(Boolean).join(" — ") || `Meta catalogue link failed (${linkResponse.status}).`);
   }
   const response = await fetch(`${graphBase}/${phoneNumberId}/whatsapp_commerce_settings`, {
     method: "POST",
