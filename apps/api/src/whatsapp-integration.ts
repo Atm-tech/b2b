@@ -553,6 +553,7 @@ export async function getWhatsAppMetaDiagnostics() {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
   const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
   const phoneNumberId = text(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const appSecret = text(process.env.WHATSAPP_APP_SECRET);
   if (!accessToken || !businessAccountId || !phoneNumberId) throw new Error("WhatsApp credentials are incomplete.");
   const graphGet = async (path: string) => {
     const response = await fetch(`${graphBase}/${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
@@ -567,12 +568,24 @@ export async function getWhatsAppMetaDiagnostics() {
   const debugData = tokenDebug.ok && tokenDebug.body
     ? tokenDebug.body.data as JsonObject | undefined
     : undefined;
+  const appId = text(debugData?.app_id);
+  let webhookSubscription: Record<string, unknown> = { ok: false, error: "App credentials are incomplete." };
+  if (appId && appSecret) {
+    const response = await fetch(`${graphBase}/${appId}/subscriptions`, {
+      headers: { authorization: `Bearer ${appId}|${appSecret}` }
+    });
+    const body = await response.json() as JsonObject;
+    webhookSubscription = response.ok
+      ? { ok: true, body }
+      : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
+  }
   return {
     phone,
     subscriptions,
+    webhookSubscription,
     token: tokenDebug.ok ? {
       ok: true,
-      appId: text(debugData?.app_id),
+      appId,
       valid: Boolean(debugData?.is_valid),
       expiresAt: numberValue(debugData?.expires_at),
       scopes: Array.isArray(debugData?.scopes) ? debugData.scopes.map(text) : []
