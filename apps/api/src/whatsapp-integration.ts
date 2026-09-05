@@ -549,6 +549,37 @@ export async function subscribeWhatsAppBusinessAccount() {
   return { subscribed: true, businessAccountId };
 }
 
+export async function getWhatsAppMetaDiagnostics() {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
+  const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
+  const phoneNumberId = text(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  if (!accessToken || !businessAccountId || !phoneNumberId) throw new Error("WhatsApp credentials are incomplete.");
+  const graphGet = async (path: string) => {
+    const response = await fetch(`${graphBase}/${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    const body = await response.json() as JsonObject;
+    return response.ok ? { ok: true, body } : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
+  };
+  const [phone, subscriptions, tokenDebug] = await Promise.all([
+    graphGet(`${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`),
+    graphGet(`${businessAccountId}/subscribed_apps`),
+    graphGet(`debug_token?input_token=${encodeURIComponent(accessToken)}`)
+  ]);
+  const debugData = tokenDebug.ok && tokenDebug.body
+    ? tokenDebug.body.data as JsonObject | undefined
+    : undefined;
+  return {
+    phone,
+    subscriptions,
+    token: tokenDebug.ok ? {
+      ok: true,
+      appId: text(debugData?.app_id),
+      valid: Boolean(debugData?.is_valid),
+      expiresAt: numberValue(debugData?.expires_at),
+      scopes: Array.isArray(debugData?.scopes) ? debugData.scopes.map(text) : []
+    } : tokenDebug
+  };
+}
+
 export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = currentUser.roles.includes("Admin");
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";

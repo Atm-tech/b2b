@@ -63,6 +63,7 @@ import {
   createWhatsAppOffer,
   getWhatsAppCatalogFeed,
   getWhatsAppDashboard,
+  getWhatsAppMetaDiagnostics,
   handleWhatsAppWebhook,
   reviewWhatsAppDraft,
   saveWhatsAppPriceRule,
@@ -1138,6 +1139,15 @@ app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => 
   await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   return subscribeWhatsAppBusinessAccount();
 }));
+
+app.get("/whatsapp/setup/status", async (req, res) => {
+  try {
+    await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+    res.json(await getWhatsAppMetaDiagnostics());
+  } catch (error) {
+    res.status(400).json({ message: error instanceof Error ? error.message : "WhatsApp diagnostics failed." });
+  }
+});
 
 app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
