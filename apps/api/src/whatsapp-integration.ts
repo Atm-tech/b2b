@@ -160,11 +160,14 @@ function compact(value: string, max: number) {
 async function matchingProducts(query = "", limit = 10) {
   const normalizedQuery = query.trim().toLowerCase();
   const snapshot = await getSnapshot();
+  const historicallyPricedSkus = new Set(
+    snapshot.salesOrders.filter((order) => order.status !== "Cancelled" && order.rate > 0).map((order) => order.productSku)
+  );
   return snapshot.products
     .filter((product) => {
-      if (productSaleRate(product) <= 0) return false;
+      if (productSaleRate(product) <= 0 && !historicallyPricedSkus.has(product.sku)) return false;
       if (!normalizedQuery) return true;
-      return [product.name, product.sku, product.brand, product.shortName, product.size]
+      return [product.name, product.sku, product.brand, product.shortName, product.articleName, product.itemName, product.size, product.remarks]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -268,7 +271,8 @@ function mapRetailer(row: Record<string, unknown>): RetailerProfile {
 async function productPricing(counterpartyId: string, productSku: string) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
     `SELECT p.sku, p.name, p.default_gst_rate, p.default_tax_mode, p.mrp, p.rsp, p.offer_price,
-            rule.special_rate, rule.cd_percent, rule.tod_percent, rule.minimum_quantity
+            rule.special_rate, rule.cd_percent, rule.tod_percent, rule.minimum_quantity,
+            history.rate AS latest_sale_rate
      FROM products p
      LEFT JOIN LATERAL (
        SELECT special_rate, cd_percent, tod_percent, minimum_quantity
@@ -277,12 +281,19 @@ async function productPricing(counterpartyId: string, productSku: string) {
          AND valid_from <= NOW() AND (valid_until IS NULL OR valid_until > NOW())
        ORDER BY updated_at DESC LIMIT 1
      ) rule ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT rate
+       FROM sales_orders
+       WHERE product_sku = p.sku AND rate > 0 AND status <> 'Cancelled'
+       ORDER BY (shop_id = $1) DESC, created_at DESC
+       LIMIT 1
+     ) history ON TRUE
      WHERE p.sku = $2`,
     [counterpartyId, productSku]
   );
   const row = result.rows[0];
   if (!row) throw new Error(`Product ${productSku} was not found.`);
-  const fallbackRate = numberValue(row.offer_price) || numberValue(row.rsp) || numberValue(row.mrp);
+  const fallbackRate = numberValue(row.offer_price) || numberValue(row.rsp) || numberValue(row.mrp) || numberValue(row.latest_sale_rate);
   const rate = numberValue(row.special_rate) || fallbackRate;
   if (!(rate > 0)) throw new Error(`No selling rate is configured for ${productSku}.`);
   return {
