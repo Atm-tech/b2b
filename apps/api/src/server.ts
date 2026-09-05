@@ -60,6 +60,7 @@ import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from ".
 import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
+  configureWhatsAppCommerce,
   createWhatsAppOffer,
   getWhatsAppCatalogFeed,
   getWhatsAppDashboard,
@@ -1138,6 +1139,11 @@ app.get("/whatsapp/dashboard", async (req, res) => {
 app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => {
   await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   return subscribeWhatsAppBusinessAccount();
+}));
+
+app.post("/whatsapp/setup/catalog", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return configureWhatsAppCommerce();
 }));
 
 app.get("/whatsapp/setup/status", async (req, res) => {

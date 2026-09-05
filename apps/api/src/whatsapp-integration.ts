@@ -549,6 +549,26 @@ export async function subscribeWhatsAppBusinessAccount() {
   return { subscribed: true, businessAccountId };
 }
 
+export async function configureWhatsAppCommerce() {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
+  const phoneNumberId = text(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const catalogId = text(process.env.WHATSAPP_CATALOG_ID);
+  if (!accessToken || !phoneNumberId || !catalogId) throw new Error("WhatsApp phone, token and Catalogue ID are required.");
+  const response = await fetch(`${graphBase}/${phoneNumberId}/whatsapp_commerce_settings`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ catalog_id: catalogId, is_catalog_visible: true, is_cart_enabled: true })
+  });
+  const body = await response.json() as JsonObject;
+  if (!response.ok || body.success === false) {
+    throw new Error(text((body.error as JsonObject | undefined)?.message) || `Meta commerce setup failed (${response.status}).`);
+  }
+  return { configured: true, catalogId, catalogVisible: true, cartEnabled: true };
+}
+
 export async function getWhatsAppMetaDiagnostics() {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
   const businessAccountId = text(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
@@ -560,10 +580,11 @@ export async function getWhatsAppMetaDiagnostics() {
     const body = await response.json() as JsonObject;
     return response.ok ? { ok: true, body } : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
   };
-  const [phone, subscriptions, catalogs, tokenDebug] = await Promise.all([
+  const [phone, subscriptions, catalogs, commerceSettings, tokenDebug] = await Promise.all([
     graphGet(`${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`),
     graphGet(`${businessAccountId}/subscribed_apps`),
     graphGet(`${businessAccountId}/product_catalogs`),
+    graphGet(`${phoneNumberId}/whatsapp_commerce_settings`),
     graphGet(`debug_token?input_token=${encodeURIComponent(accessToken)}`)
   ]);
   const debugData = tokenDebug.ok && tokenDebug.body
@@ -584,6 +605,7 @@ export async function getWhatsAppMetaDiagnostics() {
     phone,
     subscriptions,
     catalogs,
+    commerceSettings,
     webhookSubscription,
     token: tokenDebug.ok ? {
       ok: true,
