@@ -628,7 +628,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       `SELECT id, name, mobile_number, city, contact_person
        FROM counterparties
        WHERE type = 'Shop' AND channel_scope = 'WhatsApp'
-       ORDER BY name`),
+       ORDER BY id`),
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT r.*, c.name AS retailer_name, p.name AS product_name FROM whatsapp_price_rules r JOIN counterparties c ON c.id = r.counterparty_id JOIN products p ON p.sku = r.product_sku ${isAdmin ? "" : "JOIN whatsapp_retailers wr ON wr.counterparty_id = r.counterparty_id WHERE wr.salesman_id = $1"} ORDER BY r.updated_at DESC LIMIT 300`, params),
     executeDatabaseQuery<Record<string, unknown>>(
