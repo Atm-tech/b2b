@@ -1208,6 +1208,7 @@ app.post("/whatsapp/live-chat/:id/order", async (req, res) => wrap(res, async ()
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   const rawLines = Array.isArray(req.body?.lines) ? req.body.lines : [req.body];
   return createWhatsAppDraftFromLiveChat(req.params.id, {
+    draftId: optionalString(req.body?.draftId),
     lines: rawLines.map((line: Record<string, unknown>, index: number) => ({
       productSku: requiredString(line?.productSku, `Product ${index + 1}`),
       quantity: requiredNumber(line?.quantity, `Quantity ${index + 1}`),

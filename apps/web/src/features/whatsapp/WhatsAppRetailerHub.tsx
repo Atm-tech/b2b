@@ -303,6 +303,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [chatOrderSearch, setChatOrderSearch] = useState("");
   const [chatOrder, setChatOrder] = useState({ productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", warehouseId: pilotWarehouseId(snapshot), paymentMode: "NEFT" as PaymentMode, cashTiming: "Later", deliveryMode: "Delivery" as "Delivery" | "Self Collection", note: "" });
   const [chatOrderLines, setChatOrderLines] = useState<ChatOrderLine[]>([]);
+  const [activeChatDraftId, setActiveChatDraftId] = useState("");
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const [wishlistProducts, setWishlistProducts] = useState<Record<string, string>>({});
   const [retailerTagDrafts, setRetailerTagDrafts] = useState<Record<string, string>>({});
@@ -383,6 +384,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     setBusy(true); onError("");
     try {
       const { data } = await api.post<{ draftId: string; confirmationSent: boolean; dashboard: Dashboard; liveChat: LiveChatInbox }>(`/whatsapp/live-chat/${encodeURIComponent(liveChat.selectedTicketId)}/order`, {
+        draftId: activeChatDraftId || undefined,
         lines: chatOrderLines,
         warehouseId: chatOrder.warehouseId,
         paymentMode: chatOrder.paymentMode,
@@ -392,12 +394,13 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       }, { headers });
       setDashboard(data.dashboard);
       setLiveChat(data.liveChat);
-      setChatOrderOpen(false);
-      setChatOrderLines([]);
-      setChatOrder((current) => ({ ...current, productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", note: "" }));
+      setChatOrderOpen(true);
+      setActiveChatDraftId(data.draftId);
+      setChatOrderSearch("");
+      setChatOrder((current) => ({ ...current, productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0" }));
       onMessage(data.confirmationSent
-        ? `Order ${data.draftId} retailer confirmation ke liye WhatsApp par bhej diya.`
-        : `Order ${data.draftId} save ho gaya. Low-stock items approval queue mein hain.`);
+        ? `Order ${data.draftId} ka latest proforma WhatsApp par bhej diya. Isi order mein aur item add kar sakte hain.`
+        : `Order ${data.draftId} update ho gaya. Low-stock items approval queue mein hain.`);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -422,6 +425,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     });
     setChatOrderSearch("");
     setChatOrder((current) => ({ ...current, productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0" }));
+    onError("");
+  }
+
+  function startNewChatOrder() {
+    setActiveChatDraftId("");
+    setChatOrderLines([]);
+    setChatOrderSearch("");
+    setChatOrder((current) => ({ ...current, productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", note: "" }));
     onError("");
   }
 
@@ -712,7 +723,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
         <div className="wa-chat-list-head"><div><span className="eyebrow">WhatsApp inbox</span><h2>Retailer chats</h2></div><span className="wa-queue-count">{liveChatUnread} unread</span></div>
         <input className="wa-chat-search" type="search" value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="Search retailer or number" />
         <div className="wa-chat-thread-list">
-          {filteredChats.map((ticket) => <button key={String(ticket.id)} type="button" className={String(ticket.id) === liveChat.selectedTicketId ? "active" : ""} onClick={() => { setChatReply(""); setChatOrderOpen(false); setChatOrderLines([]); void refreshLiveChat(String(ticket.id), true); }}>
+          {filteredChats.map((ticket) => <button key={String(ticket.id)} type="button" className={String(ticket.id) === liveChat.selectedTicketId ? "active" : ""} onClick={() => { setChatReply(""); setChatOrderOpen(false); setChatOrderLines([]); setActiveChatDraftId(""); void refreshLiveChat(String(ticket.id), true); }}>
             <span className="wa-chat-avatar">{String(ticket.retailer_name || "R").trim().charAt(0).toUpperCase()}</span>
             <span className="wa-chat-thread-copy"><strong>{String(ticket.retailer_name || "Retailer")}</strong><small>{String(ticket.last_message_preview || "Live chat requested")}</small><em>{String(ticket.salesman_name || "Unassigned")}</em></span>
             <span className="wa-chat-thread-meta"><time>{ticket.last_message_at ? formatDateTimeIst(String(ticket.last_message_at)) : ""}</time>{Number(ticket.unread_staff_count || 0) > 0 ? <b>{Number(ticket.unread_staff_count) > 99 ? "99+" : Number(ticket.unread_staff_count)}</b> : null}</span>
@@ -739,7 +750,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
               {selectedChat.status === "Open" ? <form className="wa-chat-composer" onSubmit={sendChatReply}><textarea rows={2} value={chatReply} onChange={(event) => setChatReply(event.target.value)} placeholder="Type a reply — retailer receives it on WhatsApp" /><button className="primary-button" disabled={busy || !chatReply.trim()}>{busy ? "Sending…" : "Send"}</button></form> : <div className="wa-chat-closed">This chat is closed. Reopen it to reply.</div>}
             </div>
             {chatOrderOpen ? <form className="wa-chat-order-form" onSubmit={createOrderFromChat}>
-              <div className="wa-chat-order-title"><div><span className="eyebrow">Create from conversation</span><strong>New order for {String(selectedChat.retailer_name || "Retailer")}</strong></div><span>Stock {selectedChatOrderStock}</span></div>
+              <div className="wa-chat-order-title"><div><span className="eyebrow">{activeChatDraftId ? "Continue current order" : "Create from conversation"}</span><strong>{activeChatDraftId ? activeChatDraftId : `New order for ${String(selectedChat.retailer_name || "Retailer")}`}</strong></div><div><span>Stock {selectedChatOrderStock}</span>{activeChatDraftId ? <button className="ghost-button" type="button" disabled={busy} onClick={startNewChatOrder}>Start new</button> : null}</div></div>
               <label className="wide-field">Search product<input type="search" value={chatOrderSearch} onChange={(event) => setChatOrderSearch(event.target.value)} placeholder="Name, SKU or brand" /></label>
               <label className="wide-field">Product<select value={chatOrder.productSku} onChange={(event) => { const productSku = event.target.value; const product = snapshot.products.find((item) => item.sku === productSku); const minimum = Math.max(1, Number(product?.minimumOrderQuantity || 1)); const rate = Number(product?.offerPrice || product?.rsp || product?.mrp || 0); setChatOrder((current) => ({ ...current, productSku, quantity: String(minimum), rate: rate > 0 ? String(rate) : "" })); }}><option value="">Select product</option>{filteredChatOrderProducts.map((product) => <option key={product.sku} value={product.sku}>{product.name} · {product.sku}</option>)}</select></label>
               <label>Quantity<input type="number" min={Math.max(1, Number(selectedChatOrderProduct?.minimumOrderQuantity || 1))} step="any" value={chatOrder.quantity} onChange={(event) => setChatOrder((current) => ({ ...current, quantity: event.target.value }))} /></label>
@@ -768,7 +779,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
               <label>Delivery<select value={chatOrder.deliveryMode} onChange={(event) => setChatOrder((current) => ({ ...current, deliveryMode: event.target.value as "Delivery" | "Self Collection" }))}><option>Delivery</option><option>Self Collection</option></select></label>
               <label className="wide-field">Note<input value={chatOrder.note} onChange={(event) => setChatOrder((current) => ({ ...current, note: event.target.value }))} placeholder="Optional rate/stock note" /></label>
               <p className="field-hint wide-field">Available items will be sent for retailer confirmation. Low-stock items will remain in the salesperson approval queue.</p>
-              <button className="primary-button wide-field" disabled={busy || !chatOrderLines.length}>{busy ? "Saving…" : chatOrderLines.some((line) => line.quantity > (snapshot.stockSummary.find((stock) => stock.warehouseId === chatOrder.warehouseId && stock.productSku === line.productSku)?.availableQuantity || 0)) ? "Create order for stock review" : "Send complete order for confirmation"}</button>
+              <button className="primary-button wide-field" disabled={busy || !chatOrderLines.length}>{busy ? "Saving…" : chatOrderLines.some((line) => line.quantity > (snapshot.stockSummary.find((stock) => stock.warehouseId === chatOrder.warehouseId && stock.productSku === line.productSku)?.availableQuantity || 0)) ? (activeChatDraftId ? "Update order for stock review" : "Create order for stock review") : (activeChatDraftId ? "Update & resend proforma" : "Send complete order for confirmation")}</button>
             </form> : null}
           </div>
         </> : <div className="wa-chat-placeholder"><span><SidebarVectorIcon view="WhatsApp" /></span><strong>Select a retailer chat</strong><p>Messages from WhatsApp will appear here automatically.</p></div>}

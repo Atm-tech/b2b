@@ -1365,7 +1365,18 @@ async function handleInboundMessage(message: JsonObject) {
       return;
     }
     if (buttonId.startsWith("wa-confirm:")) {
-      await finalizeDraft(buttonId.slice("wa-confirm:".length));
+      const draftId = buttonId.slice("wa-confirm:".length);
+      const loaded = await loadDraft(draftId);
+      const expectedMessageId = text(loaded.draft.confirmation_message_id);
+      if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) {
+        await sendText(from, "This order does not belong to your retailer account.");
+        return;
+      }
+      if (!expectedMessageId || (text(context?.id) && text(context?.id) !== expectedMessageId)) {
+        await sendText(from, "Yeh proforma update ho chuka hai. Kripya sabse naya proforma check karke confirm karein.");
+        return;
+      }
+      await finalizeDraft(draftId);
       return;
     }
     if (buttonId.startsWith("wa-proforma:")) {
@@ -2071,6 +2082,7 @@ export async function updateWhatsAppLiveChat(ticketId: string, input: { status?:
 }
 
 export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
+  draftId?: string;
   lines: Array<{ productSku: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
   warehouseId: string;
   paymentMode: PaymentMode;
@@ -2102,7 +2114,54 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
       note: compact(input.note || `Created from chat ${ticketId}`, 500)
     });
   }
-  const draftId = await createDraft(profile, "Live chat", "", draftLines, "", false);
+  let draftId = text(input.draftId);
+  const updatingExistingDraft = Boolean(draftId);
+  if (updatingExistingDraft) {
+    const existing = await loadDraft(draftId);
+    if (text(existing.draft.counterparty_id) !== profile.counterpartyId || text(existing.draft.source) !== "Live chat") {
+      throw new Error("This live-chat order cannot be updated from the selected conversation.");
+    }
+    if (["Processing", "Completed", "Denied"].includes(text(existing.draft.status))) {
+      throw new Error("This order is already closed. Start a new order instead.");
+    }
+    const replacementLines = draftLines.map((line) => ({
+      id: id("WADL"),
+      ...line,
+      gstRate: line.gstRate === "NA" ? 0 : line.gstRate || 0,
+      taxMode: line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive"
+    }));
+    await executeDatabaseQuery(
+      `WITH removed AS (
+         DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1 RETURNING id
+       )
+       INSERT INTO whatsapp_order_draft_lines (
+         id,draft_id,product_sku,requested_quantity,approved_quantity,rate,
+         cd_percent,tod_percent,gst_rate,tax_mode,note
+       )
+       SELECT item.id,$1,item.product_sku,item.quantity,item.quantity,item.rate,
+              item.cd_percent,item.tod_percent,item.gst_rate,item.tax_mode,item.note
+       FROM jsonb_to_recordset($2::jsonb) AS item(
+         id text,product_sku text,quantity double precision,rate double precision,
+         cd_percent double precision,tod_percent double precision,gst_rate double precision,tax_mode text,note text
+       )`,
+      [draftId, JSON.stringify(replacementLines.map((line) => ({
+        id: line.id, product_sku: line.productSku, quantity: line.quantity, rate: line.rate,
+        cd_percent: line.cdPercent || 0, tod_percent: line.todPercent || 0,
+        gst_rate: line.gstRate, tax_mode: line.taxMode, note: line.note || ""
+      })))]
+    );
+    await executeDatabaseQuery(
+      `UPDATE whatsapp_order_drafts
+       SET warehouse_id=$2,payment_mode=$3,cash_timing=$4,delivery_mode=$5,note=$6,
+           status='Needs Review',reviewed_at=NULL,confirmation_message_id=NULL
+       WHERE id=$1`,
+      [draftId, input.warehouseId || profile.defaultWarehouseId, input.paymentMode || profile.paymentMode,
+        input.cashTiming || null, input.deliveryMode || profile.deliveryMode,
+        compact(input.note || `Updated from live chat ${ticketId}`, 1000)]
+    );
+  } else {
+    draftId = await createDraft(profile, "Live chat", "", draftLines, "", false);
+  }
   const loaded = await loadDraft(draftId);
   const snapshot = await getSnapshot();
   const shortages = loaded.lines.filter((line) => {
@@ -2136,8 +2195,10 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
       }, currentUser);
     }
   } catch (error) {
-    await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [draftId]);
-    await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [draftId]);
+    if (!updatingExistingDraft) {
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [draftId]);
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [draftId]);
+    }
     throw error;
   }
   await executeDatabaseQuery(
