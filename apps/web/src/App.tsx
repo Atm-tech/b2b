@@ -58,12 +58,6 @@ const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportView
 const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
 const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
 const WhatsAppRetailerHub = lazy(() => import("./features/whatsapp/WhatsAppRetailerHub").then((module) => ({ default: module.WhatsAppRetailerHub })));
-const whatsAppPilotUsernames = new Set(
-  String(import.meta.env.VITE_WHATSAPP_PILOT_USERNAMES || "wa.sales")
-    .split(",")
-    .map((username) => username.trim().toLowerCase())
-    .filter(Boolean)
-);
 
 function WhatsAppComingSoon() {
   return <Panel title="WhatsApp Business" eyebrow="Retailer ordering">
@@ -733,7 +727,7 @@ function App() {
   const isAccountsUser = currentRoles.includes("Accounts");
   const isCollectionAgent = currentRoles.includes("Collection Agent");
   const isDataAnalyst = currentRoles.includes("Data Analyst");
-  const hasWhatsAppPilotAccess = whatsAppPilotUsernames.has("*") || whatsAppPilotUsernames.has(currentUser.username.trim().toLowerCase());
+  const hasWhatsAppPilotAccess = (currentUser.roles || [currentUser.role]).some((role) => role === "Admin" || role === "Sales");
   const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
   const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");

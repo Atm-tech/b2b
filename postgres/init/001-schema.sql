@@ -505,6 +505,24 @@ CREATE TABLE IF NOT EXISTS whatsapp_wishlist_requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS whatsapp_registration_requests (
+  id TEXT PRIMARY KEY,
+  phone_e164 TEXT NOT NULL,
+  shop_name TEXT NOT NULL DEFAULT '',
+  owner_name TEXT NOT NULL DEFAULT '',
+  gstin TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  delivery_address TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT 'AwaitingShopName',
+  status TEXT NOT NULL DEFAULT 'Draft',
+  submitted_at TIMESTAMPTZ,
+  approved_at TIMESTAMPTZ,
+  approved_by TEXT,
+  counterparty_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS whatsapp_messages (
   id TEXT PRIMARY KEY,
   wa_message_id TEXT UNIQUE,

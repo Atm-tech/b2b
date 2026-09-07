@@ -56,6 +56,19 @@ function configured() {
   return Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
 }
 
+function whatsappAdminUsernames() {
+  return new Set(
+    String(process.env.WHATSAPP_ADMIN_USERNAMES || process.env.WHATSAPP_PILOT_USERNAMES || "wa.sales")
+      .split(",")
+      .map((username) => username.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+export function isWhatsAppAdminUser(user: StaffUser) {
+  return user.roles.includes("Admin") || whatsappAdminUsernames().has(user.username.trim().toLowerCase());
+}
+
 async function recordMessage(input: {
   waMessageId?: string;
   direction: "Inbound" | "Outbound";
@@ -228,6 +241,15 @@ async function sendCatalog(phone: string) {
   }
 }
 
+async function sendOrderGuide(profile: RetailerProfile) {
+  await sendButtons(profile.phoneE164,
+    "Aapoorti order demo:\n1. Product name type karein (example: Lux)\n2. Suggested item select karein\n3. Apna special rate dekhein\n4. Quantity choose karein\n5. Aur items add karein\n6. Total dekhkar Finalize karein\n7. Salesperson stock/rate approve karega\n\nDemo shuru karein?",
+    [
+      { id: "wa-guide:start", title: "Start guided order" },
+      { id: "wa-cart:checkout", title: "View my cart" }
+    ], "OrderGuide", profile.counterpartyId);
+}
+
 async function sendTemplate(phone: string, name: string, parameters: string[], relatedEntityType?: string, relatedEntityId?: string) {
   return sendGraphMessage(phone, {
     type: "template",
@@ -267,6 +289,119 @@ function mapRetailer(row: Record<string, unknown>): RetailerProfile {
     optedInAt: row.opted_in_at ? String(row.opted_in_at) : undefined,
     active: Boolean(row.active)
   };
+}
+
+async function notifyWhatsAppAdmins(body: string, relatedEntityId: string) {
+  const admins = whatsappAdminUsernames();
+  const snapshot = await getSnapshot();
+  const recipients = snapshot.users.filter((user) => user.active && admins.has(user.username.trim().toLowerCase()) && user.mobileNumber);
+  await Promise.all(recipients.map((user) => sendText(user.mobileNumber, body, "Registration", relatedEntityId).catch(() => undefined)));
+}
+
+async function submitRegistration(request: Record<string, unknown>) {
+  const requestId = text(request.id);
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_registration_requests
+     SET status = 'Pending', stage = 'Submitted', submitted_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND status = 'Draft'`,
+    [requestId]
+  );
+  await sendText(text(request.phone_e164),
+    `Registration submitted ✅\nShop: ${text(request.shop_name)}\nOwner: ${text(request.owner_name)}\nGSTIN: ${text(request.gstin)}\nCity: ${text(request.city)}\n\nWhatsApp admin verification ke baad aapko salesperson map karega.`,
+    "Registration", requestId);
+  await notifyWhatsAppAdmins(
+    `New retailer registration: ${text(request.shop_name)} (${text(request.phone_e164)}), ${text(request.city)}, GSTIN ${text(request.gstin)}. App ke WhatsApp Registration queue mein salesperson map karein.`,
+    requestId);
+}
+
+async function handleRetailerRegistration(message: JsonObject, phone: string, messageId: string) {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT * FROM whatsapp_registration_requests
+     WHERE phone_e164 = $1 AND status IN ('Draft','Pending')
+     ORDER BY created_at DESC LIMIT 1`,
+    [phone]
+  );
+  let request = result.rows[0];
+  if (!request) {
+    const requestId = id("WAREG");
+    await executeDatabaseQuery(
+      `INSERT INTO whatsapp_registration_requests (id, phone_e164, stage, status, created_at, updated_at)
+       VALUES ($1,$2,'AwaitingShopName','Draft',NOW(),NOW())`,
+      [requestId, phone]
+    );
+    await sendText(phone, "Welcome to Aapoorti Wholesale registration. Step 1/5: Apni shop/business ka naam bhejein.", "Registration", requestId);
+    return;
+  }
+  if (text(request.status) === "Pending") {
+    await sendText(phone, "Aapki registration WhatsApp admin ke paas pending hai. Mapping complete hote hi yahin confirmation milega.", "Registration", text(request.id));
+    return;
+  }
+  const interactive = message.interactive as JsonObject | undefined;
+  const button = interactive?.button_reply as JsonObject | undefined;
+  const buttonId = text(button?.id);
+  const body = text((message.text as JsonObject | undefined)?.body);
+  const normalized = body.toLowerCase();
+  if (text(request.stage) === "AwaitingConfirmation") {
+    if (buttonId === "wa-register:confirm" || /^(yes|confirm|submit|haan|ok)$/i.test(normalized)) {
+      await submitRegistration(request);
+      return;
+    }
+    if (buttonId === "wa-register:restart" || /^(edit|restart|change)$/i.test(normalized)) {
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_registration_requests
+         SET shop_name='', owner_name='', gstin='', city='', delivery_address='', stage='AwaitingShopName', updated_at=NOW()
+         WHERE id=$1`, [text(request.id)]
+      );
+      await sendText(phone, "Registration restart ho gayi. Step 1/5: Shop/business ka naam bhejein.");
+      return;
+    }
+    await sendText(phone, "Details submit karne ke liye Confirm Registration button dabayein, ya Edit Details choose karein.");
+    return;
+  }
+  if (!body) {
+    await sendText(phone, "Please requested detail text mein bhejein.");
+    return;
+  }
+  const requestId = text(request.id);
+  if (text(request.stage) === "AwaitingShopName") {
+    if (body.length < 2) throw new Error("Valid shop name bhejein.");
+    await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET shop_name=$2,stage='AwaitingOwnerName',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 160)]);
+    await sendText(phone, "Step 2/5: Owner/contact person ka poora naam bhejein.");
+    return;
+  }
+  if (text(request.stage) === "AwaitingOwnerName") {
+    if (body.length < 2) throw new Error("Valid owner name bhejein.");
+    await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET owner_name=$2,stage='AwaitingGstin',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 160)]);
+    await sendText(phone, "Step 3/5: 15-character GSTIN bhejein. GST registered nahi hain to NA bhejein.");
+    return;
+  }
+  if (text(request.stage) === "AwaitingGstin") {
+    const gstin = body.replace(/\s+/g, "").toUpperCase();
+    if (gstin !== "NA" && !/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/.test(gstin)) {
+      await sendText(phone, "GSTIN format valid nahi hai. 15-character GSTIN dobara bhejein, ya GST registered nahi hain to NA bhejein.");
+      return;
+    }
+    await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET gstin=$2,stage='AwaitingCity',updated_at=NOW() WHERE id=$1`, [requestId, gstin]);
+    await sendText(phone, "Step 4/5: Apna city/area bhejein.");
+    return;
+  }
+  if (text(request.stage) === "AwaitingCity") {
+    await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET city=$2,stage='AwaitingAddress',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 120)]);
+    await sendText(phone, "Step 5/5: Complete delivery address bhejein.");
+    return;
+  }
+  if (text(request.stage) === "AwaitingAddress") {
+    await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET delivery_address=$2,stage='AwaitingConfirmation',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 300)]);
+    request = { ...request, delivery_address: compact(body, 300) };
+    const refreshed = await executeDatabaseQuery<Record<string, unknown>>(`SELECT * FROM whatsapp_registration_requests WHERE id=$1`, [requestId]);
+    request = refreshed.rows[0];
+    await sendButtons(phone,
+      `Please verify:\nShop: ${text(request.shop_name)}\nOwner: ${text(request.owner_name)}\nGSTIN: ${text(request.gstin)}\nCity: ${text(request.city)}\nAddress: ${text(request.delivery_address)}`,
+      [
+        { id: "wa-register:confirm", title: "Confirm Registration" },
+        { id: "wa-register:restart", title: "Edit Details" }
+      ], "Registration", requestId);
+  }
 }
 
 async function productPricing(counterpartyId: string, productSku: string) {
@@ -755,7 +890,11 @@ async function handleInboundMessage(message: JsonObject) {
   if (!saved) return;
   const profile = await getRetailerByPhone(from);
   if (!profile) {
-    await sendText(from, "Welcome to Aapoorti Wholesale. Your number is not mapped yet. Please share shop name, owner name, city and GSTIN; our team will activate ordering.");
+    try {
+      await handleRetailerRegistration(message, from, messageId);
+    } catch (error) {
+      await sendText(from, error instanceof Error ? error.message : "Registration detail process nahi ho payi. Dobara try karein.").catch(() => undefined);
+    }
     return;
   }
   try {
@@ -776,6 +915,10 @@ async function handleInboundMessage(message: JsonObject) {
         `${pricing.name}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nQuantity choose karein, ya sirf quantity type karein, jaise: 25`,
         quantities.map((quantity) => ({ id: `wa-qty:${encodeURIComponent(sku)}:${quantity}`, title: `Qty ${quantity}` })),
         "ProductSelection", sku);
+      return;
+    }
+    if (buttonId === "wa-guide:start") {
+      await sendProductPicker(from);
       return;
     }
     if (buttonId.startsWith("wa-qty:")) {
@@ -864,6 +1007,10 @@ async function handleInboundMessage(message: JsonObject) {
     if (contextId && /^\d+(?:\.\d+)?$/.test(normalized)) {
       const offer = await executeDatabaseQuery<{ id: string }>(`SELECT id FROM whatsapp_offers WHERE outbound_message_id = $1 AND counterparty_id = $2 AND status = 'Sent' ORDER BY created_at DESC LIMIT 1`, [contextId, profile.counterpartyId]);
       if (offer.rows[0]) { await acceptOffer(offer.rows[0].id, profile, messageId, numberValue(normalized)); return; }
+    }
+    if (/^(demo|demo order|how to order|help|guide)$/i.test(normalized)) {
+      await sendOrderGuide(profile);
+      return;
     }
     if (/^(hi|hello|hey|namaste|menu|catalog|catalogue|catlog)$/i.test(normalized)) {
       await sendCatalog(from);
@@ -1080,10 +1227,10 @@ export async function getWhatsAppMetaDiagnostics() {
 }
 
 export async function getWhatsAppDashboard(currentUser: StaffUser) {
-  const isAdmin = currentUser.roles.includes("Admin");
+  const isAdmin = isWhatsAppAdminUser(currentUser);
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, messages] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -1112,6 +1259,10 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
        ${isAdmin ? "" : "WHERE w.salesman_id = $1"}
        ORDER BY w.created_at DESC LIMIT 300`, params),
     executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT * FROM whatsapp_registration_requests
+       ${isAdmin ? "WHERE status = 'Pending'" : "WHERE FALSE"}
+       ORDER BY submitted_at DESC NULLS LAST, created_at DESC LIMIT 300`),
+    executeDatabaseQuery<Record<string, unknown>>(
       isAdmin
         ? `SELECT * FROM whatsapp_messages ORDER BY created_at DESC LIMIT 100`
         : `SELECT m.* FROM whatsapp_messages m
@@ -1121,28 +1272,32 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   ]);
   const visibleDraftIds = new Set(drafts.rows.map((row) => text(row.id)));
   return {
+    permissions: { whatsappAdmin: isAdmin },
     configuration: {
-      connected: configured(),
-      phoneNumberIdPresent: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
-      catalogIdPresent: Boolean(process.env.WHATSAPP_CATALOG_ID),
-      verifyTokenPresent: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
-      appSecretPresent: Boolean(process.env.WHATSAPP_APP_SECRET),
-      mode: configured() ? "Live" : "Simulation"
+      connected: isAdmin && configured(),
+      phoneNumberIdPresent: isAdmin && Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+      catalogIdPresent: isAdmin && Boolean(process.env.WHATSAPP_CATALOG_ID),
+      verifyTokenPresent: isAdmin && Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+      appSecretPresent: isAdmin && Boolean(process.env.WHATSAPP_APP_SECRET),
+      mode: isAdmin ? (configured() ? "Live" : "Simulation") : "Sales workspace"
     },
-    retailers: retailers.rows.map(mapRetailer),
-    whatsappOnlyRetailers: whatsappOnlyRetailers.rows.map((row) => ({
+    retailers: isAdmin ? retailers.rows.map(mapRetailer) : [],
+    whatsappOnlyRetailers: isAdmin ? whatsappOnlyRetailers.rows.map((row) => ({
       id: text(row.id),
       name: text(row.name),
       mobileNumber: text(row.mobile_number),
       city: text(row.city),
       contactPerson: text(row.contact_person)
-    })),
-    priceRules: rules.rows,
-    offers: offers.rows,
+    })) : [],
+    priceRules: isAdmin ? rules.rows : [],
+    offers: isAdmin ? offers.rows : [],
     drafts: drafts.rows.map((draft) => ({ ...draft, lines: lines.rows.filter((line) => visibleDraftIds.has(text(line.draft_id)) && text(line.draft_id) === text(draft.id)) })),
     wishlists: wishlists.rows,
-    messages: messages.rows,
-    catalogFeedUrl: `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
+    registrations: isAdmin ? registrations.rows : [],
+    messages: isAdmin ? messages.rows : [],
+    catalogFeedUrl: isAdmin
+      ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
+      : ""
   };
 }
 
@@ -1193,13 +1348,68 @@ export async function saveWhatsAppRetailer(input: {
   return getWhatsAppDashboard(currentUser);
 }
 
+export async function approveWhatsAppRegistration(registrationId: string, input: {
+  salesmanId: number;
+  defaultWarehouseId: string;
+  paymentMode: PaymentMode;
+  deliveryMode: "Delivery" | "Self Collection";
+}, currentUser: StaffUser) {
+  if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can approve and map registrations.");
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT * FROM whatsapp_registration_requests WHERE id=$1 AND status='Pending'`, [registrationId]
+  );
+  const registration = result.rows[0];
+  if (!registration) throw new Error("Pending retailer registration not found.");
+  const salesman = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT id, full_name FROM users WHERE id=$1 AND active=TRUE AND (role='Sales' OR roles_json ? 'Sales')`, [input.salesmanId]
+  );
+  if (!salesman.rows[0]) throw new Error("Select an active salesperson.");
+  const warehouse = await executeDatabaseQuery(`SELECT id FROM warehouses WHERE id=$1`, [input.defaultWarehouseId]);
+  if (!warehouse.rows[0]) throw new Error("Select a valid warehouse.");
+  const phone = text(registration.phone_e164);
+  const existingPhone = await executeDatabaseQuery(`SELECT counterparty_id FROM whatsapp_retailers WHERE phone_e164=$1`, [phone]);
+  if (existingPhone.rows[0]) throw new Error("This WhatsApp number is already mapped.");
+  const gstin = text(registration.gstin).toUpperCase();
+  const existingShop = gstin !== "NA"
+    ? await executeDatabaseQuery<{ id: string }>(`SELECT id FROM counterparties WHERE type='Shop' AND UPPER(gst_number)=$1 LIMIT 1`, [gstin])
+    : { rows: [] as Array<{ id: string }> };
+  const counterpartyId = existingShop.rows[0]?.id || `WA-SELF-${Date.now()}-${randomUUID().slice(0, 6)}`;
+  if (!existingShop.rows[0]) {
+    await executeDatabaseQuery(
+      `INSERT INTO counterparties (
+         id,type,name,gst_number,bank_name,bank_account_number,ifsc_code,mobile_number,
+         address,city,delivery_address,delivery_city,contact_person,channel_scope,created_by,created_at
+       ) VALUES ($1,'Shop',$2,$3,'N/A','N/A','N/A',$4,$5,$6,$5,$6,$7,'WhatsApp',$8,NOW())`,
+      [counterpartyId, text(registration.shop_name), gstin, phone, text(registration.delivery_address),
+        text(registration.city), text(registration.owner_name), currentUser.fullName]
+    );
+  }
+  await executeDatabaseQuery(
+    `INSERT INTO whatsapp_retailers (
+       counterparty_id,phone_e164,salesman_id,default_warehouse_id,billing_type,payment_mode,
+       delivery_mode,opted_in_at,active,created_by,created_at,updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),TRUE,$8,NOW(),NOW())`,
+    [counterpartyId, phone, input.salesmanId, input.defaultWarehouseId, gstin === "NA" ? "B2C" : "B2B",
+      input.paymentMode, input.deliveryMode, currentUser.fullName]
+  );
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_registration_requests
+     SET status='Approved',stage='Completed',approved_at=NOW(),approved_by=$2,counterparty_id=$3,updated_at=NOW()
+     WHERE id=$1`, [registrationId, currentUser.fullName, counterpartyId]
+  );
+  await sendText(phone,
+    `Registration approved ✅ Aapko ${text(salesman.rows[0].full_name)} ke saath map kar diya gaya hai. Guided order ke liye “demo” bhejein, ya product name type karein.`,
+    "Registration", registrationId);
+  return getWhatsAppDashboard(currentUser);
+}
+
 export async function saveWhatsAppPriceRule(input: {
   counterpartyId: string; productSku: string; specialRate: number; cdPercent: number;
   todPercent: number; minimumQuantity: number; validUntil?: string; active: boolean;
 }, currentUser: StaffUser) {
   if (!(input.specialRate > 0)) throw new Error("Special rate must be greater than zero.");
   if (input.cdPercent < 0 || input.todPercent < 0 || input.cdPercent + input.todPercent >= 100) throw new Error("Enter valid CD/TOD percentages.");
-  if (!currentUser.roles.includes("Admin")) {
+  if (!isWhatsAppAdminUser(currentUser)) {
     const assigned = await executeDatabaseQuery(`SELECT counterparty_id FROM whatsapp_retailers WHERE counterparty_id=$1 AND salesman_id=$2 AND active=TRUE`, [input.counterpartyId, currentUser.id]);
     if (!assigned.rowCount) throw new Error("You can only set rates for your mapped retailers.");
   }
@@ -1225,7 +1435,7 @@ export async function createWhatsAppOffer(input: {
     );
     if (!retailerResult.rows[0]) throw new Error(`Retailer ${counterpartyId} is not mapped to WhatsApp.`);
     const retailer = mapRetailer(retailerResult.rows[0]);
-    if (!currentUser.roles.includes("Admin") && retailer.salesmanId !== currentUser.id) throw new Error("You can only message your mapped retailers.");
+    if (!isWhatsAppAdminUser(currentUser) && retailer.salesmanId !== currentUser.id) throw new Error("You can only message your mapped retailers.");
     if (!retailer.optedInAt) throw new Error(`${retailer.retailerName} has no recorded WhatsApp opt-in.`);
     const offerId = id("WAO");
     await executeDatabaseQuery(
@@ -1259,7 +1469,7 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
   note?: string; lines: Array<{ id: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
 }, currentUser: StaffUser) {
   const loaded = await loadDraft(draftId);
-  if (!currentUser.roles.includes("Admin") && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
+  if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
   if (["Processing", "Completed"].includes(text(loaded.draft.status))) throw new Error("A confirmed order cannot be edited.");
   if (input.lines.length !== loaded.lines.length) throw new Error("Review every order line before sending confirmation.");
   const snapshot = await getSnapshot();
@@ -1288,6 +1498,26 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
   const sent = await sendButtons(text(finalDraft.draft.phone_e164), summary,
     [{ id: `wa-confirm:${draftId}`, title: "Confirm Order" }, { id: `wa-change:${draftId}`, title: "Request Change" }], "Draft", draftId);
   await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status='Awaiting Retailer',confirmation_message_id=$2 WHERE id=$1`, [draftId, sent.messageId]);
+  return getWhatsAppDashboard(currentUser);
+}
+
+export async function denyWhatsAppDraft(draftId: string, reason: string, currentUser: StaffUser) {
+  const loaded = await loadDraft(draftId);
+  if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) {
+    throw new Error("This order belongs to another salesperson.");
+  }
+  if (!["Needs Review", "Change Requested", "Staff Approved"].includes(text(loaded.draft.status))) {
+    throw new Error("This order can no longer be denied.");
+  }
+  const denialReason = compact(reason || "Unable to fulfil this request right now", 300);
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_order_drafts
+     SET status='Denied', reviewed_at=NOW(), note=CONCAT(note, CASE WHEN note='' THEN '' ELSE ' | ' END, $2)
+     WHERE id=$1`, [draftId, `Denied: ${denialReason}`]
+  );
+  await sendText(text(loaded.draft.phone_e164),
+    `Order request ${draftId} approve nahi ho payi. Reason: ${denialReason}. Unavailable item ko wishlist mein save karne ke liye uska naam bhejein.`,
+    "Draft", draftId);
   return getWhatsAppDashboard(currentUser);
 }
 

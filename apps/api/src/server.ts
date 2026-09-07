@@ -60,12 +60,15 @@ import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from ".
 import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
+  approveWhatsAppRegistration,
   configureWhatsAppCommerce,
   createWhatsAppOffer,
+  denyWhatsAppDraft,
   getWhatsAppCatalogFeed,
   getWhatsAppDashboard,
   getWhatsAppMetaDiagnostics,
   handleWhatsAppWebhook,
+  isWhatsAppAdminUser,
   reviewWhatsAppDraft,
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
@@ -1138,23 +1141,23 @@ app.get("/whatsapp/dashboard", async (req, res) => {
 });
 
 app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => {
-  await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  await requireWhatsAppAdmin(req);
   return subscribeWhatsAppBusinessAccount();
 }));
 
 app.post("/whatsapp/setup/catalog", async (req, res) => wrap(res, async () => {
-  await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  await requireWhatsAppAdmin(req);
   return configureWhatsAppCommerce();
 }));
 
 app.post("/whatsapp/setup/test-retailers", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppAdmin(req);
   return seedWhatsAppTestRetailers(currentUser);
 }));
 
 app.get("/whatsapp/setup/status", async (req, res) => {
   try {
-    await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+    await requireWhatsAppAdmin(req);
     res.json(await getWhatsAppMetaDiagnostics());
   } catch (error) {
     res.status(400).json({ message: error instanceof Error ? error.message : "WhatsApp diagnostics failed." });
@@ -1162,9 +1165,8 @@ app.get("/whatsapp/setup/status", async (req, res) => {
 });
 
 app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppAdmin(req);
   const salesmanId = requiredNumber(req.body?.salesmanId, "Salesperson");
-  if (!currentUser.roles.includes("Admin") && salesmanId !== currentUser.id) throw new Error("You can only map retailers to yourself.");
   return saveWhatsAppRetailer({
     counterpartyId: requiredString(req.body?.counterpartyId, "Retailer"),
     phone: requiredString(req.body?.phone, "WhatsApp number"),
@@ -1180,7 +1182,7 @@ app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppAdmin(req);
   return saveWhatsAppPriceRule({
     counterpartyId: requiredString(req.body?.counterpartyId, "Retailer"),
     productSku: requiredString(req.body?.productSku, "Product"),
@@ -1194,7 +1196,7 @@ app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  const currentUser = await requireWhatsAppAdmin(req);
   const lines = parseCartLines(req.body?.lines).map((line) => ({
     productSku: requiredString(line.productSku, "Product"),
     quantity: requiredNumber(line.quantity, "Quantity"),
@@ -1207,6 +1209,16 @@ app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
     expiresAt: requiredString(req.body?.expiresAt, "Expiry"),
     lines
+  }, currentUser);
+}));
+
+app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  return approveWhatsAppRegistration(req.params.id, {
+    salesmanId: requiredNumber(req.body?.salesmanId, "Salesperson"),
+    defaultWarehouseId: requiredString(req.body?.defaultWarehouseId, "Warehouse"),
+    paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
+    deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery"
   }, currentUser);
 }));
 
@@ -1227,6 +1239,11 @@ app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () =
     note: optionalString(req.body?.note),
     lines
   }, currentUser);
+}));
+
+app.post("/whatsapp/drafts/:id/deny", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return denyWhatsAppDraft(req.params.id, requiredString(req.body?.reason, "Denial reason"), currentUser);
 }));
 
 app.post("/whatsapp/drafts/:id/invoice", async (req, res) => wrap(res, async () => {
@@ -1373,15 +1390,12 @@ async function requireRole(req: express.Request, allowedRoles: UserRole[]) {
 
 async function requireWhatsAppPilot(req: express.Request, allowedRoles: UserRole[]) {
   const user = await requireRole(req, allowedRoles);
-  const pilotUsernames = new Set(
-    String(process.env.WHATSAPP_PILOT_USERNAMES || "wa.sales")
-      .split(",")
-      .map((username) => username.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  if (!pilotUsernames.has("*") && !pilotUsernames.has(user.username.trim().toLowerCase())) {
-    throw new Error("WhatsApp Business is coming soon for this account.");
-  }
+  return user;
+}
+
+async function requireWhatsAppAdmin(req: express.Request) {
+  const user = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  if (!isWhatsAppAdminUser(user)) throw new Error("Only the WhatsApp admin can perform this action.");
   return user;
 }
 

@@ -46,6 +46,7 @@ type WhatsAppDraft = {
   lines: DraftLine[];
 };
 type Dashboard = {
+  permissions: { whatsappAdmin: boolean };
   configuration: { connected: boolean; mode: string; phoneNumberIdPresent: boolean; catalogIdPresent: boolean; verifyTokenPresent: boolean; appSecretPresent: boolean };
   retailers: RetailerProfile[];
   whatsappOnlyRetailers: Array<{ id: string; name: string; mobileNumber: string; city: string; contactPerson: string }>;
@@ -53,6 +54,7 @@ type Dashboard = {
   offers: Array<Record<string, unknown>>;
   drafts: WhatsAppDraft[];
   wishlists: Array<Record<string, unknown>>;
+  registrations: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
   catalogFeedUrl: string;
 };
@@ -83,18 +85,20 @@ function pilotWarehouseId(snapshot: AppSnapshot) {
     || "";
 }
 
-function DraftReviewCard({ draft, snapshot, busy, onReview, onInvoice }: {
+function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice }: {
   draft: WhatsAppDraft;
   snapshot: AppSnapshot;
   busy: boolean;
   onReview: (draft: WhatsAppDraft, body: Record<string, unknown>) => Promise<void>;
-  onInvoice: (draft: WhatsAppDraft) => Promise<void>;
+  onDeny: (draft: WhatsAppDraft, reason: string) => Promise<void>;
+  onInvoice?: (draft: WhatsAppDraft) => Promise<void>;
 }) {
   const [warehouseId, setWarehouseId] = useState(() => draft.warehouse_id || pilotWarehouseId(snapshot));
   const [paymentMode, setPaymentMode] = useState<PaymentMode>(draft.payment_mode || "NEFT");
   const [cashTiming, setCashTiming] = useState(draft.cash_timing || "Later");
   const [deliveryMode, setDeliveryMode] = useState<"Delivery" | "Self Collection">(draft.delivery_mode || "Delivery");
   const [note, setNote] = useState(draft.note || "");
+  const [denialReason, setDenialReason] = useState("");
   const [lines, setLines] = useState(() => draft.lines.map((line) => ({
     id: line.id,
     quantity: String(line.approved_quantity),
@@ -134,8 +138,36 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onInvoice }: {
       <label>Delivery<select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as "Delivery" | "Self Collection")}><option>Delivery</option><option>Self Collection</option></select></label>
       <label className="wide-field">Internal note<input value={note} onChange={(event) => setNote(event.target.value)} /></label>
       <button className="primary-button" type="submit" disabled={busy}>{busy ? "Sending…" : "Approve & send retailer confirmation"}</button>
+      <label className="wide-field">Reason if denying<input value={denialReason} onChange={(event) => setDenialReason(event.target.value)} placeholder="Explain why this order cannot be fulfilled" /></label>
+      <button className="ghost-button" type="button" disabled={busy || !denialReason.trim()} onClick={() => void onDeny(draft, denialReason)}>Deny order</button>
     </form> : null}
-    {draft.status === "Completed" ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void onInvoice(draft)}>Send invoice summary</button> : null}
+    {draft.status === "Completed" && onInvoice ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void onInvoice(draft)}>Send invoice summary</button> : null}
+  </article>;
+}
+
+function RegistrationReviewCard({ registration, salespeople, snapshot, busy, onApprove }: {
+  registration: Record<string, unknown>;
+  salespeople: AppUser[];
+  snapshot: AppSnapshot;
+  busy: boolean;
+  onApprove: (body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [salesmanId, setSalesmanId] = useState(String(salespeople[0]?.id || ""));
+  const [warehouseId, setWarehouseId] = useState(pilotWarehouseId(snapshot));
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>("NEFT");
+  const [deliveryMode, setDeliveryMode] = useState<"Delivery" | "Self Collection">("Delivery");
+  const pending = registration.status === "Pending";
+  return <article className="panel">
+    <div className="section-heading"><div><span className="eyebrow">{formatDateTimeIst(String(registration.submitted_at || registration.created_at || ""))}</span><h3>{String(registration.shop_name || "New retailer")}</h3></div><span className={`status-pill ${pending ? "pending" : "success"}`}>{String(registration.status || "Pending")}</span></div>
+    <p className="helper-text">{String(registration.phone_e164 || "")} · {String(registration.owner_name || "")} · GSTIN {String(registration.gstin || "NA")} · {String(registration.city || "")}</p>
+    <p>{String(registration.delivery_address || "")}</p>
+    {pending ? <form className="form-grid" onSubmit={(event) => { event.preventDefault(); void onApprove({ salesmanId: Number(salesmanId), defaultWarehouseId: warehouseId, paymentMode, deliveryMode }); }}>
+      <label>Map salesperson<select required value={salesmanId} onChange={(event) => setSalesmanId(event.target.value)}><option value="">Select salesperson</option>{salespeople.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}</select></label>
+      <label>Default warehouse<select required value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
+      <label>Payment<select value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)}>{snapshot.settings.paymentMethods.filter((item) => item.active).map((item) => <option key={item.code}>{item.code}</option>)}</select></label>
+      <label>Delivery<select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as "Delivery" | "Self Collection")}><option>Delivery</option><option>Self Collection</option></select></label>
+      <button className="primary-button" disabled={busy || !salesmanId}>Approve & map retailer</button>
+    </form> : null}
   </article>;
 }
 
@@ -196,18 +228,24 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   }
 
   const mappedRetailers = dashboard?.retailers || [];
+  const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
   return <div className="stacked-sections">
     <section className="metric-grid">
-      <Panel title={dashboard?.configuration.mode || "Loading"} eyebrow="WhatsApp connection"><p>{dashboard?.configuration.connected ? "Meta Cloud API credentials detected." : "Safe simulation mode: messages are logged but not sent."}</p></Panel>
-      <Panel title={String(mappedRetailers.length)} eyebrow="Mapped retailers"><p>{mappedRetailers.filter((item) => item.optedInAt && item.active).length} active with recorded opt-in.</p></Panel>
+      {whatsappAdmin ? <Panel title={dashboard?.configuration.mode || "Loading"} eyebrow="WhatsApp connection"><p>{dashboard?.configuration.connected ? "Meta Cloud API credentials detected." : "Safe simulation mode: messages are logged but not sent."}</p></Panel> : null}
+      {whatsappAdmin ? <Panel title={String(mappedRetailers.length)} eyebrow="Mapped retailers"><p>{mappedRetailers.filter((item) => item.optedInAt && item.active).length} active with recorded opt-in.</p></Panel> : null}
       <Panel title={String((dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested"].includes(item.status)).length)} eyebrow="Needs review"><p>Orders waiting for a salesperson.</p></Panel>
       <Panel title={String((dashboard?.wishlists || []).filter((item) => item.status === "Pending").length)} eyebrow="Wishlist demand"><p>Unavailable products retailers want sourced.</p></Panel>
+    </section>
+
+    {whatsappAdmin ? <>
+    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div>
+      {(dashboard?.registrations || []).length ? dashboard!.registrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
     </section>
 
     <TwoCol left={<Panel title="Map retailer" eyebrow="WhatsApp identity and owner"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/retailers", { ...mapping, salesmanId: Number(mapping.salesmanId) }, "Retailer WhatsApp mapping saved."); }}>
       <label>Retailer<select value={mapping.counterpartyId} onChange={(event) => { const shop = shops.find((item) => item.id === event.target.value); setMapping((current) => ({ ...current, counterpartyId: event.target.value, phone: shop?.mobileNumber || current.phone, billingType: shop?.gstNumber ? "B2B" : "B2C" })); }}><option value="">Select retailer</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name} · {shop.city}</option>)}</select></label>
       <label>WhatsApp number<input value={mapping.phone} onChange={(event) => setMapping((current) => ({ ...current, phone: event.target.value }))} placeholder="919876543210" /></label>
-      <label>Assigned salesperson<select disabled={!isAdmin} value={mapping.salesmanId} onChange={(event) => setMapping((current) => ({ ...current, salesmanId: event.target.value }))}>{salespeople.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}</select></label>
+      <label>Assigned salesperson<select value={mapping.salesmanId} onChange={(event) => setMapping((current) => ({ ...current, salesmanId: event.target.value }))}>{salespeople.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}</select></label>
       <label>Warehouse<select value={mapping.defaultWarehouseId} onChange={(event) => setMapping((current) => ({ ...current, defaultWarehouseId: event.target.value }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
       <label>Billing<select value={mapping.billingType} onChange={(event) => setMapping((current) => ({ ...current, billingType: event.target.value }))}><option>B2B</option><option>B2C</option></select></label>
       <label>Payment<select value={mapping.paymentMode} onChange={(event) => setMapping((current) => ({ ...current, paymentMode: event.target.value }))}>{snapshot.settings.paymentMethods.filter((item) => item.active).map((item) => <option key={item.code}>{item.code}</option>)}</select></label>
@@ -238,13 +276,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </form></Panel>} />
 
     <Panel title="Catalogue feed" eyebrow="Meta Commerce Manager scheduled data source"><p className="helper-text">Use this URL as the scheduled catalogue feed. It contains product SKUs, names and base rates; private rates remain server-side.</p><div className="settings-line"><input readOnly value={dashboard?.catalogFeedUrl || "Loading…"} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.catalogFeedUrl || "")}>Copy URL</button></div></Panel>
+    </> : null}
 
     <Panel title="Retailer wishlist" eyebrow="Products to source—never rejected orders"><DataTable headers={["Time", "Retailer", "Requested product", "Quantity", "Salesperson", "Status"]} rows={(dashboard?.wishlists || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.retailer_name || ""), String(item.requested_product || ""), String(item.requested_quantity || ""), String(item.salesman_name || ""), String(item.status || "Pending")])} /></Panel>
 
     <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Retailer orders</span><h2>WhatsApp review queue</h2></div><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div>
-      {(dashboard?.drafts || []).length ? dashboard!.drafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async (item, body) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/review`, body, "Final summary sent to retailer.")} onInvoice={async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.")} />) : <Panel title="No WhatsApp orders yet" eyebrow="Queue clear"><p>Catalogue carts and retailer messages will appear here automatically.</p></Panel>}
+      {(dashboard?.drafts || []).length ? dashboard!.drafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async (item, body) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/review`, body, "Final summary sent to retailer.")} onDeny={async (item, reason) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/deny`, { reason }, "Order denied and retailer informed.")} onInvoice={whatsappAdmin ? async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.") : undefined} />) : <Panel title="No WhatsApp orders yet" eyebrow="Queue clear"><p>Catalogue carts and retailer messages will appear here automatically.</p></Panel>}
     </section>
 
-    <Panel title="Recent automation" eyebrow="Message audit trail"><DataTable headers={["Time", "Direction", "Phone", "Type", "Status", "Message", "Error", "Related"]} rows={(dashboard?.messages || []).slice(0, 50).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.direction || ""), String(item.phone_e164 || ""), String(item.message_type || ""), String(item.status || ""), messageAuditText(item), String(item.error_message || ""), [item.related_entity_type, item.related_entity_id].filter(Boolean).join(" ")])} /></Panel>
+    {whatsappAdmin ? <Panel title="Recent automation" eyebrow="Message audit trail"><DataTable headers={["Time", "Direction", "Phone", "Type", "Status", "Message", "Error", "Related"]} rows={(dashboard?.messages || []).slice(0, 50).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.direction || ""), String(item.phone_e164 || ""), String(item.message_type || ""), String(item.status || ""), messageAuditText(item), String(item.error_message || ""), [item.related_entity_type, item.related_entity_id].filter(Boolean).join(" ")])} /></Panel> : null}
   </div>;
 }
