@@ -6127,6 +6127,43 @@ html.login-scroll-locked #root {
 .mobile-tab-bar.app-dock,
 .simple-tab-bar.app-dock {
   width: min(calc(100% - 32px), 920px);
+  gap: 5px;
+  padding: 4px;
+  border-radius: 18px;
+}
+
+.app-dock .tab-button,
+.app-dock .purchaser-po-tab {
+  grid-template-rows: 22px auto;
+  height: 52px !important;
+  min-height: 52px !important;
+  max-height: 52px !important;
+  padding: 4px 7px;
+  border-radius: 14px;
+}
+
+.app-dock .dock-icon .sidebar-vector-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.assistant-launcher {
+  right: 14px;
+  bottom: 14px;
+  width: 52px;
+  height: 52px;
+  border-radius: 17px;
+}
+
+@media (min-width: 1181px) {
+  .mobile-tab-bar.app-dock,
+  .simple-tab-bar.app-dock {
+    bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .assistant-launcher {
+    bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .simple-shell {
@@ -6174,9 +6211,74 @@ button:disabled {
   contain-intrinsic-size: auto 320px;
 }
 
+/* Operational controls size to their label instead of stretching with their grid cell. */
+.form-grid > .primary-button,
+.form-grid > .ghost-button,
+.flow-action-row > .primary-button,
+.flow-action-row > .ghost-button,
+.selected-party-actions > .primary-button,
+.selected-party-actions > .ghost-button,
+.payment-card-actions > .primary-button,
+.payment-card-actions > .ghost-button,
+.payment-card-actions > a.primary-button,
+.payment-card-actions > a.ghost-button {
+  width: auto;
+  max-width: 100%;
+  min-height: 42px;
+  justify-self: start;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  line-height: 1.2;
+}
+
+.flow-action-row,
+.selected-party-actions,
+.payment-card-actions {
+  align-items: center;
+}
+
+.catalog-search-row > .ghost-button {
+  width: auto;
+  min-width: 44px;
+  max-width: 104px;
+  min-height: 44px;
+  padding: 8px 11px;
+}
+
+.catalog-search-row > .catalog-search-launch {
+  width: 44px;
+  padding-inline: 10px;
+}
+
+.pwa-install-card .primary-button,
+.order-qr-actions > .primary-button,
+.order-qr-actions > .ghost-button,
+.cart-sheet .cart-actions > .primary-button,
+.cart-sheet .cart-actions > .ghost-button,
+.cart-sheet .payment-card-actions > .primary-button,
+.cart-sheet .payment-card-actions > .ghost-button {
+  width: auto;
+  max-width: 100%;
+  justify-self: start;
+}
+
+.order-qr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 @media (max-width: 1180px) {
   .operations-home {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assistant-launcher {
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -6206,5 +6308,59 @@ button:disabled {
   .mobile-tab-bar.app-dock,
   .simple-tab-bar.app-dock {
     width: auto;
+  }
+
+  .flow-action-row,
+  .selected-party-actions,
+  .payment-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .form-grid > .primary-button,
+  .form-grid > .ghost-button,
+  .flow-action-row > .primary-button,
+  .flow-action-row > .ghost-button,
+  .selected-party-actions > .primary-button,
+  .selected-party-actions > .ghost-button,
+  .payment-card-actions > .primary-button,
+  .payment-card-actions > .ghost-button,
+  .payment-card-actions > a.primary-button,
+  .payment-card-actions > a.ghost-button {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  .order-control-surface > .payment-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .order-control-surface > .payment-card-actions > .ghost-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .inline-input-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .inline-input-action > .ghost-button {
+    width: auto;
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-dock .tab-button,
+  .app-dock .purchaser-po-tab {
+    height: 50px !important;
+    min-height: 50px !important;
+    max-height: 50px !important;
+    padding-inline: 3px;
   }
 }
