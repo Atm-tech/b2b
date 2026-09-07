@@ -281,6 +281,41 @@ async function sendCatalog(profile: RetailerProfile) {
   }
 }
 
+async function sendMainMenu(profile: RetailerProfile) {
+  return sendGraphMessage(profile.phoneE164, {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "Aapoorti Wholesale" },
+      body: { text: `Namaste ${profile.retailerName} 👋\nKya karna chahenge? Neeche Menu button dabakar option select karein.` },
+      footer: { text: compact(`Aapke salesperson: ${profile.salesmanName}`, 60) },
+      action: {
+        button: "Open Menu",
+        sections: [
+          {
+            title: "Order & catalogue",
+            rows: [
+              { id: "wa-menu:catalogue", title: "Browse catalogue", description: "Products, MRP, rate aur MOQ dekhein" },
+              { id: "wa-menu:order", title: "Start new order", description: "Product select karke order banayein" },
+              { id: "wa-menu:reorder", title: "Repeat last order", description: "Pichhla completed order dobara mangayein" },
+              { id: "wa-menu:wishlist", title: "Add to wishlist", description: "Unavailable product aur quantity batayein" }
+            ]
+          },
+          {
+            title: "Account & support",
+            rows: [
+              { id: "wa-menu:status", title: "Track my order", description: "Latest order ka live status" },
+              { id: "wa-menu:account", title: "Balance & ledger", description: "Outstanding aur recent account summary" },
+              { id: "wa-menu:service", title: "Return or damage", description: "Claim/service request banayein" },
+              { id: "wa-menu:agent", title: "Chat with salesperson", description: compact(`${profile.salesmanName} se seedhi baat karein`, 72) }
+            ]
+          }
+        ]
+      }
+    }
+  }, "MainMenu", profile.counterpartyId);
+}
+
 async function sendOrderGuide(profile: RetailerProfile) {
   await sendButtons(profile.phoneE164,
     "Aapoorti order demo:\n1. Product name type karein (example: Lux)\n2. Suggested item select karein\n3. Apna special rate dekhein\n4. Quantity choose karein\n5. Aur items add karein\n6. Total dekhkar Finalize karein\n7. Salesperson stock/rate approve karega\n\nDemo shuru karein?",
@@ -1141,6 +1176,65 @@ async function handleInboundMessage(message: JsonObject) {
     const buttonReply = interactive?.button_reply as JsonObject | undefined;
     const listReply = interactive?.list_reply as JsonObject | undefined;
     const buttonId = text(buttonReply?.id || listReply?.id);
+    if (buttonId === "wa-menu:catalogue") {
+      await sendCatalog(profile);
+      return;
+    }
+    if (buttonId === "wa-menu:order") {
+      await sendProductPicker(from, "", profile, messageId, "Naya order shuru karein.");
+      return;
+    }
+    if (buttonId === "wa-menu:status") {
+      await sendLatestOrderStatus(profile);
+      return;
+    }
+    if (buttonId === "wa-menu:reorder") {
+      await offerLatestReorder(profile);
+      return;
+    }
+    if (buttonId === "wa-menu:account") {
+      await sendAccountSummary(profile);
+      return;
+    }
+    if (buttonId === "wa-menu:wishlist") {
+      await executeDatabaseQuery(
+        `INSERT INTO whatsapp_cart_sessions (phone_e164,counterparty_id,selected_product_sku,stage,last_inbound_message_id,created_at,updated_at)
+         VALUES ($1,$2,NULL,'AwaitingWishlistProduct',$3,NOW(),NOW())
+         ON CONFLICT (phone_e164) DO UPDATE SET selected_product_sku=NULL,stage='AwaitingWishlistProduct',last_inbound_message_id=EXCLUDED.last_inbound_message_id,updated_at=NOW()`,
+        [profile.phoneE164, profile.counterpartyId, messageId]
+      );
+      await sendText(from, "Wishlist mein kaunsa product chahiye? Product ka naam type karein.");
+      return;
+    }
+    if (buttonId === "wa-menu:service") {
+      await sendButtons(from, "Service request select karein:", [
+        { id: "wa-service:return", title: "Return" },
+        { id: "wa-service:damage", title: "Damage" },
+        { id: "wa-menu:agent", title: "Talk to sales" }
+      ], "ServiceMenu", profile.counterpartyId);
+      return;
+    }
+    if (buttonId === "wa-service:return" || buttonId === "wa-service:damage") {
+      const kind = buttonId.endsWith("damage") ? "Damage" : "Return";
+      await executeDatabaseQuery(
+        `INSERT INTO whatsapp_cart_sessions (phone_e164,counterparty_id,selected_product_sku,stage,last_inbound_message_id,created_at,updated_at)
+         VALUES ($1,$2,$3,'AwaitingServiceDetails',$4,NOW(),NOW())
+         ON CONFLICT (phone_e164) DO UPDATE SET selected_product_sku=EXCLUDED.selected_product_sku,stage='AwaitingServiceDetails',last_inbound_message_id=EXCLUDED.last_inbound_message_id,updated_at=NOW()`,
+        [profile.phoneE164, profile.counterpartyId, kind, messageId]
+      );
+      await sendText(from, `${kind} request ke liye order number, product, quantity aur problem ek message mein bhejein.`);
+      return;
+    }
+    if (buttonId === "wa-menu:agent") {
+      const ticketId = await createServiceTicket(profile, { kind: "Live Chat", subject: "Retailer requested live salesperson" });
+      await executeDatabaseQuery(`UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`, [saved, ticketId]);
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_service_tickets SET unread_staff_count=unread_staff_count+1,last_message_preview='Live chat requested',last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
+        [ticketId]
+      );
+      await sendText(from, `${profile.salesmanName} ko live-chat request bhej di gayi hai. Aap apna message yahin type kar sakte hain.`, "ServiceTicket", ticketId);
+      return;
+    }
     if (buttonId.startsWith("wa-product:")) {
       const sku = decodeURIComponent(buttonId.slice("wa-product:".length));
       const pricing = await productPricing(profile.counterpartyId, sku);
@@ -1363,7 +1457,11 @@ async function handleInboundMessage(message: JsonObject) {
       await sendOrderGuide(profile);
       return;
     }
-    if (/^(hi|hello|hey|namaste|menu|catalog|catalogue|catlog)$/i.test(normalized)) {
+    if (/^(hi|hello|hey|namaste|menu)$/i.test(normalized)) {
+      await sendMainMenu(profile);
+      return;
+    }
+    if (/^(catalog|catalogue|catlog)$/i.test(normalized)) {
       await sendCatalog(profile);
       return;
     }
@@ -1388,6 +1486,10 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (body) {
       const cartSession = await loadCartSession(profile.phoneE164);
+      if (cartSession?.stage === "AwaitingWishlistProduct") {
+        await offerWishlist(profile, body, messageId);
+        return;
+      }
       if (cartSession?.stage === "AwaitingServiceDetails") {
         const kind = cartSession.selectedProductSku === "Damage" ? "Damage" : "Return";
         const linkedOrder = body.match(/(?:SO|WAD|WAO)-[A-Z0-9-]+/i)?.[0] || "";
