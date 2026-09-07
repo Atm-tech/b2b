@@ -76,6 +76,7 @@ import {
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
   seedWhatsAppTestRetailers,
+  sendWhatsAppBroadcast,
   sendWhatsAppInvoiceSummary,
   subscribeWhatsAppBusinessAccount,
   verifyWhatsAppSignature,
@@ -1242,6 +1243,15 @@ app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
     expiresAt: requiredString(req.body?.expiresAt, "Expiry"),
     lines
+  }, currentUser);
+}));
+
+app.post("/whatsapp/broadcasts", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  return sendWhatsAppBroadcast({
+    counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
+    message: requiredString(req.body?.message, "Message"),
+    welcomeOnly: req.body?.welcomeOnly !== false
   }, currentUser);
 }));
 

@@ -4967,6 +4967,8 @@ body.so-viewport-locked .sales-catalog textarea {
   background: rgba(248, 252, 253, 0.92);
 }
 
+.wa-retailer-checklist.is-tall { max-height: 430px; }
+
 .wa-retailer-checklist label {
   display: flex;
   align-items: center;
@@ -4985,6 +4987,14 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-retailer-checklist p { margin: 10px; color: #6b7f91; }
 .field-hint { display: block; margin-top: 6px; color: #6b7f91; font-size: 0.76rem; font-weight: 600; }
 
+.wa-broadcast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.wa-broadcast-actions > button { width: auto; min-height: 42px; padding: 9px 14px; }
+
 .wa-section-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4996,6 +5006,8 @@ body.so-viewport-locked .sales-catalog textarea {
 }
 
 .wa-section-tabs.is-compact { grid-template-columns: repeat(2, minmax(0, 180px)); }
+.wa-section-tabs.has-six,
+.wa-admin-dock.has-six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
 .wa-section-tabs button,
 .wa-admin-dock button {

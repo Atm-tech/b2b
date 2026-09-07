@@ -6,15 +6,31 @@ import { api, formatDateTimeIst } from "../../app/shared";
 import { SidebarVectorIcon } from "../../components/navigation";
 import { DataTable, Panel, TwoCol } from "../../components/ui";
 
-type WhatsAppAdminSection = "Home" | "Orders" | "Retailers" | "Catalogue" | "Offers";
+type WhatsAppAdminSection = "Home" | "Orders" | "Retailers" | "Catalogue" | "Offers" | "Broadcast";
 
 const whatsappAdminSections: Array<{ key: WhatsAppAdminSection; label: string; view: "Overview" | "SalesOrders" | "Parties" | "Products" | "WhatsApp" }> = [
   { key: "Home", label: "Home", view: "Overview" },
   { key: "Orders", label: "Orders", view: "SalesOrders" },
   { key: "Retailers", label: "Retailers", view: "Parties" },
   { key: "Catalogue", label: "Catalogue", view: "Products" },
-  { key: "Offers", label: "Offers", view: "WhatsApp" }
+  { key: "Offers", label: "Offers", view: "WhatsApp" },
+  { key: "Broadcast", label: "Broadcast", view: "WhatsApp" }
 ];
+
+const retailerWelcomeMessage = `Namaste {retailer} 👋
+
+Aapoorti Wholesale WhatsApp ordering mein aapka swagat hai.
+
+Yahan aap product dhoondh sakte hain, apna rate/MRP/discount dekh sakte hain, quantity select karke cart bana sakte hain aur order finalize kar sakte hain.
+
+Order kaise karein:
+1. Product ka naam type karein — jaise Lux
+2. Sahi item select karein
+3. Quantity bhejein
+4. Aur item chahiye to Add More choose karein
+5. Total check karke Finalize karein
+
+Demo ke liye *demo*, catalogue ke liye *catalogue* aur madad ke liye *help* bhejein.`;
 
 type RetailerProfile = {
   counterpartyId: string;
@@ -228,6 +244,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [offerRetailerSearch, setOfferRetailerSearch] = useState("");
   const [offerProductSearch, setOfferProductSearch] = useState("");
   const [offerDepartment, setOfferDepartment] = useState("");
+  const [broadcastSearch, setBroadcastSearch] = useState("");
+  const [broadcastRetailerIds, setBroadcastRetailerIds] = useState<string[]>([]);
+  const [broadcastMessage, setBroadcastMessage] = useState(retailerWelcomeMessage);
+  const [welcomeOnly, setWelcomeOnly] = useState(true);
+  const [broadcastReport, setBroadcastReport] = useState("");
   const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>("Home");
 
   const headers = { authorization: `Bearer ${sessionToken}` };
@@ -249,6 +270,26 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       if (next?.configuration) setDashboard(next);
       else await refresh();
       onMessage(success);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendBroadcast(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!window.confirm(`Send this WhatsApp message to ${broadcastRetailerIds.length} selected retailer${broadcastRetailerIds.length === 1 ? "" : "s"}?`)) return;
+    setBusy(true); onError(""); setBroadcastReport("");
+    try {
+      const { data } = await api.post<{ sent: number; skipped: number; failed: number; dashboard: Dashboard; results: Array<{ retailer: string; status: string; error?: string }> }>("/whatsapp/broadcasts", {
+        counterpartyIds: broadcastRetailerIds,
+        message: broadcastMessage,
+        welcomeOnly
+      }, { headers });
+      setDashboard(data.dashboard);
+      setBroadcastReport([`${data.sent} sent · ${data.skipped} skipped · ${data.failed} failed`, ...data.results.filter((item) => item.status !== "Sent").map((item) => `${item.retailer}: ${item.error || item.status}`)].join("\n"));
+      onMessage(data.failed ? `Broadcast completed with ${data.failed} failed message${data.failed === 1 ? "" : "s"}.` : `Broadcast sent to ${data.sent} retailer${data.sent === 1 ? "" : "s"}.`);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -310,6 +351,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const selectableOfferRetailerIds = filteredOfferRetailers.map((item) => item.counterpartyId);
   const allVisibleRetailersSelected = selectableOfferRetailerIds.length > 0
     && selectableOfferRetailerIds.every((counterpartyId) => offer.counterpartyIds.includes(counterpartyId));
+  const broadcastRetailers = useMemo(() => {
+    const query = normalizedSearch(broadcastSearch);
+    return activeMappedRetailers.filter((item) => item.optedInAt && (!query || [item.retailerName, item.phoneE164, item.salesmanName, item.defaultWarehouseId]
+      .some((value) => normalizedSearch(value).includes(query))));
+  }, [activeMappedRetailers, broadcastSearch]);
+  const visibleBroadcastRetailerIds = broadcastRetailers.map((item) => item.counterpartyId);
+  const allVisibleBroadcastRetailersSelected = visibleBroadcastRetailerIds.length > 0
+    && visibleBroadcastRetailerIds.every((counterpartyId) => broadcastRetailerIds.includes(counterpartyId));
   const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
   const activeDrafts = (dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested", "Staff Approved", "Awaiting Retailer", "Processing"].includes(item.status));
   const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
@@ -331,7 +380,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <button className="wa-sync-button" type="button" disabled={busy} onClick={() => void refresh()} aria-label="Refresh WhatsApp data"><span aria-hidden="true">↻</span> Refresh</button>
     </header>
 
-    <nav className={`${dedicatedWorkspace ? "wa-admin-dock" : "wa-section-tabs"}${availableSections.length < 5 ? " is-compact" : ""}`} aria-label="WhatsApp administration">
+    <nav className={`${dedicatedWorkspace ? "wa-admin-dock" : "wa-section-tabs"}${availableSections.length < 5 ? " is-compact" : ""}${availableSections.length === 6 ? " has-six" : ""}`} aria-label="WhatsApp administration">
       {availableSections.map((section) => {
         const badge = section.key === "Orders" ? activeDrafts.length : section.key === "Retailers" ? pendingRegistrations.length : section.key === "Offers" ? pendingWishlists.length : 0;
         return <button key={section.key} type="button" className={activeSection === section.key ? "active" : ""} onClick={() => setActiveSection(section.key)} aria-current={activeSection === section.key ? "page" : undefined}>
@@ -398,6 +447,19 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Expires<input type="datetime-local" value={offer.expiresAt} onChange={(event) => setOffer((current) => ({ ...current, expiresAt: event.target.value }))} /></label>
       <button className="primary-button" disabled={busy}>Send offer</button>
     </form></Panel>} /> : null}
+
+    {whatsappAdmin && activeSection === "Broadcast" ? <TwoCol left={<Panel title="Broadcast message" eyebrow="Welcome and announcements"><form className="form-grid" onSubmit={sendBroadcast}>
+      <label className="wide-field">Message<textarea rows={13} value={broadcastMessage} onChange={(event) => setBroadcastMessage(event.target.value)} maxLength={3500} placeholder="Write a clear Hinglish message" /></label>
+      <p className="field-hint wide-field">Use <strong>{"{retailer}"}</strong> where the retail outlet name should appear. {broadcastMessage.length}/3500 characters.</p>
+      <label className="checkbox-line"><input type="checkbox" checked={welcomeOnly} onChange={(event) => setWelcomeOnly(event.target.checked)} />First-time welcome only — skip retailers already welcomed</label>
+      <div className="wa-broadcast-actions wide-field"><button className="ghost-button" type="button" onClick={() => { setBroadcastMessage(retailerWelcomeMessage); setWelcomeOnly(true); }}>Reset welcome guide</button><button className="primary-button" disabled={busy || !broadcastRetailerIds.length || !broadcastMessage.trim()}>Review & send</button></div>
+      <p className="helper-text wide-field">WhatsApp allows a normal text broadcast only inside the retailer's active 24-hour chat window. Outside it, Meta requires an approved message template.</p>
+      {broadcastReport ? <pre className="import-report wide-field">{broadcastReport}</pre> : null}
+    </form></Panel>} right={<Panel title="Choose recipients" eyebrow="Active retailers with consent"><div className="form-grid">
+      <label className="wide-field">Search retailers<input type="search" value={broadcastSearch} onChange={(event) => setBroadcastSearch(event.target.value)} placeholder="Name, number or salesperson" /></label>
+      <label className="checkbox-line"><input type="checkbox" checked={allVisibleBroadcastRetailersSelected} disabled={!visibleBroadcastRetailerIds.length} onChange={(event) => setBroadcastRetailerIds((current) => { const visibleIds = new Set(visibleBroadcastRetailerIds); return event.target.checked ? Array.from(new Set([...current, ...visibleBroadcastRetailerIds])) : current.filter((id) => !visibleIds.has(id)); })} />Select all matching retailers ({broadcastRetailers.length})</label>
+      <fieldset className="wa-retailer-picker wide-field"><legend>Retailers</legend><div className="wa-retailer-checklist is-tall">{broadcastRetailers.length ? broadcastRetailers.map((item) => <label key={item.counterpartyId}><input type="checkbox" checked={broadcastRetailerIds.includes(item.counterpartyId)} onChange={(event) => setBroadcastRetailerIds((current) => event.target.checked ? Array.from(new Set([...current, item.counterpartyId])) : current.filter((id) => id !== item.counterpartyId))} /><span><strong>{item.retailerName}</strong><small>{item.phoneE164} · {item.salesmanName}</small></span></label>) : <p>No opted-in retailers match this search.</p>}</div><span className="field-hint">{broadcastRetailerIds.length} retailer{broadcastRetailerIds.length === 1 ? "" : "s"} selected</span></fieldset>
+    </div></Panel>} /> : null}
 
     {whatsappAdmin && activeSection === "Catalogue" ? <Panel title="Product catalogue" eyebrow="Retailer-visible range">
       <p className="helper-text">{dashboard?.catalogImageStats.selected || 0} selected · {dashboard?.catalogImageStats.eligible || 0} priced · {dashboard?.catalogImageStats.withImage || 0} with optimized images. Private retailer rates stay hidden.</p>

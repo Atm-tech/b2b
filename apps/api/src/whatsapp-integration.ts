@@ -1548,6 +1548,64 @@ export async function createWhatsAppOffer(input: {
   return { results, dashboard: await getWhatsAppDashboard(currentUser) };
 }
 
+export async function sendWhatsAppBroadcast(input: {
+  counterpartyIds: string[];
+  message: string;
+  welcomeOnly: boolean;
+}, currentUser: StaffUser) {
+  if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can send broadcasts.");
+  const counterpartyIds = Array.from(new Set(input.counterpartyIds)).slice(0, 500);
+  const message = input.message.trim();
+  if (!counterpartyIds.length) throw new Error("Select at least one retailer.");
+  if (!message) throw new Error("Broadcast message cannot be empty.");
+  if (message.length > 3500) throw new Error("Broadcast message must be 3,500 characters or less.");
+
+  const results: Array<{ counterpartyId: string; retailer: string; status: "Sent" | "Skipped" | "Failed"; error?: string }> = [];
+  for (const counterpartyId of counterpartyIds) {
+    const retailerResult = await executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name
+       FROM whatsapp_retailers wr
+       JOIN counterparties c ON c.id=wr.counterparty_id
+       JOIN users u ON u.id=wr.salesman_id
+       WHERE wr.counterparty_id=$1 AND wr.active=TRUE`, [counterpartyId]
+    );
+    if (!retailerResult.rows[0]) {
+      results.push({ counterpartyId, retailer: counterpartyId, status: "Failed", error: "Retailer is not actively mapped." });
+      continue;
+    }
+    const retailer = mapRetailer(retailerResult.rows[0]);
+    if (!retailer.optedInAt) {
+      results.push({ counterpartyId, retailer: retailer.retailerName, status: "Skipped", error: "WhatsApp consent is not recorded." });
+      continue;
+    }
+    if (input.welcomeOnly) {
+      const alreadyWelcomed = await executeDatabaseQuery(
+        `SELECT id FROM whatsapp_messages
+         WHERE related_entity_type='BroadcastWelcome' AND related_entity_id=$1 AND status<>'Failed'
+         LIMIT 1`, [counterpartyId]
+      );
+      if (alreadyWelcomed.rowCount) {
+        results.push({ counterpartyId, retailer: retailer.retailerName, status: "Skipped", error: "Welcome already sent." });
+        continue;
+      }
+    }
+    try {
+      const personalizedMessage = message.replaceAll("{retailer}", retailer.retailerName);
+      await sendText(retailer.phoneE164, personalizedMessage, input.welcomeOnly ? "BroadcastWelcome" : "Broadcast", counterpartyId);
+      results.push({ counterpartyId, retailer: retailer.retailerName, status: "Sent" });
+    } catch (error) {
+      results.push({ counterpartyId, retailer: retailer.retailerName, status: "Failed", error: error instanceof Error ? error.message : "WhatsApp send failed." });
+    }
+  }
+  return {
+    sent: results.filter((item) => item.status === "Sent").length,
+    skipped: results.filter((item) => item.status === "Skipped").length,
+    failed: results.filter((item) => item.status === "Failed").length,
+    results,
+    dashboard: await getWhatsAppDashboard(currentUser)
+  };
+}
+
 export async function reviewWhatsAppDraft(draftId: string, input: {
   warehouseId: string; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Delivery" | "Self Collection";
   note?: string; lines: Array<{ id: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
