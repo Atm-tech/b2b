@@ -209,7 +209,9 @@ async function syncWhatsAppCatalogMinimums() {
   const names = whatsappCatalogMinimums.map((item) => item.articleName);
   const quantities = whatsappCatalogMinimums.map((item) => item.minimumOrderQuantity);
   const aliases = whatsappCatalogMinimums.map((item) => whatsappCatalogProductAliases[item.articleName] || "");
-  await pool.query("UPDATE products SET whatsapp_catalog_enabled = FALSE");
+  // The workbook remains the source of truth for the production catalogue, but
+  // dedicated WhatsApp test products must survive startup/deploy reconciliation.
+  await pool.query("UPDATE products SET whatsapp_catalog_enabled = FALSE WHERE sku NOT LIKE 'WA-TEST-%'");
   const updated = await pool.query<{ sku: string }>(
     `WITH source AS (
        SELECT article_name, minimum_quantity, product_sku
