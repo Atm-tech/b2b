@@ -1316,6 +1316,7 @@ function App() {
               </div>
               <div className="profile-action-list">
                 {!forceSimpleMode ? <button className="ghost-button" type="button" onClick={() => { const nextMode = !effectiveSimpleMode; const nextView = getVisibleViewsForMode(currentUser, nextMode)[0]; setSimpleMode(nextMode); if (nextView) navigateToView(nextView); setProfileOpen(false); }}>{effectiveSimpleMode ? "Show Advanced" : "Show Simple"}</button> : null}
+                {isAdminUser ? <button className="ghost-button" type="button" aria-current={activeView === "VoiceTrainer" ? "page" : undefined} onClick={() => { navigateToView("VoiceTrainer"); setProfileOpen(false); }}>Voice Training</button> : null}
                 <button className="ghost-button" type="button" onClick={() => void doLogout()}>Logout</button>
               </div>
             </div> : null}
@@ -1341,7 +1342,7 @@ function App() {
         {!effectiveSimpleMode ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
-            {safeVisibleViews.map((view) => (
+            {safeVisibleViews.filter((view) => view !== "VoiceTrainer").map((view) => (
               <button key={view} type="button" title={displayLabel(view, currentUser)} className={view === activeView ? "tab-button active" : "tab-button"} onClick={() => navigateToView(view)}>
                 <span>{sidebarCollapsed ? <SidebarVectorIcon view={view} /> : displayLabel(view, currentUser)}</span><small>{view}</small>
               </button>
