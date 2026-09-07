@@ -69,6 +69,10 @@ function WhatsAppComingSoon() {
   </Panel>;
 }
 
+function isDedicatedWhatsAppUser(user: AppUser | null) {
+  return user?.username.trim().toLowerCase() === "wa.sales";
+}
+
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -293,7 +297,7 @@ function App() {
       if (workspace.salesForm) setSalesForm(workspace.salesForm as typeof salesForm);
       if (typeof workspace.purchaseUpdateOrderId === "string") setPurchaseUpdateOrderId(workspace.purchaseUpdateOrderId);
       if (typeof workspace.salesUpdateOrderId === "string") setSalesUpdateOrderId(workspace.salesUpdateOrderId);
-      setActiveView(storedView && visible.includes(storedView) ? storedView : visible[0] || "Overview");
+      setActiveView(isDedicatedWhatsAppUser(user) ? "WhatsApp" : storedView && visible.includes(storedView) ? storedView : visible[0] || "Overview");
       void refresh(user).finally(() => setBootstrapping(false));
     } catch {
       clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
@@ -302,6 +306,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isDedicatedWhatsAppUser(currentUser) && activeView !== "WhatsApp") {
+      setActiveView("WhatsApp");
+      return;
+    }
     const nextViews = currentUser ? getVisibleViewsForMode(currentUser, simpleMode) : [];
     if (nextViews.length > 0 && !nextViews.includes(activeView)) {
       setActiveView(nextViews[0]);
@@ -543,7 +551,7 @@ function App() {
       const nextUser = data.user as AppUser;
       const nextSimpleMode = preferredSimpleMode(nextUser);
       setSimpleMode(nextSimpleMode);
-      const nextView = getVisibleViewsForMode(nextUser, nextSimpleMode)[0] || "Overview";
+      const nextView = isDedicatedWhatsAppUser(nextUser) ? "WhatsApp" : getVisibleViewsForMode(nextUser, nextSimpleMode)[0] || "Overview";
       setActiveView(nextView);
       window.localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
       window.localStorage.setItem(TOKEN_KEY, String(data.token || ""));
@@ -758,6 +766,7 @@ function App() {
   const isAccountsUser = currentRoles.includes("Accounts");
   const isCollectionAgent = currentRoles.includes("Collection Agent");
   const isDataAnalyst = currentRoles.includes("Data Analyst");
+  const isWhatsAppWorkspaceUser = isDedicatedWhatsAppUser(currentUser);
   const hasWhatsAppPilotAccess = (currentUser.roles || [currentUser.role]).some((role) => role === "Admin" || role === "Sales");
   const isPurchaserOnly = currentRoles.includes("Purchaser") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Sales");
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
@@ -767,7 +776,7 @@ function App() {
   const forceSimpleMode = shouldForceSimpleMode(currentUser);
   const effectiveSimpleMode = forceSimpleMode ? true : simpleMode;
   const visibleViews = getVisibleViewsForMode(currentUser, effectiveSimpleMode);
-  const safeVisibleViews: ViewKey[] = visibleViews.length > 0 ? visibleViews : ["Overview"];
+  const safeVisibleViews: ViewKey[] = isWhatsAppWorkspaceUser ? ["WhatsApp"] : visibleViews.length > 0 ? visibleViews : ["Overview"];
   const purchaserBottomViews: ViewKey[] = ["Overview", "Purchase", "Purchases"];
   const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
   const collectionBottomViews: ViewKey[] = ["Overview", "Payments", "SalesOrders"];
@@ -1310,19 +1319,19 @@ function App() {
   );
 
   return (
-    <main className={effectiveSimpleMode ? "app-shell simple-shell" : "app-shell"}>
+    <main className={`${effectiveSimpleMode ? "app-shell simple-shell" : "app-shell"}${isWhatsAppWorkspaceUser ? " whatsapp-admin-app" : ""}`}>
       <header className="app-topbar">
         <div className="app-topbar-copy">
-          <span className="small-label">B CONNECT</span>
-          <strong>{displayLabel(activeView, currentUser)}</strong>
-          <p>{effectiveSimpleMode ? "Quick operations mode." : "Detailed operations mode."}</p>
+          <span className="small-label">{isWhatsAppWorkspaceUser ? "AAPOORTI WHOLESALE" : "B CONNECT"}</span>
+          <strong>{isWhatsAppWorkspaceUser ? "WhatsApp Control" : displayLabel(activeView, currentUser)}</strong>
+          <p>{isWhatsAppWorkspaceUser ? "Retailer ordering desk" : effectiveSimpleMode ? "Quick operations mode." : "Detailed operations mode."}</p>
         </div>
         <div className="topbar-logo-orb app-topbar-logo">
           <img src={appLogo} alt="Aapoorti" className="topbar-logo-image" />
         </div>
         <div className="hero-side hero-top-actions">
           {(installPrompt || (iosBrowser && !isInstalled)) ? <button className="install-app-button" type="button" onClick={() => void installApp()}>Install App</button> : null}
-          {!effectiveSimpleMode ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
+          {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <button className="ghost-button sidebar-toggle" type="button" onClick={() => setSidebarCollapsed((current) => !current)}>
             {sidebarCollapsed ? "Expand Menu" : "Collapse Menu"}
           </button> : null}
           <div className="profile-menu">
@@ -1352,7 +1361,7 @@ function App() {
       {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
       {showIosInstallGuide ? <IosInstallGuide browserName={iosBrowser} onClose={() => setShowIosInstallGuide(false)} /> : null}
 
-      {!effectiveSimpleMode ? <section className="hero panel hero-compact">
+      {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <section className="hero panel hero-compact">
         <div>
           <span className="eyebrow">{(currentUser.roles && currentUser.roles.length > 0 ? currentUser.roles : [currentUser.role]).join(" / ")}</span>
           <h1>B CONNECT</h1>
@@ -1364,7 +1373,7 @@ function App() {
       {error ? <p className="message error">{error}</p> : null}
 
       <section className={effectiveSimpleMode ? "workspace-shell simple-workspace" : `workspace-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-        {!effectiveSimpleMode ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>
+        {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>
           <div className="sidebar-head"><span className="eyebrow">Role Menu</span><h2>{currentUser.fullName}</h2></div>
           <nav className="side-nav">
             {safeVisibleViews.filter((view) => view !== "VoiceTrainer").map((view) => (
@@ -1505,7 +1514,7 @@ function App() {
             onSubmit={(body) => post("/sales-returns", body, "Sales return saved.")}
           /> : null}
           {activeView === "WhatsApp" ? (hasWhatsAppPilotAccess
-            ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} />
+            ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} dedicatedWorkspace={isWhatsAppWorkspaceUser} />
             : <WhatsAppComingSoon />) : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
@@ -1654,15 +1663,15 @@ function App() {
       </section>
       {scanOverlayOpen ? <QrScanOverlay onClose={() => setScanOverlayOpen(false)} onScan={handleQrScan} /> : null}
       {orderStatusTarget ? <OrderStatusOverlay snapshot={snapshot} currentUser={currentUser} target={orderStatusTarget} onClose={() => setOrderStatusTarget(null)} onOpenAction={(target) => openOrderStatus(target, true)} /> : null}
-      <AssistantPanel
+      {!isWhatsAppWorkspaceUser ? <AssistantPanel
         snapshot={snapshot}
         currentUser={currentUser}
         sessionToken={sessionToken}
         onSnapshot={setSnapshot}
         onMessage={setMessage}
         onError={setError}
-      />
-      {isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar app-dock" : "mobile-tab-bar delivery-manager-tab-bar app-dock"} aria-label="Primary navigation">
+      /> : null}
+      {isWhatsAppWorkspaceUser ? null : isDeliveryManager ? <nav className={effectiveSimpleMode ? "mobile-tab-bar simple-tab-bar delivery-manager-tab-bar app-dock" : "mobile-tab-bar delivery-manager-tab-bar app-dock"} aria-label="Primary navigation">
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "home" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("home"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Overview" /></span><span className="dock-label">Home</span>{deliveryManagerHomePendingCount > 0 ? <span className="dock-badge">{deliveryManagerHomePendingCount}</span> : null}</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "in" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("in"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Purchase" /></span><span className="dock-label">Inbound</span>{deliveryManagerInboundPendingCount > 0 ? <span className="dock-badge">{deliveryManagerInboundPendingCount}</span> : null}</button>
         <button type="button" className={activeView === "Delivery" && deliveryManagerScreen === "out" ? "tab-button active" : "tab-button"} onClick={() => { setDeliveryManagerScreen("out"); setActiveView("Delivery"); }}><span className="dock-icon"><SidebarVectorIcon view="Sales" /></span><span className="dock-label">Dispatch</span>{deliveryManagerDispatchPendingCount > 0 ? <span className="dock-badge">{deliveryManagerDispatchPendingCount}</span> : null}</button>

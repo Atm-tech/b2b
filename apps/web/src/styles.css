@@ -4834,6 +4834,244 @@ body.so-viewport-locked .sales-catalog textarea {
   .wa-catalog-grid { grid-template-columns: 1fr; max-height: 620px; }
 }
 
+/* Dedicated WhatsApp administration: one calm task surface with its own navigation. */
+.whatsapp-admin-app {
+  min-height: 100dvh;
+  padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(circle at 84% -8%, rgba(37, 211, 102, 0.16), transparent 30%),
+    linear-gradient(180deg, #f2faf7 0, #f7fafc 34%, #edf4f7 100%);
+}
+
+.whatsapp-admin-app .app-topbar {
+  border-color: rgba(13, 118, 96, 0.14);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 30px rgba(24, 74, 66, 0.08);
+}
+
+.whatsapp-admin-app .workspace-shell,
+.whatsapp-admin-app .content-shell {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+}
+
+.wa-admin-workspace {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.wa-admin-workspace.is-dedicated {
+  padding-bottom: 18px;
+}
+
+.wa-admin-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 6px 4px 2px;
+}
+
+.wa-admin-head h1 {
+  margin: 5px 0 2px;
+  color: #16352f;
+  font-size: clamp(1.7rem, 3vw, 2.45rem);
+  line-height: 1.08;
+}
+
+.wa-admin-head p {
+  margin: 0;
+  color: #617772;
+  font-size: 0.96rem;
+}
+
+.wa-sync-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid #cfe2dc;
+  border-radius: 14px;
+  background: #fff;
+  color: #176b5a;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.wa-sync-button span { font-size: 1.2rem; }
+
+.wa-section-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #d8e7e2;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.wa-section-tabs.is-compact { grid-template-columns: repeat(2, minmax(0, 180px)); }
+
+.wa-section-tabs button,
+.wa-admin-dock button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: #637874;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wa-section-tabs button.active,
+.wa-admin-dock button.active {
+  background: linear-gradient(145deg, #087b68, #0b9b8e);
+  color: #fff;
+  box-shadow: 0 9px 22px rgba(8, 123, 104, 0.24);
+}
+
+.wa-section-tabs button > span,
+.wa-admin-dock button > span { display: grid; place-items: center; }
+.wa-section-tabs svg,
+.wa-admin-dock svg { width: 22px; height: 22px; }
+.wa-section-tabs strong,
+.wa-admin-dock strong { max-width: 100%; overflow: hidden; font-size: 0.74rem; text-overflow: ellipsis; white-space: nowrap; }
+.wa-section-tabs em,
+.wa-admin-dock em {
+  position: absolute;
+  top: 4px;
+  right: 10%;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.wa-admin-dock {
+  position: fixed;
+  z-index: 80;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  width: min(calc(100vw - 24px), 760px);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  padding: 7px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(141, 172, 164, 0.28);
+  border-radius: 22px;
+  background: rgba(252, 255, 254, 0.94);
+  box-shadow: 0 18px 48px rgba(18, 66, 58, 0.22);
+  backdrop-filter: blur(22px) saturate(155%);
+  -webkit-backdrop-filter: blur(22px) saturate(155%);
+}
+
+.wa-command-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.wa-command-grid > button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "icon label" "icon value" "icon note";
+  align-items: center;
+  gap: 2px 13px;
+  min-width: 0;
+  min-height: 126px;
+  padding: 18px;
+  border: 1px solid rgba(199, 220, 214, 0.78);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #173b34;
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(24, 74, 66, 0.07);
+  cursor: pointer;
+}
+
+.wa-command-grid > button:hover { transform: translateY(-2px); box-shadow: 0 15px 34px rgba(24, 74, 66, 0.12); }
+.wa-command-grid small { grid-area: label; color: #627873; font-size: 0.78rem; font-weight: 750; }
+.wa-command-grid strong { grid-area: value; font-size: 1.9rem; line-height: 1; }
+.wa-command-grid em { grid-area: note; overflow: hidden; color: #78908a; font-size: 0.72rem; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.wa-command-icon { grid-area: icon; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 16px; color: #fff; }
+.wa-command-icon svg { width: 27px; height: 27px; }
+.wa-command-icon.orders { background: linear-gradient(145deg, #11826d, #0ba392); }
+.wa-command-icon.retailers { background: linear-gradient(145deg, #2775be, #479be1); }
+.wa-command-icon.wishlist { background: linear-gradient(145deg, #c57518, #eba832); }
+.wa-command-icon.catalogue { background: linear-gradient(145deg, #7857b8, #a77de5); }
+
+.wa-home-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid #d8e8e3;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.wa-home-strip > div { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.wa-home-strip p { display: grid; gap: 2px; margin: 0; }
+.wa-home-strip strong { color: #264a43; font-size: 0.86rem; }
+.wa-home-strip small { color: #72857f; font-size: 0.74rem; }
+.wa-live-dot { width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%; background: #e98338; box-shadow: 0 0 0 5px rgba(233, 131, 56, 0.12); }
+.wa-live-dot.connected { background: #16a66b; box-shadow: 0 0 0 5px rgba(22, 166, 107, 0.12); }
+
+.wa-queue-count { padding: 7px 11px; border-radius: 999px; background: #e9f5f1; color: #176d5d; font-size: 0.78rem; font-weight: 850; }
+.wa-empty-state { min-height: 260px; display: grid; place-items: center; align-content: center; gap: 8px; padding: 30px; border: 1px dashed #bfd7d0; border-radius: 22px; background: rgba(255,255,255,.72); text-align: center; }
+.wa-empty-state > span { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 18px; background: #e5f5ef; color: #15806b; }
+.wa-empty-state svg { width: 30px; height: 30px; }
+.wa-empty-state strong { color: #1b453d; font-size: 1.1rem; }
+.wa-empty-state p { margin: 0; color: #71857f; }
+
+.wa-catalog-tools,
+.wa-order-history { margin-top: 18px; border: 1px solid #d9e7e3; border-radius: 16px; background: #f8fbfa; overflow: hidden; }
+.wa-catalog-tools summary,
+.wa-order-history summary { padding: 14px 16px; color: #315a51; font-size: 0.86rem; font-weight: 850; cursor: pointer; }
+.wa-catalog-tools-body,
+.wa-order-history > .stacked-sections { padding: 4px 16px 16px; }
+
+@media (max-width: 900px) {
+  .wa-command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .whatsapp-admin-app { padding-inline: 10px; }
+  .wa-admin-head { align-items: center; }
+  .wa-admin-head p { font-size: 0.86rem; }
+  .wa-sync-button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .wa-sync-button span { font-size: 1.25rem; }
+  .wa-command-grid { gap: 9px; }
+  .wa-command-grid > button { min-height: 112px; padding: 13px; gap: 2px 9px; border-radius: 17px; }
+  .wa-command-icon { width: 40px; height: 40px; border-radius: 13px; }
+  .wa-command-icon svg { width: 23px; height: 23px; }
+  .wa-command-grid strong { font-size: 1.55rem; }
+  .wa-home-strip { grid-template-columns: 1fr; }
+  .wa-admin-dock { width: calc(100vw - 16px); gap: 2px; padding: 6px 4px; border-radius: 20px; }
+  .wa-admin-dock button { min-height: 56px; padding-inline: 2px; }
+  .wa-admin-dock strong { font-size: 0.64rem; }
+  .wa-admin-dock svg { width: 20px; height: 20px; }
+}
+
 /* Compact enterprise dock: clear hierarchy, large tap targets and iOS safe-area. */
 .mobile-tab-bar.app-dock,
 .simple-tab-bar.app-dock {
