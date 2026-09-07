@@ -818,7 +818,7 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-chat-placeholder strong { margin-top: 12px; color: #18344f; font-size: 1.15rem; }
 .wa-chat-placeholder p { margin: 6px 0 0; }
 .wa-chat-order-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; padding: 16px 20px; border-bottom: 1px solid #d5e5e2; background: #f7fbfa; }
-.wa-chat-order-form label { min-width: 0; margin: 0; }
+.wa-chat-order-form label { display: grid; min-width: 0; gap: 6px; margin: 0; color: #29465f; font-size: 0.82rem; font-weight: 750; }
 .wa-chat-order-form input,
 .wa-chat-order-form select { min-height: 42px; }
 .wa-chat-order-form .wide-field { grid-column: 1 / -1; }
