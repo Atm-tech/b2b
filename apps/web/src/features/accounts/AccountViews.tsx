@@ -8,6 +8,7 @@ import { useEffect,useState } from "react";
 import { renderOptions } from "../../app/formOptions";
 import appLogo from "../../assets/group60.svg";
 import { DataTable,Panel } from "../../components/ui";
+import { SidebarVectorIcon } from "../../components/navigation";
 
 import {
 collectionAssignment,
@@ -109,28 +110,31 @@ export function Overview({ snapshot, currentUser, simpleMode, onOpen, onOpenQrSc
 
   if (simpleMode) {
     return (
-      <section className="dashboard-grid">
-        <Panel title="Start Here" eyebrow="Simple workflow">
+      <section className="dashboard-grid operations-home">
+        <Panel title="Start Here" eyebrow="Quick actions">
           <div className="simple-steps">
             {quickActions.slice(0, 6).map((action) => (
               <button key={`${action.view}-${action.title}`} type="button" className="simple-action-card" onClick={() => onOpen(action.view)}>
-                <strong>{action.title}</strong>
-                <span>{action.text}</span>
+                <span className="simple-action-icon" aria-hidden="true"><SidebarVectorIcon view={action.view} /></span>
+                <span className="simple-action-copy"><strong>{action.title}</strong><span>{action.text}</span></span>
+                <span className="simple-action-arrow" aria-hidden="true">→</span>
               </button>
             ))}
             {showDailySalesReport ? <button type="button" className="simple-action-card" onClick={onDownloadSalesDsr}>
-              <strong>Daily Sales PDF</strong>
-              <span>Download today&apos;s scoped DSR for your role.</span>
+              <span className="simple-action-icon" aria-hidden="true"><SidebarVectorIcon view="SalesOrders" /></span>
+              <span className="simple-action-copy"><strong>Daily Sales PDF</strong><span>Download today&apos;s scoped DSR for your role.</span></span>
+              <span className="simple-action-arrow" aria-hidden="true">↓</span>
             </button> : null}
             <button type="button" className="simple-action-card" onClick={onOpenQrScanner}>
-              <strong>Scan Order QR</strong>
-              <span>Open PO or SO status and jump to the pending action.</span>
+              <span className="simple-action-icon" aria-hidden="true"><SidebarVectorIcon view="Stock" /></span>
+              <span className="simple-action-copy"><strong>Scan Order QR</strong><span>Open PO or SO status and jump to the pending action.</span></span>
+              <span className="simple-action-arrow" aria-hidden="true">⌁</span>
             </button>
           </div>
         </Panel>
-        <Panel title="Today" eyebrow="Quick summary">
+        <Panel title="Today" eyebrow="Live summary">
           <div className="simple-summary">
-            {taskCards.map((card) => <div className="list-card" key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
+            {taskCards.map((card, index) => <div className={`list-card operations-stat operations-stat-${index + 1}`} key={card.label}><div><strong>{card.value}</strong><p>{card.label}</p></div></div>)}
           </div>
         </Panel>
       </section>
