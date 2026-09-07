@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction } from "../src/whatsapp-utils.js";
+import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
 
 test("normalizes Indian local and international WhatsApp numbers", () => {
   assert.equal(normalizeWhatsAppPhone("98765 43210"), "919876543210");
@@ -29,4 +29,12 @@ test("validates webhook HMAC signatures without leaking the secret", () => {
 test("parses only supported interactive action identifiers", () => {
   assert.deepEqual(parseWhatsAppAction("wa-confirm:WAD-123"), { action: "confirm", entityId: "WAD-123" });
   assert.equal(parseWhatsAppAction("delete-everything"), null);
+});
+
+test("matches WhatsApp product searches without spaces and across common misspellings", () => {
+  assert.ok(scoreWhatsAppProductQuery("itc", ["I T C Sunfeast Biscuit"]) >= 800);
+  assert.ok(scoreWhatsAppProductQuery("magi", ["MAGGI 2-Minute Noodles"]) >= 800);
+  assert.ok(scoreWhatsAppProductQuery("gudday", ["Britannia Good Day Biscuit"]) >= 800);
+  assert.ok(scoreWhatsAppProductQuery("colget", ["Colgate Strong Teeth"]) >= 600);
+  assert.equal(scoreWhatsAppProductQuery("unrelated item", ["Maggi Noodles"]), 0);
 });

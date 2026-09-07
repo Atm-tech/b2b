@@ -92,7 +92,9 @@ export const PRODUCT_LANGUAGE_ALIASES: Record<string, string[]> = {
   ghadi: ["ghadi", "gadi", "ghadhi", "घड़ी", "घडी"],
   himalaya: ["himalaya", "himalya", "हिमालय", "हिमालया"],
   patanjali: ["patanjali", "patanjli", "पतंजलि"],
-  margo: ["margo", "मार्गो", "मारगो"]
+  margo: ["margo", "मार्गो", "मारगो"],
+  maggi: ["maggi", "magi", "megi", "maggee", "मैगी", "मेगी"],
+  "good day": ["good day", "goodday", "gud day", "gudday", "good dey"]
 };
 
 function datasetTokens(value: string) {

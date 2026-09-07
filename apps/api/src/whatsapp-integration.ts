@@ -3,7 +3,7 @@ import type { AppUser, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aap
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
 import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
-import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone } from "./whatsapp-utils.js";
+import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
 type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles">;
@@ -171,7 +171,6 @@ function compact(value: string, max: number) {
 }
 
 async function matchingProducts(query = "", limit = 10) {
-  const normalizedQuery = query.trim().toLowerCase();
   const snapshot = await getSnapshot();
   const historicallyPricedSkus = new Set(
     snapshot.salesOrders.filter((order) => order.status !== "Cancelled" && order.rate > 0).map((order) => order.productSku)
@@ -179,14 +178,16 @@ async function matchingProducts(query = "", limit = 10) {
   return snapshot.products
     .filter((product) => {
       if (productSaleRate(product) <= 0 && !historicallyPricedSkus.has(product.sku)) return false;
-      if (!normalizedQuery) return true;
-      return [product.name, product.sku, product.brand, product.shortName, product.articleName, product.itemName, product.size, product.remarks]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedQuery);
+      return true;
     })
-    .slice(0, limit);
+    .map((product) => ({
+      product,
+      score: scoreWhatsAppProductQuery(query, [product.name, product.sku, product.brand, product.shortName, product.articleName, product.itemName, product.size, product.remarks])
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name))
+    .slice(0, limit)
+    .map((item) => item.product);
 }
 
 async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "") {
