@@ -94,7 +94,8 @@ export const PRODUCT_LANGUAGE_ALIASES: Record<string, string[]> = {
   patanjali: ["patanjali", "patanjli", "पतंजलि"],
   margo: ["margo", "मार्गो", "मारगो"],
   maggi: ["maggi", "magi", "megi", "maggee", "मैगी", "मेगी"],
-  "good day": ["good day", "goodday", "gud day", "gudday", "good dey"]
+  "good day": ["good day", "goodday", "gud day", "gudday", "good dey"],
+  "coca cola": ["coca cola", "cocacola", "coke"]
 };
 
 function datasetTokens(value: string) {

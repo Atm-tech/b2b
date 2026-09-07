@@ -11,6 +11,7 @@ function normalizeProductSearch(value: unknown) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\b(?:magi|megi|maggee)\b/g, "maggi")
     .replace(/\b(?:good\s*day|gud\s*day|gudday|good\s*dey)\b/g, "goodday")
+    .replace(/\b(?:coke|coca\s*cola)\b/g, "cocacola")
     .replace(/\bparle\s+g\b/g, "parleg")
     .replace(/\s+/g, " ")
     .trim();
@@ -58,7 +59,7 @@ export function scoreWhatsAppProductQuery(query: string, values: unknown[]) {
       .filter((productToken) => Math.abs(productToken.length - queryToken.length) <= 2)
       .map((productToken) => tokenSimilarity(queryToken, productToken)), 0);
   });
-  if (similarities.some((similarity) => similarity < 0.66)) return 0;
+  if (similarities.some((similarity, index) => similarity < (queryTokens[index].length <= 4 ? 0.8 : 0.7))) return 0;
   return Math.round(400 + similarities.reduce((sum, similarity) => sum + similarity, 0) / similarities.length * 300);
 }
 

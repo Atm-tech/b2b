@@ -36,6 +36,10 @@ test("matches WhatsApp product searches without spaces and across common misspel
   assert.ok(scoreWhatsAppProductQuery("magi", ["MAGGI 2-Minute Noodles"]) >= 800);
   assert.ok(scoreWhatsAppProductQuery("gudday", ["Britannia Good Day Biscuit"]) >= 800);
   assert.ok(scoreWhatsAppProductQuery("colget", ["Colgate Strong Teeth"]) >= 600);
+  assert.ok(scoreWhatsAppProductQuery("coke", ["COCA COLA 250ML"]) >= 800);
+  assert.equal(scoreWhatsAppProductQuery("coke", ["GHADI DETERGENT CAKE 80G"]), 0);
+  assert.equal(scoreWhatsAppProductQuery("coke", ["BRITANNIA GOOD DAY COOKIE"]), 0);
+  assert.equal(scoreWhatsAppProductQuery("coke", ["AMUL MILK CHOCOLATE 150GM"]), 0);
   assert.equal(scoreWhatsAppProductQuery("unrelated item", ["Maggi Noodles"]), 0);
 });
 
