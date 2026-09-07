@@ -83,6 +83,10 @@ function localDateTime(hoursAhead: number) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function normalizedSearch(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, "");
+}
+
 function messageAuditText(item: Record<string, unknown>) {
   const payload = (item.payload_json || {}) as Record<string, unknown>;
   const request = (payload.request || {}) as Record<string, unknown>;
@@ -218,6 +222,12 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [catalogImageMappings, setCatalogImageMappings] = useState("");
   const [catalogImageReport, setCatalogImageReport] = useState("");
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [ruleRetailerSearch, setRuleRetailerSearch] = useState("");
+  const [ruleProductSearch, setRuleProductSearch] = useState("");
+  const [ruleDepartment, setRuleDepartment] = useState("");
+  const [offerRetailerSearch, setOfferRetailerSearch] = useState("");
+  const [offerProductSearch, setOfferProductSearch] = useState("");
+  const [offerDepartment, setOfferDepartment] = useState("");
   const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>("Home");
 
   const headers = { authorization: `Bearer ${sessionToken}` };
@@ -268,10 +278,38 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
 
-  const mappedRetailers = dashboard?.retailers || [];
-  const activeMappedRetailers = mappedRetailers.filter((item) => item.active);
-  const allActiveRetailersSelected = activeMappedRetailers.length > 0
-    && activeMappedRetailers.every((item) => offer.counterpartyIds.includes(item.counterpartyId));
+  const mappedRetailers = useMemo(() => dashboard?.retailers || [], [dashboard?.retailers]);
+  const activeMappedRetailers = useMemo(() => mappedRetailers.filter((item) => item.active), [mappedRetailers]);
+  const departments = useMemo(() => Array.from(new Set(snapshot.products.map((product) => product.department.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [snapshot.products]);
+  const filteredRuleRetailers = useMemo(() => {
+    const query = normalizedSearch(ruleRetailerSearch);
+    if (!query) return mappedRetailers;
+    return mappedRetailers.filter((item) => [item.retailerName, item.phoneE164, item.salesmanName, item.defaultWarehouseId]
+      .some((value) => normalizedSearch(value).includes(query)));
+  }, [mappedRetailers, ruleRetailerSearch]);
+  const filteredOfferRetailers = useMemo(() => {
+    const query = normalizedSearch(offerRetailerSearch);
+    if (!query) return activeMappedRetailers;
+    return activeMappedRetailers.filter((item) => [item.retailerName, item.phoneE164, item.salesmanName, item.defaultWarehouseId]
+      .some((value) => normalizedSearch(value).includes(query)));
+  }, [activeMappedRetailers, offerRetailerSearch]);
+  const filteredRuleProducts = useMemo(() => {
+    const query = normalizedSearch(ruleProductSearch);
+    return snapshot.products.filter((product) => (!ruleDepartment || product.department === ruleDepartment)
+      && (!query || [product.name, product.sku, product.brand, product.division, product.department, product.section, product.category, product.subCategory]
+        .filter(Boolean)
+        .some((value) => normalizedSearch(String(value)).includes(query))));
+  }, [ruleDepartment, ruleProductSearch, snapshot.products]);
+  const filteredOfferProducts = useMemo(() => {
+    const query = normalizedSearch(offerProductSearch);
+    return snapshot.products.filter((product) => (!offerDepartment || product.department === offerDepartment)
+      && (!query || [product.name, product.sku, product.brand, product.division, product.department, product.section, product.category, product.subCategory]
+        .filter(Boolean)
+        .some((value) => normalizedSearch(String(value)).includes(query))));
+  }, [offerDepartment, offerProductSearch, snapshot.products]);
+  const selectableOfferRetailerIds = filteredOfferRetailers.map((item) => item.counterpartyId);
+  const allVisibleRetailersSelected = selectableOfferRetailerIds.length > 0
+    && selectableOfferRetailerIds.every((counterpartyId) => offer.counterpartyIds.includes(counterpartyId));
   const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
   const activeDrafts = (dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested", "Staff Approved", "Awaiting Retailer", "Processing"].includes(item.status));
   const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
@@ -334,8 +372,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </> : null}
 
     {whatsappAdmin && activeSection === "Offers" ? <TwoCol left={<Panel title="Private price rule" eyebrow="Retailer-specific rate, CD and TOD"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/price-rules", { ...rule, specialRate: Number(rule.specialRate), cdPercent: Number(rule.cdPercent), todPercent: Number(rule.todPercent), minimumQuantity: Number(rule.minimumQuantity), validUntil: new Date(rule.validUntil).toISOString() }, "Private rate saved."); }}>
-      <label>Retailer<select value={rule.counterpartyId} onChange={(event) => setRule((current) => ({ ...current, counterpartyId: event.target.value }))}><option value="">Select mapped retailer</option>{mappedRetailers.map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName}</option>)}</select></label>
-      <label>Product<select value={rule.productSku} onChange={(event) => setRule((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product</option>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name} · {product.sku}</option>)}</select></label>
+      <label>Search retailer<input type="search" value={ruleRetailerSearch} onChange={(event) => setRuleRetailerSearch(event.target.value)} placeholder="Name, number or salesperson" /></label>
+      <label>Retailer<select value={rule.counterpartyId} onChange={(event) => setRule((current) => ({ ...current, counterpartyId: event.target.value }))}><option value="">Select mapped retailer ({filteredRuleRetailers.length})</option>{rule.counterpartyId && !filteredRuleRetailers.some((item) => item.counterpartyId === rule.counterpartyId) ? <option value={rule.counterpartyId}>{mappedRetailers.find((item) => item.counterpartyId === rule.counterpartyId)?.retailerName || "Selected retailer"}</option> : null}{filteredRuleRetailers.map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName} · {item.phoneE164}</option>)}</select></label>
+      <label>Department<select value={ruleDepartment} onChange={(event) => setRuleDepartment(event.target.value)}><option value="">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
+      <label>Search product<input type="search" value={ruleProductSearch} onChange={(event) => setRuleProductSearch(event.target.value)} placeholder="Name, SKU, brand or category" /></label>
+      <label className="wide-field">Product<select value={rule.productSku} onChange={(event) => setRule((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product ({filteredRuleProducts.length})</option>{rule.productSku && !filteredRuleProducts.some((product) => product.sku === rule.productSku) ? <option value={rule.productSku}>{snapshot.products.find((product) => product.sku === rule.productSku)?.name || rule.productSku} · selected</option> : null}{filteredRuleProducts.map((product) => <option key={product.sku} value={product.sku}>{product.name} · {product.sku} · {product.department || "General"}</option>)}</select></label>
       <label>Special rate<input type="number" step="any" value={rule.specialRate} onChange={(event) => setRule((current) => ({ ...current, specialRate: event.target.value }))} /></label>
       <label>Minimum quantity<input type="number" step="any" value={rule.minimumQuantity} onChange={(event) => setRule((current) => ({ ...current, minimumQuantity: event.target.value }))} /></label>
       <label>CD %<input type="number" step="any" value={rule.cdPercent} onChange={(event) => setRule((current) => ({ ...current, cdPercent: event.target.value }))} /></label>
@@ -343,9 +384,12 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Valid until<input type="datetime-local" value={rule.validUntil} onChange={(event) => setRule((current) => ({ ...current, validUntil: event.target.value }))} /></label>
       <button className="primary-button" disabled={busy}>Save private rate</button>
     </form></Panel>} right={<Panel title="Push special offer" eyebrow="Selected retailers only"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/offers", { counterpartyIds: offer.counterpartyIds, expiresAt: new Date(offer.expiresAt).toISOString(), lines: [{ productSku: offer.productSku, quantity: Number(offer.quantity), rate: Number(offer.rate), cdPercent: Number(offer.cdPercent), todPercent: Number(offer.todPercent), minimumQuantity: Number(offer.minimumQuantity) }] }, "Special offer queued for WhatsApp."); }}>
-      <label className="checkbox-line"><input type="checkbox" checked={allActiveRetailersSelected} disabled={!activeMappedRetailers.length} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: event.target.checked ? activeMappedRetailers.map((item) => item.counterpartyId) : [] }))} />Select all active retailers</label>
-      <label className="wide-field">Retailers<select multiple value={offer.counterpartyIds} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: Array.from(event.target.selectedOptions).map((option) => option.value) }))}>{activeMappedRetailers.map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName}</option>)}</select></label>
-      <label>Product<select value={offer.productSku} onChange={(event) => setOffer((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product</option>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name}</option>)}</select></label>
+      <label className="wide-field">Search retailers<input type="search" value={offerRetailerSearch} onChange={(event) => setOfferRetailerSearch(event.target.value)} placeholder="Name, number or salesperson" /></label>
+      <label className="checkbox-line"><input type="checkbox" checked={allVisibleRetailersSelected} disabled={!selectableOfferRetailerIds.length} onChange={(event) => setOffer((current) => { const visibleIds = new Set(selectableOfferRetailerIds); return { ...current, counterpartyIds: event.target.checked ? Array.from(new Set([...current.counterpartyIds, ...selectableOfferRetailerIds])) : current.counterpartyIds.filter((id) => !visibleIds.has(id)) }; })} />Select all matching retailers ({filteredOfferRetailers.length})</label>
+      <fieldset className="wa-retailer-picker wide-field"><legend>Retailers</legend><div className="wa-retailer-checklist">{filteredOfferRetailers.length ? filteredOfferRetailers.map((item) => <label key={item.counterpartyId}><input type="checkbox" checked={offer.counterpartyIds.includes(item.counterpartyId)} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: event.target.checked ? Array.from(new Set([...current.counterpartyIds, item.counterpartyId])) : current.counterpartyIds.filter((id) => id !== item.counterpartyId) }))} /><span><strong>{item.retailerName}</strong><small>{item.phoneE164}</small></span></label>) : <p>No active retailers match this search.</p>}</div><span className="field-hint">{offer.counterpartyIds.length} retailer{offer.counterpartyIds.length === 1 ? "" : "s"} selected</span></fieldset>
+      <label>Department<select value={offerDepartment} onChange={(event) => setOfferDepartment(event.target.value)}><option value="">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
+      <label>Search product<input type="search" value={offerProductSearch} onChange={(event) => setOfferProductSearch(event.target.value)} placeholder="Name, SKU, brand or category" /></label>
+      <label className="wide-field">Product<select value={offer.productSku} onChange={(event) => setOffer((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product ({filteredOfferProducts.length})</option>{offer.productSku && !filteredOfferProducts.some((product) => product.sku === offer.productSku) ? <option value={offer.productSku}>{snapshot.products.find((product) => product.sku === offer.productSku)?.name || offer.productSku} · selected</option> : null}{filteredOfferProducts.map((product) => <option key={product.sku} value={product.sku}>{product.name} · {product.sku} · {product.department || "General"}</option>)}</select></label>
       <label>Quantity<input type="number" step="any" value={offer.quantity} onChange={(event) => setOffer((current) => ({ ...current, quantity: event.target.value }))} /></label>
       <label>Rate<input type="number" step="any" value={offer.rate} onChange={(event) => setOffer((current) => ({ ...current, rate: event.target.value }))} /></label>
       <label>CD %<input type="number" step="any" value={offer.cdPercent} onChange={(event) => setOffer((current) => ({ ...current, cdPercent: event.target.value }))} /></label>

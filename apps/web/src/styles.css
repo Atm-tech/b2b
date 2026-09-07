@@ -4944,6 +4944,47 @@ body.so-viewport-locked .sales-catalog textarea {
 
 .wa-sync-button span { font-size: 1.2rem; }
 
+.wa-retailer-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.wa-retailer-picker legend {
+  margin-bottom: var(--space-1);
+  color: #17324d;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.wa-retailer-checklist {
+  max-height: 178px;
+  overflow: auto;
+  padding: 7px;
+  border: 1px solid rgba(68, 94, 67, 0.14);
+  border-radius: 16px;
+  background: rgba(248, 252, 253, 0.92);
+}
+
+.wa-retailer-checklist label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 9px;
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.wa-retailer-checklist label:hover { background: #edf8f5; }
+.wa-retailer-checklist input { width: 18px; min-height: 18px; margin: 0; }
+.wa-retailer-checklist span { display: grid; min-width: 0; gap: 1px; }
+.wa-retailer-checklist strong { overflow: hidden; color: #17324d; font-size: 0.9rem; text-overflow: ellipsis; white-space: nowrap; }
+.wa-retailer-checklist small { color: #6b7f91; font-size: 0.76rem; }
+.wa-retailer-checklist p { margin: 10px; color: #6b7f91; }
+.field-hint { display: block; margin-top: 6px; color: #6b7f91; font-size: 0.76rem; font-weight: 600; }
+
 .wa-section-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
