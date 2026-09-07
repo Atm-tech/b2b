@@ -867,6 +867,12 @@ body.so-viewport-locked .sales-catalog textarea {
   min-width: 0;
 }
 
+.stacked-sections {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .simple-shell {
   padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
 }
