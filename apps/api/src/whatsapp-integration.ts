@@ -156,6 +156,28 @@ async function sendText(phone: string, body: string, relatedEntityType?: string,
   return sendGraphMessage(phone, { type: "text", text: { preview_url: false, body } }, relatedEntityType, relatedEntityId);
 }
 
+async function sendLongText(phone: string, body: string, relatedEntityType?: string, relatedEntityId?: string) {
+  const chunks: string[] = [];
+  let current = "";
+  for (const block of body.trim().split(/\n{2,}/)) {
+    if (block.length > 3900) {
+      if (current) chunks.push(current);
+      for (let start = 0; start < block.length; start += 3900) chunks.push(block.slice(start, start + 3900));
+      current = "";
+      continue;
+    }
+    const candidate = current ? `${current}\n\n${block}` : block;
+    if (candidate.length > 3900) {
+      chunks.push(current);
+      current = block;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) chunks.push(current);
+  for (const chunk of chunks) await sendText(phone, chunk, relatedEntityType, relatedEntityId);
+}
+
 async function sendButtons(phone: string, body: string, buttons: Array<{ id: string; title: string }>, relatedEntityType?: string, relatedEntityId?: string) {
   return sendGraphMessage(phone, {
     type: "interactive",
@@ -1054,14 +1076,54 @@ async function loadDraft(draftId: string) {
   return { draft: drafts.rows[0], lines: lines.rows };
 }
 
-function draftSummary(draftId: string, retailerName: string, rows: Record<string, unknown>[]) {
-  let total = 0;
+function formatProformaDate(value: unknown) {
+  const date = new Date(text(value) || Date.now());
+  return Number.isNaN(date.getTime())
+    ? ""
+    : new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(date);
+}
+
+function proformaTotals(rows: Record<string, unknown>[]) {
+  return rows.reduce<{ taxable: number; discount: number; gst: number; grand: number }>((totals, line) => {
+    const amounts = lineAmounts(line);
+    totals.taxable += amounts.taxableAmount;
+    totals.discount += amounts.cdAmount + amounts.todAmount;
+    totals.gst += amounts.gstAmount;
+    totals.grand += amounts.totalAmount;
+    return totals;
+  }, { taxable: 0, discount: 0, gst: 0, grand: 0 });
+}
+
+function proformaFooter(draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
+  const totals = proformaTotals(rows);
+  return `Subtotal: ₹${totals.taxable.toFixed(2)}\nDiscount (CD/TOD): -₹${totals.discount.toFixed(2)}\nGST: ₹${totals.gst.toFixed(2)}\n*Grand total: ₹${totals.grand.toFixed(2)}*\nPayment: ${text(draft.payment_mode) || "Pending"} | Delivery: ${text(draft.delivery_mode) || "Pending"}`;
+}
+
+function compactProforma(draftId: string, draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
+  const header = `🧾 *PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}`;
+  const footer = proformaFooter(draft, rows);
+  const lines: string[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const line = rows[index];
+    const amounts = lineAmounts(line);
+    const productName = compact(text(line.product_name), 46);
+    const detail = `${index + 1}. ${productName}\n${numberValue(line.approved_quantity)} × ₹${numberValue(line.rate).toFixed(2)} | GST ${amounts.gstRate}% | ₹${amounts.totalAmount.toFixed(2)}`;
+    const remaining = rows.length - lines.length - 1;
+    const more = remaining > 0 ? `\n+${remaining} more item${remaining === 1 ? "" : "s"} — View Proforma` : "";
+    if (`${header}\n\n${[...lines, detail].join("\n")}\n${more}\n\n${footer}\n\nPlease confirm or request a change.`.length > 1024) break;
+    lines.push(detail);
+  }
+  const hidden = rows.length - lines.length;
+  const hiddenLabel = hidden > 0 ? `\n+${hidden} more item${hidden === 1 ? "" : "s"} — tap View Proforma` : "";
+  return `${header}\n\n${lines.join("\n")}${hiddenLabel}\n\n${footer}\n\nPlease confirm or request a change.`;
+}
+
+function detailedProforma(draftId: string, draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
   const details = rows.map((line, index) => {
-    const amounts = lineAmounts(line as never);
-    total += amounts.totalAmount;
-    return `${index + 1}. ${text(line.product_name)}\n   ${mrpDiscountLabel(line.mrp, line.rate)}\n   ${numberValue(line.approved_quantity)} × ₹${numberValue(line.rate).toFixed(2)} | CD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}%\n   ₹${amounts.totalAmount.toFixed(2)} incl. tax`;
-  }).join("\n");
-  return `🧾 *Aapoorti Wholesale Order*\n${draftId} | ${retailerName}\n\n${details}\n\n*Estimated total: ₹${total.toFixed(2)}*\nRates and stock are locked only after you confirm.`;
+    const amounts = lineAmounts(line);
+    return `*${index + 1}. ${text(line.product_name)}*\n${mrpDiscountLabel(line.mrp, line.rate)}\nQty ${numberValue(line.approved_quantity)} × Rate ₹${numberValue(line.rate).toFixed(2)}\nCD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}% | GST ${amounts.gstRate}% ${amounts.taxMode}\nTaxable ₹${amounts.taxableAmount.toFixed(2)} | Discount ₹${(amounts.cdAmount + amounts.todAmount).toFixed(2)} | GST ₹${amounts.gstAmount.toFixed(2)}\nLine total: ₹${amounts.totalAmount.toFixed(2)}`;
+  }).join("\n\n");
+  return `🧾 *AAPOORTI WHOLESALE — PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}\nSalesperson: ${text(draft.salesman_name)}\nWarehouse: ${text(draft.warehouse_id)}\n\n${details}\n\n${proformaFooter(draft, rows)}\n\nFinal tax invoice will be generated after order confirmation and processing.`;
 }
 
 async function finalizeDraft(draftId: string) {
@@ -1304,6 +1366,16 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (buttonId.startsWith("wa-confirm:")) {
       await finalizeDraft(buttonId.slice("wa-confirm:".length));
+      return;
+    }
+    if (buttonId.startsWith("wa-proforma:")) {
+      const draftId = buttonId.slice("wa-proforma:".length);
+      const loaded = await loadDraft(draftId);
+      if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) {
+        await sendText(from, "This proforma does not belong to your retailer account.");
+        return;
+      }
+      await sendLongText(from, detailedProforma(draftId, loaded.draft, loaded.lines), "Draft", draftId);
       return;
     }
     if (buttonId.startsWith("wa-change:")) {
@@ -2337,9 +2409,13 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
     [draftId, input.warehouseId, input.paymentMode, input.cashTiming || null, input.deliveryMode, input.note || text(loaded.draft.note)]
   );
   const finalDraft = await loadDraft(draftId);
-  const summary = draftSummary(draftId, text(finalDraft.draft.retailer_name), finalDraft.lines);
+  const summary = compactProforma(draftId, finalDraft.draft, finalDraft.lines);
   const sent = await sendButtons(text(finalDraft.draft.phone_e164), summary,
-    [{ id: `wa-confirm:${draftId}`, title: "Confirm Order" }, { id: `wa-change:${draftId}`, title: "Request Change" }], "Draft", draftId);
+    [
+      { id: `wa-confirm:${draftId}`, title: "Confirm Order" },
+      { id: `wa-change:${draftId}`, title: "Request Change" },
+      { id: `wa-proforma:${draftId}`, title: "View Proforma" }
+    ], "Draft", draftId);
   await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status='Awaiting Retailer',confirmation_message_id=$2 WHERE id=$1`, [draftId, sent.messageId]);
   return getWhatsAppDashboard(currentUser);
 }
