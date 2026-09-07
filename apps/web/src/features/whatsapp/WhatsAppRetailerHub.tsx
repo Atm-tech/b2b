@@ -269,6 +269,9 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   }
 
   const mappedRetailers = dashboard?.retailers || [];
+  const activeMappedRetailers = mappedRetailers.filter((item) => item.active);
+  const allActiveRetailersSelected = activeMappedRetailers.length > 0
+    && activeMappedRetailers.every((item) => offer.counterpartyIds.includes(item.counterpartyId));
   const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
   const activeDrafts = (dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested", "Staff Approved", "Awaiting Retailer", "Processing"].includes(item.status));
   const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
@@ -340,7 +343,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Valid until<input type="datetime-local" value={rule.validUntil} onChange={(event) => setRule((current) => ({ ...current, validUntil: event.target.value }))} /></label>
       <button className="primary-button" disabled={busy}>Save private rate</button>
     </form></Panel>} right={<Panel title="Push special offer" eyebrow="Selected retailers only"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/offers", { counterpartyIds: offer.counterpartyIds, expiresAt: new Date(offer.expiresAt).toISOString(), lines: [{ productSku: offer.productSku, quantity: Number(offer.quantity), rate: Number(offer.rate), cdPercent: Number(offer.cdPercent), todPercent: Number(offer.todPercent), minimumQuantity: Number(offer.minimumQuantity) }] }, "Special offer queued for WhatsApp."); }}>
-      <label className="wide-field">Retailers<select multiple value={offer.counterpartyIds} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: Array.from(event.target.selectedOptions).map((option) => option.value) }))}>{mappedRetailers.filter((item) => item.active).map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName}</option>)}</select></label>
+      <label className="checkbox-line"><input type="checkbox" checked={allActiveRetailersSelected} disabled={!activeMappedRetailers.length} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: event.target.checked ? activeMappedRetailers.map((item) => item.counterpartyId) : [] }))} />Select all active retailers</label>
+      <label className="wide-field">Retailers<select multiple value={offer.counterpartyIds} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: Array.from(event.target.selectedOptions).map((option) => option.value) }))}>{activeMappedRetailers.map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName}</option>)}</select></label>
       <label>Product<select value={offer.productSku} onChange={(event) => setOffer((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product</option>{snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{product.name}</option>)}</select></label>
       <label>Quantity<input type="number" step="any" value={offer.quantity} onChange={(event) => setOffer((current) => ({ ...current, quantity: event.target.value }))} /></label>
       <label>Rate<input type="number" step="any" value={offer.rate} onChange={(event) => setOffer((current) => ({ ...current, rate: event.target.value }))} /></label>
