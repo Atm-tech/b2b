@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS products (
   is_seasonal BOOLEAN NOT NULL DEFAULT FALSE,
   offer_label TEXT NOT NULL DEFAULT '',
   offer_price DOUBLE PRECISION,
+  catalog_image_key TEXT,
+  catalog_image_source_url TEXT,
+  catalog_image_updated_at TIMESTAMPTZ,
+  minimum_order_quantity DOUBLE PRECISION NOT NULL DEFAULT 1,
+  whatsapp_catalog_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

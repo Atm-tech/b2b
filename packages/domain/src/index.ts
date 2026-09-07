@@ -60,6 +60,11 @@ export type ProductMaster = {
   isSeasonal?: boolean;
   offerLabel?: string;
   offerPrice?: number;
+  catalogImageKey?: string;
+  catalogImageSourceUrl?: string;
+  catalogImageUpdatedAt?: string;
+  minimumOrderQuantity?: number;
+  whatsappCatalogEnabled?: boolean;
   createdBy: string;
   createdAt: string;
 };

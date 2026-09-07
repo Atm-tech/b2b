@@ -65,9 +65,11 @@ import {
   createWhatsAppOffer,
   denyWhatsAppDraft,
   getWhatsAppCatalogFeed,
+  getWhatsAppCatalogImage,
   getWhatsAppDashboard,
   getWhatsAppMetaDiagnostics,
   getWhatsAppPendingOrderCount,
+  importWhatsAppCatalogImages,
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   reviewWhatsAppDraft,
@@ -1132,6 +1134,18 @@ app.get("/whatsapp/catalog/feed.csv", async (req, res) => {
   }
 });
 
+app.get("/whatsapp/catalog/images/:sku", async (req, res) => {
+  try {
+    const image = await getWhatsAppCatalogImage(req.params.sku, String(req.query.token || ""));
+    res.setHeader("Content-Type", image.contentType);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    if (image.etag) res.setHeader("ETag", image.etag);
+    res.send(image.body);
+  } catch (error) {
+    res.status(404).json({ message: error instanceof Error ? error.message : "Catalogue image unavailable." });
+  }
+});
+
 app.get("/whatsapp/dashboard", async (req, res) => {
   try {
     const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
@@ -1158,6 +1172,15 @@ app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => 
 app.post("/whatsapp/setup/catalog", async (req, res) => wrap(res, async () => {
   await requireWhatsAppAdmin(req);
   return configureWhatsAppCommerce();
+}));
+
+app.post("/whatsapp/catalog/images/import", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+  return importWhatsAppCatalogImages(entries.map((entry: Record<string, unknown>) => ({
+    sku: requiredString(entry.sku, "Product SKU"),
+    sourceUrl: requiredString(entry.sourceUrl, "Image URL")
+  })));
 }));
 
 app.post("/whatsapp/setup/test-retailers", async (req, res) => wrap(res, async () => {

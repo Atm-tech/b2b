@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { calculateSalesAmounts, calculateTaxAmounts, inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
+import { whatsappCatalogMinimums, whatsappCatalogProductAliases } from "./whatsapp-catalog-minimums.js";
 import type {
   AppSnapshot,
   AppUser,
@@ -97,6 +98,7 @@ async function initializeDatabase() {
   `);
   await pool.query(indexSql);
   await seedDatabase();
+  await syncWhatsAppCatalogMinimums();
   await reconcileFinancialTotals();
   await backfillProductWeights();
 }
@@ -203,6 +205,34 @@ async function backfillProductWeights() {
   }
 }
 
+async function syncWhatsAppCatalogMinimums() {
+  const names = whatsappCatalogMinimums.map((item) => item.articleName);
+  const quantities = whatsappCatalogMinimums.map((item) => item.minimumOrderQuantity);
+  const aliases = whatsappCatalogMinimums.map((item) => whatsappCatalogProductAliases[item.articleName] || "");
+  await pool.query("UPDATE products SET whatsapp_catalog_enabled = FALSE");
+  const updated = await pool.query<{ sku: string }>(
+    `WITH source AS (
+       SELECT article_name, minimum_quantity, product_sku
+       FROM UNNEST($1::text[], $2::double precision[], $3::text[]) AS source_values(article_name, minimum_quantity, product_sku)
+     )
+     UPDATE products product
+     SET minimum_order_quantity = source.minimum_quantity,
+         whatsapp_catalog_enabled = TRUE
+     FROM source
+     WHERE (source.product_sku <> '' AND product.sku = source.product_sku)
+        OR product.sku = source.article_name
+        OR REGEXP_REPLACE(UPPER(product.sku), '[^A-Z0-9]+', '', 'g')
+         = REGEXP_REPLACE(UPPER(source.article_name), '[^A-Z0-9]+', '', 'g')
+        OR REGEXP_REPLACE(UPPER(COALESCE(NULLIF(product.article_name, ''), product.name)), '[^A-Z0-9]+', '', 'g')
+         = REGEXP_REPLACE(UPPER(source.article_name), '[^A-Z0-9]+', '', 'g')
+     RETURNING product.sku`,
+    [names, quantities, aliases]
+  );
+  if (updated.rowCount !== whatsappCatalogMinimums.length) {
+    console.warn(`WhatsApp catalogue MOQ sync matched ${updated.rowCount || 0} of ${whatsappCatalogMinimums.length} workbook rows.`);
+  }
+}
+
 async function ensureCompatibilityColumns() {
   await pool.query(`
     -- Existing deployments may already have these checks while still containing
@@ -222,6 +252,11 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE products ADD COLUMN IF NOT EXISTS is_seasonal BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS offer_label TEXT NOT NULL DEFAULT '';
     ALTER TABLE products ADD COLUMN IF NOT EXISTS offer_price DOUBLE PRECISION;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS catalog_image_key TEXT;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS catalog_image_source_url TEXT;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS catalog_image_updated_at TIMESTAMPTZ;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS minimum_order_quantity DOUBLE PRECISION NOT NULL DEFAULT 1;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS whatsapp_catalog_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
     CREATE INDEX IF NOT EXISTS idx_products_sub_category ON products(sub_category);
     CREATE INDEX IF NOT EXISTS idx_products_seasonal_offer ON products(is_seasonal, offer_price) WHERE is_seasonal OR offer_price IS NOT NULL;
@@ -592,6 +627,11 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
     isSeasonal: Boolean(row.is_seasonal),
     offerLabel: stringValue(row.offer_label),
     offerPrice: row.offer_price === null ? undefined : numberValue(row.offer_price),
+    catalogImageKey: stringValue(row.catalog_image_key) || undefined,
+    catalogImageSourceUrl: stringValue(row.catalog_image_source_url) || undefined,
+    catalogImageUpdatedAt: row.catalog_image_updated_at ? isoValue(row.catalog_image_updated_at) : undefined,
+    minimumOrderQuantity: Math.max(1, numberValue(row.minimum_order_quantity) || 1),
+    whatsappCatalogEnabled: Boolean(row.whatsapp_catalog_enabled),
     createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)
   }));

@@ -3,6 +3,8 @@ import type { AppUser, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aap
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
 import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
+import { downloadAndCompressCatalogImage } from "./catalog-images.js";
+import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -176,6 +178,10 @@ function mrpDiscountLabel(mrpValue: unknown, rateValue: unknown) {
   return `MRP Rs.${mrp.toFixed(2)} | ${discountPercentFromMrp(mrp, rateValue).toFixed(2)}% off`;
 }
 
+function quantityChoices(minimumQuantity: number) {
+  return [minimumQuantity, minimumQuantity * 2, minimumQuantity * 5];
+}
+
 async function matchingProducts(query = "", limit = 10) {
   const snapshot = await getSnapshot();
   const historicallyPricedSkus = new Set(
@@ -183,6 +189,7 @@ async function matchingProducts(query = "", limit = 10) {
   );
   return snapshot.products
     .filter((product) => {
+      if (!product.whatsappCatalogEnabled) return false;
       if (productSaleRate(product) <= 0 && !historicallyPricedSkus.has(product.sku)) return false;
       return true;
     })
@@ -216,7 +223,7 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
           rows: products.map((product) => ({
             id: `wa-product:${encodeURIComponent(product.sku)}`,
             title: compact(product.shortName || product.name, 24),
-            description: compact([product.brand, product.size, numberValue(product.mrp) > 0 ? `MRP Rs.${numberValue(product.mrp).toFixed(2)}` : "MRP pending", "Select for your rate"].filter(Boolean).join(" · "), 72)
+            description: compact([product.brand, product.size, numberValue(product.mrp) > 0 ? `MRP Rs.${numberValue(product.mrp).toFixed(2)}` : "MRP pending", `Min qty ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`].filter(Boolean).join(" · "), 72)
           }))
         }]
       }
@@ -414,6 +421,7 @@ async function handleRetailerRegistration(message: JsonObject, phone: string, me
 async function productPricing(counterpartyId: string, productSku: string) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
     `SELECT p.sku, p.name, p.default_gst_rate, p.default_tax_mode, p.mrp, p.rsp, p.offer_price,
+            p.minimum_order_quantity AS catalog_minimum_quantity,
             rule.special_rate, rule.cd_percent, rule.tod_percent, rule.minimum_quantity,
             history.rate AS latest_sale_rate
      FROM products p
@@ -431,7 +439,7 @@ async function productPricing(counterpartyId: string, productSku: string) {
        ORDER BY (shop_id = $1) DESC, created_at DESC
        LIMIT 1
      ) history ON TRUE
-     WHERE p.sku = $2`,
+     WHERE p.sku = $2 AND p.whatsapp_catalog_enabled = TRUE`,
     [counterpartyId, productSku]
   );
   const row = result.rows[0];
@@ -446,7 +454,7 @@ async function productPricing(counterpartyId: string, productSku: string) {
     mrp: numberValue(row.mrp),
     cdPercent: numberValue(row.cd_percent),
     todPercent: numberValue(row.tod_percent),
-    minimumQuantity: Math.max(1, numberValue(row.minimum_quantity, 1)),
+    minimumQuantity: Math.max(1, numberValue(row.catalog_minimum_quantity, 1), numberValue(row.minimum_quantity, 1)),
     gstRate: numberValue(row.default_gst_rate) as GstRate,
     taxMode: (text(row.default_tax_mode) === "Inclusive" ? "Inclusive" : "Exclusive") as TaxMode
   };
@@ -918,9 +926,9 @@ async function handleInboundMessage(message: JsonObject) {
       const sku = decodeURIComponent(buttonId.slice("wa-product:".length));
       const pricing = await productPricing(profile.counterpartyId, sku);
       await selectCartProduct(profile, sku, messageId);
-      const quantities = [...new Set([pricing.minimumQuantity, Math.max(pricing.minimumQuantity, 5), Math.max(pricing.minimumQuantity, 10)])].slice(0, 3);
+      const quantities = quantityChoices(pricing.minimumQuantity);
       await sendButtons(from,
-        `${pricing.name}\n${mrpDiscountLabel(pricing.mrp, pricing.rate)}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nQuantity choose karein, ya sirf quantity type karein, jaise: 25`,
+        `${pricing.name}\n${mrpDiscountLabel(pricing.mrp, pricing.rate)}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nMinimum order: ${pricing.minimumQuantity}\nQuantity choose karein, ya quantity type karein.`,
         quantities.map((quantity) => ({ id: `wa-qty:${encodeURIComponent(sku)}:${quantity}`, title: `Qty ${quantity}` })),
         "ProductSelection", sku);
       return;
@@ -1059,7 +1067,15 @@ async function handleInboundMessage(message: JsonObject) {
       }
       if (cartSession?.stage === "AwaitingQuantity" && cartSession.selectedProductSku && /^\d+(?:\.\d+)?$/.test(normalized)) {
         const pricing = await productPricing(profile.counterpartyId, cartSession.selectedProductSku);
-        const quantity = Math.max(pricing.minimumQuantity, numberValue(normalized, pricing.minimumQuantity));
+        const requestedQuantity = numberValue(normalized, pricing.minimumQuantity);
+        if (requestedQuantity < pricing.minimumQuantity) {
+          await sendButtons(from,
+            `${pricing.name} ki minimum order quantity ${pricing.minimumQuantity} hai. Please minimum ya usse zyada quantity choose karein.`,
+            quantityChoices(pricing.minimumQuantity).map((quantity) => ({ id: `wa-qty:${encodeURIComponent(pricing.sku)}:${quantity}`, title: `Qty ${quantity}` })),
+            "MinimumQuantity", pricing.sku);
+          return;
+        }
+        const quantity = requestedQuantity;
         await addCartLines(profile, messageId, [{
           productSku: pricing.sku,
           quantity,
@@ -1238,7 +1254,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = isWhatsAppAdminUser(currentUser);
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -1276,7 +1292,18 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
         : `SELECT m.* FROM whatsapp_messages m
            LEFT JOIN whatsapp_retailers wr ON wr.phone_e164 = m.phone_e164
            WHERE wr.salesman_id = $1 OR wr.counterparty_id IS NULL
-           ORDER BY m.created_at DESC LIMIT 100`, params)
+           ORDER BY m.created_at DESC LIMIT 100`, params),
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT
+         COUNT(*) FILTER (WHERE p.whatsapp_catalog_enabled = TRUE)::int AS selected,
+         COUNT(*) FILTER (WHERE p.whatsapp_catalog_enabled = TRUE AND (COALESCE(p.offer_price, p.rsp, p.mrp, 0) > 0 OR history.rate > 0))::int AS eligible,
+         COUNT(*) FILTER (WHERE p.whatsapp_catalog_enabled = TRUE AND (COALESCE(p.offer_price, p.rsp, p.mrp, 0) > 0 OR history.rate > 0) AND p.catalog_image_key IS NOT NULL)::int AS with_image
+       FROM products p
+       LEFT JOIN LATERAL (
+         SELECT rate FROM sales_orders
+         WHERE product_sku=p.sku AND rate>0 AND status<>'Cancelled'
+         ORDER BY created_at DESC LIMIT 1
+       ) history ON TRUE`)
   ]);
   const visibleDraftIds = new Set(drafts.rows.map((row) => text(row.id)));
   return {
@@ -1303,6 +1330,11 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
     wishlists: wishlists.rows,
     registrations: isAdmin ? registrations.rows : [],
     messages: isAdmin ? messages.rows : [],
+    catalogImageStats: {
+      selected: isAdmin ? numberValue(imageStats.rows[0]?.selected) : 0,
+      eligible: isAdmin ? numberValue(imageStats.rows[0]?.eligible) : 0,
+      withImage: isAdmin ? numberValue(imageStats.rows[0]?.with_image) : 0
+    },
     catalogFeedUrl: isAdmin
       ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
       : ""
@@ -1466,11 +1498,12 @@ export async function createWhatsAppOffer(input: {
     for (const line of input.lines) {
       const pricing = await productPricing(counterpartyId, line.productSku);
       const rate = line.rate > 0 ? line.rate : pricing.rate;
+      const minimumQuantity = Math.max(pricing.minimumQuantity, line.minimumQuantity);
       await executeDatabaseQuery(
         `INSERT INTO whatsapp_offer_lines (id,offer_id,product_sku,quantity,rate,cd_percent,tod_percent,minimum_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id("WAOL"), offerId, line.productSku, Math.max(line.minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, Math.max(1, line.minimumQuantity)]
+        [id("WAOL"), offerId, line.productSku, Math.max(minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, minimumQuantity]
       );
-      namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(line.minimumQuantity, line.quantity)} | CD ${line.cdPercent}% | TOD ${line.todPercent}%`);
+      namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(minimumQuantity, line.quantity)} | Min ${minimumQuantity} | CD ${line.cdPercent}% | TOD ${line.todPercent}%`);
     }
     const expiry = new Date(input.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     const body = `🎯 *Special rate for ${retailer.retailerName}*\n${namedLines.join("\n")}\nValid until ${expiry}. Reply YES or tap Order Now.`;
@@ -1498,6 +1531,8 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
     if (line.cdPercent < 0 || line.todPercent < 0 || line.cdPercent + line.todPercent >= 100) throw new Error("Enter valid CD/TOD percentages.");
     const draftLine = loaded.lines.find((candidate) => text(candidate.id) === line.id);
     if (!draftLine) throw new Error("An order line does not belong to this draft.");
+    const pricing = await productPricing(text(loaded.draft.counterparty_id), text(draftLine.product_sku));
+    if (line.quantity < pricing.minimumQuantity) throw new Error(`${text(draftLine.product_name)} has a minimum order quantity of ${pricing.minimumQuantity}.`);
     const stock = snapshot.stockSummary.find((item) => item.warehouseId === input.warehouseId && item.productSku === text(draftLine.product_sku));
     if (line.quantity > (stock?.availableQuantity || 0)) throw new Error(`${text(draftLine.product_name)} has only ${stock?.availableQuantity || 0} available at ${input.warehouseId}. Adjust quantity before sending.`);
   }
@@ -1562,20 +1597,75 @@ export async function getWhatsAppCatalogFeed(token: string) {
   const expected = text(process.env.WHATSAPP_CATALOG_FEED_TOKEN);
   if (!expected || token !== expected) throw new Error("Invalid catalogue feed token.");
   const snapshot = await getSnapshot();
+  const latestSaleRates = new Map<string, number>();
+  for (const order of [...snapshot.salesOrders].sort((left, right) => right.createdAt.localeCompare(left.createdAt))) {
+    if (order.status !== "Cancelled" && order.rate > 0 && !latestSaleRates.has(order.productSku)) latestSaleRates.set(order.productSku, order.rate);
+  }
   const publicWeb = (process.env.PUBLIC_WEB_URL || "https://b2b-api-theta.vercel.app").replace(/\/$/, "");
   const header = ["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand"];
   const rows = snapshot.products.flatMap((product: ProductMaster) => {
     // A retailer catalogue must never expose an internal purchase rate. Products
     // without a customer-facing price stay out of Meta until their RSP/MRP is set.
-    const rate = product.offerPrice || product.rsp || product.mrp || 0;
-    if (rate <= 0) return [];
+    const rate = product.offerPrice || product.rsp || product.mrp || latestSaleRates.get(product.sku) || 0;
+    if (!product.whatsappCatalogEnabled || rate <= 0) return [];
     return [
       [
-        product.sku, product.name, [product.size, product.unit, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
+        product.sku, product.name, [product.size, product.unit, `Minimum order ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
         "in stock", "new", `${rate.toFixed(2)} INR`, `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
-        `${publicWeb}/business-connect-icon-512.png`, product.brand || "Aapoorti"
+        product.catalogImageKey
+          ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/images/${encodeURIComponent(product.sku)}?token=${encodeURIComponent(expected)}&v=${encodeURIComponent(product.catalogImageUpdatedAt || product.catalogImageKey)}`
+          : `${publicWeb}/business-connect-icon-512.png`,
+        product.brand || "Aapoorti"
       ].map(csvCell).join(",")
     ];
   });
   return [header.join(","), ...rows].join("\n");
+}
+
+function requireCatalogFeedToken(token: string) {
+  const expected = text(process.env.WHATSAPP_CATALOG_FEED_TOKEN);
+  if (!expected || token !== expected) throw new Error("Invalid catalogue image token.");
+}
+
+export async function getWhatsAppCatalogImage(sku: string, token: string) {
+  requireCatalogFeedToken(token);
+  const product = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT catalog_image_key FROM products WHERE sku=$1 AND whatsapp_catalog_enabled=TRUE`, [sku]
+  );
+  const key = text(product.rows[0]?.catalog_image_key);
+  if (!key) throw new Error("Catalogue image not found.");
+  return getCatalogImageObject(key);
+}
+
+export async function importWhatsAppCatalogImages(entries: Array<{ sku: string; sourceUrl: string }>) {
+  if (!entries.length || entries.length > 6) throw new Error("Import between 1 and 6 product images at a time.");
+  const normalized = entries.map((entry) => ({ sku: text(entry.sku), sourceUrl: text(entry.sourceUrl) }));
+  if (normalized.some((entry) => !entry.sku || !entry.sourceUrl)) throw new Error("Every image needs a product SKU and source URL.");
+  const results: Array<{ sku: string; imported: boolean; bytes?: number; error?: string }> = new Array(normalized.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < normalized.length) {
+      const index = cursor++;
+      const entry = normalized[index];
+      try {
+        const product = await executeDatabaseQuery<Record<string, unknown>>(`SELECT sku FROM products WHERE sku=$1 AND whatsapp_catalog_enabled=TRUE`, [entry.sku]);
+        if (!product.rows[0]) throw new Error("Product SKU not found.");
+        const image = await downloadAndCompressCatalogImage(entry.sourceUrl);
+        const key = await putCatalogImageObject(entry.sku, image.body, image.sourceUrl);
+        await executeDatabaseQuery(
+          `UPDATE products SET catalog_image_key=$1, catalog_image_source_url=$2, catalog_image_updated_at=NOW() WHERE sku=$3`,
+          [key, image.sourceUrl, entry.sku]
+        );
+        results[index] = { sku: entry.sku, imported: true, bytes: image.bytes };
+      } catch (error) {
+        results[index] = { sku: entry.sku, imported: false, error: error instanceof Error ? error.message : "Image import failed." };
+      }
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  return {
+    imported: results.filter((result) => result.imported).length,
+    failed: results.filter((result) => !result.imported).length,
+    results
+  };
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import axios from "axios";
 import type { AppSnapshot, AppUser, PaymentMode } from "@aapoorti-b2b/domain";
 import { api, formatDateTimeIst } from "../../app/shared";
@@ -56,6 +57,7 @@ type Dashboard = {
   wishlists: Array<Record<string, unknown>>;
   registrations: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
+  catalogImageStats: { selected: number; eligible: number; withImage: number };
   catalogFeedUrl: string;
 };
 
@@ -200,6 +202,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [mapping, setMapping] = useState(() => ({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: pilotWarehouseId(snapshot), billingType: "B2B", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true }));
   const [rule, setRule] = useState({ counterpartyId: "", productSku: "", specialRate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", validUntil: localDateTime(24), active: true });
   const [offer, setOffer] = useState({ counterpartyIds: [] as string[], productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", expiresAt: localDateTime(8) });
+  const [catalogImageMappings, setCatalogImageMappings] = useState("");
+  const [catalogImageReport, setCatalogImageReport] = useState("");
 
   const headers = { authorization: `Bearer ${sessionToken}` };
   async function refresh() {
@@ -220,6 +224,28 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       if (next?.configuration) setDashboard(next);
       else await refresh();
       onMessage(success);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importCatalogImages(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const entries = catalogImageMappings.split(/\r?\n/).map((line) => {
+      const separator = line.indexOf(",");
+      return separator > 0 ? { sku: line.slice(0, separator).trim(), sourceUrl: line.slice(separator + 1).trim() } : null;
+    }).filter((entry): entry is { sku: string; sourceUrl: string } => Boolean(entry?.sku && entry.sourceUrl));
+    if (!entries.length) { onError("Add at least one SKU,image URL line."); return; }
+    if (entries.length > 6) { onError("Import a maximum of 6 images per batch."); return; }
+    setBusy(true); onError(""); setCatalogImageReport("");
+    try {
+      const { data } = await api.post<{ imported: number; failed: number; results: Array<{ sku: string; imported: boolean; error?: string }> }>("/whatsapp/catalog/images/import", { entries }, { headers });
+      setCatalogImageReport([`${data.imported} imported · ${data.failed} failed`, ...data.results.filter((item) => !item.imported).map((item) => `${item.sku}: ${item.error}`)].join("\n"));
+      if (data.imported) setCatalogImageMappings("");
+      await refresh();
+      onMessage(`${data.imported} catalogue image${data.imported === 1 ? "" : "s"} compressed and stored in R2.`);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -275,7 +301,16 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <button className="primary-button" disabled={busy}>Send offer</button>
     </form></Panel>} />
 
-    <Panel title="Catalogue feed" eyebrow="Meta Commerce Manager scheduled data source"><p className="helper-text">Use this URL as the scheduled catalogue feed. It contains product SKUs, names and base rates; private rates remain server-side.</p><div className="settings-line"><input readOnly value={dashboard?.catalogFeedUrl || "Loading…"} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.catalogFeedUrl || "")}>Copy URL</button></div></Panel>
+    <Panel title="Catalogue feed" eyebrow="Meta Commerce Manager scheduled data source">
+      <p className="helper-text">{dashboard?.catalogImageStats.selected || 0} workbook products matched · {dashboard?.catalogImageStats.eligible || 0} have a customer-facing price · {dashboard?.catalogImageStats.withImage || 0} have optimized images. Private rates remain server-side.</p>
+      <div className="settings-line"><input readOnly value={dashboard?.catalogFeedUrl || "Loading…"} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.catalogFeedUrl || "")}>Copy URL</button></div>
+      <form className="form-grid" onSubmit={importCatalogImages}>
+        <label className="wide-field">Verified product image URLs<textarea rows={5} value={catalogImageMappings} onChange={(event) => setCatalogImageMappings(event.target.value)} placeholder={"SKU,https://licensed-source.example/product.jpg\nSKU-2,https://licensed-source.example/product-2.png"} /></label>
+        <p className="helper-text wide-field">Up to 6 lines per batch. Images are downloaded server-side, validated, converted to a 1000 × 1000 WebP on white, compressed, and stored in R2.</p>
+        <button className="primary-button" disabled={busy}>Import catalogue images</button>
+      </form>
+      {catalogImageReport ? <p className="helper-text" style={{ whiteSpace: "pre-line" }}>{catalogImageReport}</p> : null}
+    </Panel>
     </> : null}
 
     <Panel title="Retailer wishlist" eyebrow="Products to source—never rejected orders"><DataTable headers={["Time", "Retailer", "Requested product", "Quantity", "Salesperson", "Status"]} rows={(dashboard?.wishlists || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.retailer_name || ""), String(item.requested_product || ""), String(item.requested_quantity || ""), String(item.salesman_name || ""), String(item.status || "Pending")])} /></Panel>
