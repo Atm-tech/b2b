@@ -2283,6 +2283,138 @@ export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
   return { products: result.rows };
 }
 
+export async function clearWhatsAppTestActivity() {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `WITH
+     test_retailers AS MATERIALIZED (
+       SELECT id FROM counterparties WHERE id LIKE 'WA-TEST-%'
+     ),
+     test_drafts AS MATERIALIZED (
+       SELECT DISTINCT d.id,d.sales_cart_id,d.phone_e164
+       FROM whatsapp_order_drafts d
+       LEFT JOIN whatsapp_order_draft_lines line ON line.draft_id=d.id
+       WHERE d.counterparty_id IN (SELECT id FROM test_retailers) OR line.product_sku LIKE 'WA-TEST-%'
+     ),
+     test_orders AS MATERIALIZED (
+       SELECT DISTINCT so.id,COALESCE(so.cart_id,so.id) AS cart_id
+       FROM sales_orders so
+       WHERE so.shop_id IN (SELECT id FROM test_retailers)
+          OR so.product_sku LIKE 'WA-TEST-%'
+          OR COALESCE(so.cart_id,so.id) IN (SELECT sales_cart_id FROM test_drafts WHERE sales_cart_id IS NOT NULL)
+     ),
+     test_offers AS MATERIALIZED (
+       SELECT DISTINCT offer.id
+       FROM whatsapp_offers offer
+       LEFT JOIN whatsapp_offer_lines line ON line.offer_id=offer.id
+       WHERE offer.counterparty_id IN (SELECT id FROM test_retailers) OR line.product_sku LIKE 'WA-TEST-%'
+     ),
+     test_tickets AS MATERIALIZED (
+       SELECT id,phone_e164 FROM whatsapp_service_tickets
+       WHERE counterparty_id IN (SELECT id FROM test_retailers)
+     ),
+     test_phones AS MATERIALIZED (
+       SELECT phone_e164 FROM whatsapp_retailers WHERE counterparty_id IN (SELECT id FROM test_retailers) AND phone_e164 IS NOT NULL
+       UNION SELECT phone_e164 FROM test_drafts WHERE phone_e164 IS NOT NULL
+       UNION SELECT phone_e164 FROM test_tickets WHERE phone_e164 IS NOT NULL
+     ),
+     deleted_order_events AS (
+       DELETE FROM whatsapp_order_events
+       WHERE draft_id IN (SELECT id FROM test_drafts)
+          OR sales_cart_id IN (SELECT cart_id FROM test_orders)
+       RETURNING id
+     ),
+     deleted_messages AS (
+       DELETE FROM whatsapp_messages
+       WHERE phone_e164 IN (SELECT phone_e164 FROM test_phones)
+          OR (related_entity_type='Draft' AND related_entity_id IN (SELECT id FROM test_drafts))
+          OR (related_entity_type='ServiceTicket' AND related_entity_id IN (SELECT id FROM test_tickets))
+          OR (related_entity_type='Offer' AND related_entity_id IN (SELECT id FROM test_offers))
+       RETURNING id
+     ),
+     deleted_cart_lines AS (
+       DELETE FROM whatsapp_cart_lines
+       WHERE phone_e164 IN (SELECT phone_e164 FROM test_phones) OR product_sku LIKE 'WA-TEST-%'
+       RETURNING phone_e164
+     ),
+     deleted_cart_sessions AS (
+       DELETE FROM whatsapp_cart_sessions
+       WHERE phone_e164 IN (SELECT phone_e164 FROM test_phones)
+          OR counterparty_id IN (SELECT id FROM test_retailers)
+       RETURNING phone_e164
+     ),
+     deleted_offer_lines AS (
+       DELETE FROM whatsapp_offer_lines WHERE offer_id IN (SELECT id FROM test_offers) RETURNING id
+     ),
+     deleted_offers AS (
+       DELETE FROM whatsapp_offers WHERE id IN (SELECT id FROM test_offers) RETURNING id
+     ),
+     deleted_price_rules AS (
+       DELETE FROM whatsapp_price_rules
+       WHERE counterparty_id IN (SELECT id FROM test_retailers) OR product_sku LIKE 'WA-TEST-%'
+       RETURNING id
+     ),
+     deleted_wishlists AS (
+       DELETE FROM whatsapp_wishlist_requests
+       WHERE counterparty_id IN (SELECT id FROM test_retailers)
+          OR phone_e164 IN (SELECT phone_e164 FROM test_phones)
+          OR matched_product_sku LIKE 'WA-TEST-%'
+       RETURNING id
+     ),
+     deleted_registrations AS (
+       DELETE FROM whatsapp_registration_requests
+       WHERE counterparty_id IN (SELECT id FROM test_retailers) OR phone_e164 IN (SELECT phone_e164 FROM test_phones)
+       RETURNING id
+     ),
+     deleted_tickets AS (
+       DELETE FROM whatsapp_service_tickets WHERE id IN (SELECT id FROM test_tickets) RETURNING id
+     ),
+     deleted_draft_lines AS (
+       DELETE FROM whatsapp_order_draft_lines WHERE draft_id IN (SELECT id FROM test_drafts) RETURNING id
+     ),
+     deleted_drafts AS (
+       DELETE FROM whatsapp_order_drafts WHERE id IN (SELECT id FROM test_drafts) RETURNING id
+     ),
+     deleted_dockets AS (
+       DELETE FROM delivery_dockets WHERE sales_order_id IN (SELECT id FROM test_orders) RETURNING id
+     ),
+     deleted_probationary AS (
+       DELETE FROM probationary_sales
+       WHERE sales_order_id IN (SELECT id FROM test_orders) OR sales_cart_id IN (SELECT cart_id FROM test_orders)
+       RETURNING id
+     ),
+     deleted_returns AS (
+       DELETE FROM sales_returns
+       WHERE linked_order_id IN (SELECT id FROM test_orders) OR linked_order_id IN (SELECT cart_id FROM test_orders)
+       RETURNING id
+     ),
+     deleted_payments AS (
+       DELETE FROM payments WHERE linked_order_id IN (SELECT cart_id FROM test_orders) RETURNING id
+     ),
+     deleted_ledger AS (
+       DELETE FROM ledger_entries WHERE linked_order_id IN (SELECT cart_id FROM test_orders) RETURNING id
+     ),
+     deleted_delivery AS (
+       DELETE FROM delivery_tasks
+       WHERE linked_order_id IN (SELECT cart_id FROM test_orders)
+          OR linked_order_ids_json ?| ARRAY(SELECT cart_id FROM test_orders)
+       RETURNING id
+     ),
+     deleted_orders AS (
+       DELETE FROM sales_orders WHERE id IN (SELECT id FROM test_orders) RETURNING id
+     )
+     SELECT
+       (SELECT COUNT(*) FROM deleted_drafts)::int AS drafts,
+       (SELECT COUNT(*) FROM deleted_draft_lines)::int AS draft_lines,
+       (SELECT COUNT(*) FROM deleted_tickets)::int AS chats,
+       (SELECT COUNT(*) FROM deleted_messages)::int AS messages,
+       (SELECT COUNT(*) FROM deleted_orders)::int AS sales_orders,
+       (SELECT COUNT(*) FROM deleted_offers)::int AS offers,
+       (SELECT COUNT(*) FROM deleted_wishlists)::int AS wishlists`,
+    []
+  );
+  return { cleared: true, ...(result.rows[0] || {}) };
+}
+
 export async function saveWhatsAppRetailer(input: {
   counterpartyId: string; phone: string; salesmanId: number; defaultWarehouseId: string;
   billingType: "B2B" | "B2C"; paymentMode: PaymentMode; cashTiming?: string;

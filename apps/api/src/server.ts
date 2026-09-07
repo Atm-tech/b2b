@@ -61,6 +61,7 @@ import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
+  clearWhatsAppTestActivity,
   configureWhatsAppCommerce,
   createWhatsAppDraftFromLiveChat,
   createWhatsAppOffer,
@@ -1251,6 +1252,11 @@ app.post("/whatsapp/setup/test-retailers", async (req, res) => wrap(res, async (
 app.post("/whatsapp/setup/test-products", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return seedWhatsAppTestProducts(currentUser);
+}));
+
+app.delete("/whatsapp/setup/test-activity", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  return clearWhatsAppTestActivity();
 }));
 
 app.get("/whatsapp/setup/status", async (req, res) => {
