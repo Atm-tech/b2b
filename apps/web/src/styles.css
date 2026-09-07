@@ -4837,6 +4837,7 @@ body.so-viewport-locked .sales-catalog textarea {
 /* Dedicated WhatsApp administration: one calm task surface with its own navigation. */
 .whatsapp-admin-app {
   min-height: 100dvh;
+  align-content: start;
   padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px));
   background:
     radial-gradient(circle at 84% -8%, rgba(37, 211, 102, 0.16), transparent 30%),
