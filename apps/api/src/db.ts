@@ -269,6 +269,12 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS channel_scope TEXT NOT NULL DEFAULT 'All';
+    ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ;
+    ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS tags_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS matched_product_sku TEXT;
+    ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS resolution_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
     DO $$
     DECLARE constraint_name TEXT;
     DECLARE index_name TEXT;

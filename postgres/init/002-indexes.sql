@@ -15,6 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_orders_created_at ON sales_orders(created_a
 CREATE INDEX IF NOT EXISTS idx_sales_orders_cart ON sales_orders(cart_id) WHERE cart_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sales_orders_warehouse ON sales_orders(warehouse_id);
 CREATE INDEX IF NOT EXISTS idx_sales_orders_product ON sales_orders(product_sku);
+CREATE INDEX IF NOT EXISTS idx_sales_orders_product_created_rate ON sales_orders(product_sku, created_at DESC) WHERE rate > 0 AND status <> 'Cancelled';
 CREATE INDEX IF NOT EXISTS idx_sales_orders_shop_product_created ON sales_orders(shop_id, product_sku, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(linked_order_id, side);
@@ -61,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_cart_lines_phone ON whatsapp_cart_lines(
 CREATE INDEX IF NOT EXISTS idx_whatsapp_wishlist_salesman_status ON whatsapp_wishlist_requests(salesman_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_registration_phone_status ON whatsapp_registration_requests(phone_e164, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone_created ON whatsapp_messages(phone_e164, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_service_tickets_owner ON whatsapp_service_tickets(salesman_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_service_tickets_retailer ON whatsapp_service_tickets(counterparty_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_order_events_draft ON whatsapp_order_events(draft_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_broadcast_campaigns_created ON whatsapp_broadcast_campaigns(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_counterparties_type_name ON counterparties(type, name);
 CREATE INDEX IF NOT EXISTS idx_counterparties_created_at ON counterparties(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_purchase_returns_warehouse_created ON purchase_returns(warehouse_id, created_at DESC);

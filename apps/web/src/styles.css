@@ -5030,6 +5030,8 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-section-tabs.is-compact { grid-template-columns: repeat(2, minmax(0, 180px)); }
 .wa-section-tabs.has-six,
 .wa-admin-dock.has-six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.wa-section-tabs.has-many,
+.wa-admin-dock.has-many { grid-template-columns: repeat(8, minmax(0, 1fr)); }
 
 .wa-section-tabs button,
 .wa-admin-dock button {
@@ -5133,6 +5135,32 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-command-icon.retailers { background: linear-gradient(145deg, #2775be, #479be1); }
 .wa-command-icon.wishlist { background: linear-gradient(145deg, #c57518, #eba832); }
 .wa-command-icon.catalogue { background: linear-gradient(145deg, #7857b8, #a77de5); }
+.wa-command-icon.service { background: linear-gradient(145deg, #b75672, #df7894); }
+.wa-command-icon.insights { background: linear-gradient(145deg, #315d88, #4c8fc4); }
+
+.wa-lifecycle-row,
+.wa-ticket-reply { display: grid; grid-template-columns: minmax(180px,.75fr) minmax(240px,1.5fr) auto auto; align-items: end; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e1ece8; }
+.wa-lifecycle-row label { display: grid; gap: 6px; color: #294b45; font-size: .78rem; font-weight: 800; }
+.wa-lifecycle-row button,.wa-ticket-reply button,.wa-link-button { width: auto; min-height: 42px; padding: 9px 14px; }
+.wa-ticket-list { display: grid; gap: 12px; }
+.wa-ticket-card { display: grid; grid-template-columns: minmax(220px,1fr) minmax(260px,1.25fr) auto; align-items: end; gap: 12px; padding: 14px; border: 1px solid #dce8e4; border-radius: 15px; background: #fbfdfc; }
+.wa-ticket-card > div { display: grid; gap: 3px; }
+.wa-ticket-card span,.wa-ticket-card small { color: #6b807a; font-size: .78rem; }
+.wa-ticket-card label { display: grid; gap: 5px; color: #294b45; font-size: .76rem; font-weight: 800; }
+.wa-ticket-card button { width: auto; min-height: 42px; padding: 9px 13px; }
+.wa-service-ticket { content-visibility: auto; contain-intrinsic-size: 420px; }
+.wa-ticket-thread { max-height: 220px; overflow: auto; padding: 12px; border-radius: 12px; background: #f3f8f6; color: #294b45; font: inherit; font-size: .82rem; line-height: 1.55; white-space: pre-wrap; }
+.wa-preference-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 10px; }
+.wa-preference-grid article { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid #dce8e4; border-radius: 14px; background: #fbfdfc; }
+.wa-preference-grid article > div,.wa-preference-grid article > label:not(.checkbox-line) { display: grid; gap: 3px; }
+.wa-preference-grid article > label:not(.checkbox-line) { grid-column: 1/-1; color: #315a51; font-size: .76rem; font-weight: 800; }
+.wa-preference-grid small { color: #6b807a; }
+.wa-preference-grid button { width: auto; min-height: 38px; padding: 7px 11px; }
+.wa-insight-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 10px; }
+.wa-insight-grid article { display: grid; gap: 4px; padding: 16px; border: 1px solid #dce8e4; border-radius: 16px; background: #fff; box-shadow: 0 7px 18px rgba(20,61,53,.05); }
+.wa-insight-grid span,.wa-insight-grid small { color: #70847e; font-size: .75rem; }
+.wa-insight-grid strong { color: #164b42; font-size: 1.65rem; }
+.wa-link-button { display: inline-flex; margin-top: 12px; text-decoration: none; }
 
 .wa-home-strip {
   display: grid;
@@ -5194,6 +5222,10 @@ body.so-viewport-locked .sales-catalog textarea {
   .wa-admin-dock button { min-height: 56px; padding-inline: 2px; }
   .wa-admin-dock strong { font-size: 0.64rem; }
   .wa-admin-dock svg { width: 20px; height: 20px; }
+  .wa-section-tabs.has-many,.wa-admin-dock.has-many { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .wa-admin-workspace.is-dedicated { padding-bottom: 152px; }
+  .wa-lifecycle-row,.wa-ticket-reply,.wa-ticket-card { grid-template-columns: 1fr; }
+  .wa-ticket-card button,.wa-lifecycle-row button,.wa-ticket-reply button { width: 100%; }
 }
 
 /* Compact enterprise dock: clear hierarchy, large tap targets and iOS safe-area. */

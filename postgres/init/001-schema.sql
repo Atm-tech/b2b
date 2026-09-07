@@ -387,6 +387,9 @@ CREATE TABLE IF NOT EXISTS whatsapp_retailers (
   cash_timing TEXT,
   delivery_mode TEXT NOT NULL DEFAULT 'Delivery',
   opted_in_at TIMESTAMPTZ,
+  marketing_opt_in BOOLEAN NOT NULL DEFAULT TRUE,
+  paused_at TIMESTAMPTZ,
+  tags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -506,6 +509,9 @@ CREATE TABLE IF NOT EXISTS whatsapp_wishlist_requests (
   requested_quantity DOUBLE PRECISION NOT NULL,
   status TEXT NOT NULL DEFAULT 'Pending',
   source_message_id TEXT,
+  matched_product_sku TEXT,
+  resolution_note TEXT NOT NULL DEFAULT '',
+  resolved_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -540,5 +546,49 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
   status TEXT NOT NULL DEFAULT 'Received',
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Retailer support, live-agent handoff and post-order service requests.
+CREATE TABLE IF NOT EXISTS whatsapp_service_tickets (
+  id TEXT PRIMARY KEY,
+  counterparty_id TEXT NOT NULL,
+  phone_e164 TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  kind TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  details TEXT NOT NULL DEFAULT '',
+  linked_order_id TEXT,
+  media_id TEXT,
+  media_type TEXT,
+  status TEXT NOT NULL DEFAULT 'Open',
+  priority TEXT NOT NULL DEFAULT 'Normal',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_order_events (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL,
+  sales_cart_id TEXT,
+  event_type TEXT NOT NULL,
+  status_label TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  outbound_message_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_broadcast_campaigns (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  message_type TEXT NOT NULL DEFAULT 'text',
+  template_name TEXT,
+  body TEXT NOT NULL DEFAULT '',
+  audience_count INTEGER NOT NULL DEFAULT 0,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

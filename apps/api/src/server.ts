@@ -72,13 +72,18 @@ import {
   importWhatsAppCatalogImages,
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
+  notifyWhatsAppOrderLifecycle,
   reviewWhatsAppDraft,
+  replyWhatsAppServiceTicket,
+  resolveWhatsAppWishlist,
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
   seedWhatsAppTestRetailers,
   sendWhatsAppBroadcast,
   sendWhatsAppInvoiceSummary,
+  sendWhatsAppOrderUpdate,
   subscribeWhatsAppBusinessAccount,
+  updateWhatsAppRetailerPreferences,
   verifyWhatsAppSignature,
   verifyWhatsAppWebhook
 } from "./whatsapp-integration.js";
@@ -686,7 +691,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
     if (!canEditSalesOrders && !currentUser.roles.includes("Admin")) {
       throw new Error("You are not allowed to perform this action.");
     }
-    return updateSalesOrderGroup(req.params.id, {
+    const updated = await updateSalesOrderGroup(req.params.id, {
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode,
@@ -694,6 +699,8 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
       status,
       lines
     }, currentUser);
+    await notifyWhatsAppOrderLifecycle(req.params.id, status).catch(() => undefined);
+    return updated;
   }
   const status = requiredString(req.body?.status, "Status") as any;
   const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
@@ -707,7 +714,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
   if (!canEditSalesOrders && !canRunWarehouseDispatchFlow) {
     throw new Error("You are not allowed to perform this action.");
   }
-  return updateSalesOrder(req.params.id, {
+  const updated = await updateSalesOrder(req.params.id, {
     rate: requiredNumber(req.body?.rate, "Rate"),
     paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
@@ -717,6 +724,8 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
     containerWeightKg: optionalNumber(req.body?.containerWeightKg),
     weighingProofName: optionalString(req.body?.weighingProofName)
   });
+  await notifyWhatsAppOrderLifecycle(req.params.id, status).catch(() => undefined);
+  return updated;
 }));
 
 app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async () => {
@@ -1036,7 +1045,8 @@ app.post("/delivery-tasks", async (req, res) => wrap(res, async () => {
 app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
   await requireRole(req, ["Warehouse Manager", "Delivery Manager", "In Delivery", "Out Delivery", "Delivery"]);
   const linkedOrderIds = parseLinkedOrderIds(req.body?.linkedOrderIds, req.body?.linkedOrderId);
-  return updateDeliveryTask(req.params.id, {
+  const status = requiredString(req.body?.status, "Status");
+  const updated = await updateDeliveryTask(req.params.id, {
     linkedOrderIds,
     consignmentId: optionalString(req.body?.consignmentId),
     assignedTo: requiredString(req.body?.assignedTo, "Assigned to"),
@@ -1048,13 +1058,15 @@ app.patch("/delivery-tasks/:id", async (req, res) => wrap(res, async () => {
     dropAt: optionalString(req.body?.dropAt),
     routeHint: optionalString(req.body?.routeHint),
     paymentAction: (optionalString(req.body?.paymentAction) || "None") as DeliveryTask["paymentAction"],
-    status: requiredString(req.body?.status, "Status") as any,
+    status: status as any,
     cashCollectionRequired: Boolean(req.body?.cashCollectionRequired),
     cashHandoverMarked: Boolean(req.body?.cashHandoverMarked),
     weightProofName: optionalString(req.body?.weightProofName),
     cashProofName: optionalString(req.body?.cashProofName),
     lastActionAt: optionalString(req.body?.lastActionAt)
   });
+  await Promise.all(linkedOrderIds.map((orderId) => notifyWhatsAppOrderLifecycle(orderId, status).catch(() => undefined)));
+  return updated;
 }));
 
 app.post("/delivery-tasks/merge", async (req, res) => wrap(res, async () => {
@@ -1250,7 +1262,20 @@ app.post("/whatsapp/broadcasts", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return sendWhatsAppBroadcast({
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
-    message: requiredString(req.body?.message, "Message")
+    message: optionalString(req.body?.message) || "",
+    title: optionalString(req.body?.title),
+    templateName: optionalString(req.body?.templateName),
+    templateParameters: Array.isArray(req.body?.templateParameters)
+      ? req.body.templateParameters.map((item: unknown) => String(item ?? "").trim()).filter(Boolean)
+      : []
+  }, currentUser);
+}));
+
+app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  return updateWhatsAppRetailerPreferences(req.params.id, {
+    marketingOptIn: req.body?.marketingOptIn !== false,
+    tags: Array.isArray(req.body?.tags) ? req.body.tags.map((item: unknown) => String(item ?? "")) : []
   }, currentUser);
 }));
 
@@ -1291,6 +1316,36 @@ app.post("/whatsapp/drafts/:id/deny", async (req, res) => wrap(res, async () => 
 app.post("/whatsapp/drafts/:id/invoice", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales", "Accounts"]);
   return sendWhatsAppInvoiceSummary(req.params.id, currentUser);
+}));
+
+app.post("/whatsapp/drafts/:id/status", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales", "Warehouse Manager", "Delivery Manager"]);
+  return sendWhatsAppOrderUpdate(
+    req.params.id,
+    requiredString(req.body?.status, "Status"),
+    optionalString(req.body?.note) || "",
+    currentUser
+  );
+}));
+
+app.post("/whatsapp/service-tickets/:id/reply", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return replyWhatsAppServiceTicket(
+    req.params.id,
+    requiredString(req.body?.message, "Reply"),
+    Boolean(req.body?.close),
+    currentUser
+  );
+}));
+
+app.post("/whatsapp/wishlists/:id/available", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return resolveWhatsAppWishlist(
+    req.params.id,
+    requiredString(req.body?.productSku, "Product"),
+    optionalString(req.body?.note) || "",
+    currentUser
+  );
 }));
 
 app.get("/assistant/training-examples/:id/audio", async (req, res) => {
