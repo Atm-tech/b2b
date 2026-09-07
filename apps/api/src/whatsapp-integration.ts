@@ -907,7 +907,7 @@ async function finalizeCart(profile: RetailerProfile, messageId: string) {
   }
 }
 
-async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "") {
+async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "", notifyReceived = true) {
   if (lines.length === 0) throw new Error("The order did not contain any products.");
   const draftId = id("WAD");
   await executeDatabaseQuery(
@@ -930,11 +930,11 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
         line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive", line.note || ""]
     );
   }
-  await sendText(profile.phoneE164,
+  if (notifyReceived) await sendText(profile.phoneE164,
     `✅ Order request ${draftId} received. ${profile.salesmanName} will verify stock and your special rate, then send the final summary for confirmation.`,
     "Draft", draftId);
   const template = text(process.env.WHATSAPP_SALESPERSON_ALERT_TEMPLATE);
-  if (template) {
+  if (notifyReceived && template) {
     const user = (await getSnapshot()).users.find((item) => item.id === profile.salesmanId);
     if (user?.mobileNumber) await sendTemplate(user.mobileNumber, template, [draftId, profile.retailerName], "Draft", draftId).catch(() => undefined);
   }
@@ -1832,12 +1832,15 @@ export async function getWhatsAppLiveChat(currentUser: StaffUser, selectedTicket
   const selected = selectedTicketId && tickets.rows.some((ticket) => text(ticket.id) === selectedTicketId)
     ? selectedTicketId
     : text(tickets.rows[0]?.id);
-  const messages = selected
+  const selectedTicket = tickets.rows.find((ticket) => text(ticket.id) === selected);
+  const messages = selectedTicket
     ? await executeDatabaseQuery<Record<string, unknown>>(
       `SELECT id,wa_message_id,direction,message_type,status,payload_json,error_message,created_at
        FROM whatsapp_messages
-       WHERE related_entity_type='ServiceTicket' AND related_entity_id=$1
-       ORDER BY created_at ASC,id ASC LIMIT 500`, [selected])
+       WHERE phone_e164=$1 AND created_at >= $2::timestamptz
+         AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz + INTERVAL '5 minutes')
+       ORDER BY created_at ASC,id ASC LIMIT 500`,
+      [text(selectedTicket.phone_e164), selectedTicket.created_at, selectedTicket.resolved_at || null])
     : { rows: [] as Record<string, unknown>[] };
   return {
     selectedTicketId: selected,
@@ -1881,8 +1884,8 @@ export async function updateWhatsAppLiveChat(ticketId: string, input: { status?:
     if (!status) throw new Error("Chat status must be Open or Resolved.");
     await executeDatabaseQuery(
       `UPDATE whatsapp_service_tickets
-       SET status=$2,resolved_at=CASE WHEN $2='Resolved' THEN NOW() ELSE NULL END,
-           closed_by=CASE WHEN $2='Resolved' THEN $3 ELSE NULL END,updated_at=NOW()
+       SET status=$2::text,resolved_at=CASE WHEN $2::text='Resolved' THEN NOW() ELSE NULL END,
+           closed_by=CASE WHEN $2::text='Resolved' THEN $3::text ELSE NULL END,updated_at=NOW()
        WHERE id=$1`, [ticketId, status, currentUser.fullName]
     );
     if (status === "Resolved" && text(ticket.phone_e164)) {
@@ -1891,6 +1894,61 @@ export async function updateWhatsAppLiveChat(ticketId: string, input: { status?:
     }
   }
   return getWhatsAppLiveChat(currentUser, ticketId);
+}
+
+export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
+  productSku: string;
+  quantity: number;
+  rate: number;
+  cdPercent: number;
+  todPercent: number;
+  warehouseId: string;
+  paymentMode: PaymentMode;
+  cashTiming?: string;
+  deliveryMode: "Delivery" | "Self Collection";
+  note?: string;
+}, currentUser: StaffUser) {
+  const ticket = await loadLiveChatTicket(ticketId, currentUser);
+  if (text(ticket.status) !== "Open") throw new Error("Reopen this chat before creating an order.");
+  const profile = await getRetailerByPhone(text(ticket.phone_e164));
+  if (!profile) throw new Error("Retailer mapping is no longer active.");
+  const pricing = await productPricing(profile.counterpartyId, input.productSku);
+  if (!(input.quantity >= pricing.minimumQuantity)) throw new Error(`${pricing.name} has a minimum order quantity of ${pricing.minimumQuantity}.`);
+  if (!(input.rate > 0)) throw new Error("Rate must be greater than zero.");
+  if (input.cdPercent < 0 || input.todPercent < 0 || input.cdPercent + input.todPercent >= 100) throw new Error("Enter valid CD/TOD percentages.");
+  const draftId = await createDraft(profile, "Live chat", "", [{
+    productSku: input.productSku,
+    quantity: input.quantity,
+    rate: input.rate,
+    cdPercent: input.cdPercent,
+    todPercent: input.todPercent,
+    gstRate: pricing.gstRate,
+    taxMode: pricing.taxMode,
+    note: compact(input.note || `Created from chat ${ticketId}`, 500)
+  }], "", false);
+  const loaded = await loadDraft(draftId);
+  try {
+    await reviewWhatsAppDraft(draftId, {
+      warehouseId: input.warehouseId || profile.defaultWarehouseId,
+      paymentMode: input.paymentMode || profile.paymentMode,
+      cashTiming: input.cashTiming || profile.cashTiming,
+      deliveryMode: input.deliveryMode || profile.deliveryMode,
+      note: compact(input.note || `Created from live chat ${ticketId}`, 1000),
+      lines: loaded.lines.map((line) => ({
+        id: text(line.id), quantity: input.quantity, rate: input.rate,
+        cdPercent: input.cdPercent, todPercent: input.todPercent
+      }))
+    }, currentUser);
+  } catch (error) {
+    await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [draftId]);
+    await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [draftId]);
+    throw error;
+  }
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_service_tickets SET linked_order_id=$2,last_message_preview=$3,last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
+    [ticketId, draftId, `Order ${draftId} sent for retailer confirmation`]
+  );
+  return { draftId, dashboard: await getWhatsAppDashboard(currentUser), liveChat: await getWhatsAppLiveChat(currentUser, ticketId) };
 }
 
 export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {

@@ -62,6 +62,7 @@ import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
   configureWhatsAppCommerce,
+  createWhatsAppDraftFromLiveChat,
   createWhatsAppOffer,
   denyWhatsAppDraft,
   getWhatsAppCatalogFeed,
@@ -1199,6 +1200,22 @@ app.post("/whatsapp/live-chat/:id/update", async (req, res) => wrap(res, async (
   return updateWhatsAppLiveChat(req.params.id, {
     status: optionalString(req.body?.status) || undefined,
     salesmanId: req.body?.salesmanId === undefined ? undefined : requiredNumber(req.body.salesmanId, "Salesperson")
+  }, currentUser);
+}));
+
+app.post("/whatsapp/live-chat/:id/order", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return createWhatsAppDraftFromLiveChat(req.params.id, {
+    productSku: requiredString(req.body?.productSku, "Product"),
+    quantity: requiredNumber(req.body?.quantity, "Quantity"),
+    rate: requiredNumber(req.body?.rate, "Rate"),
+    cdPercent: optionalNumber(req.body?.cdPercent) || 0,
+    todPercent: optionalNumber(req.body?.todPercent) || 0,
+    warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
+    cashTiming: optionalString(req.body?.cashTiming),
+    deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery",
+    note: optionalString(req.body?.note)
   }, currentUser);
 }));
 
