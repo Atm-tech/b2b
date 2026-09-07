@@ -4811,6 +4811,29 @@ body.so-viewport-locked .sales-catalog textarea {
   }
 }
 
+.wa-catalog-preview { margin-top: 22px; }
+.wa-catalog-preview-head { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.wa-catalog-preview-head > div { display: grid; gap: 2px; }
+.wa-catalog-preview-head strong { color: #17324d; font-size: 1.05rem; }
+.wa-catalog-preview-head span { color: #6b7f91; font-size: 0.82rem; }
+.wa-catalog-preview-head input { width: min(360px, 100%); }
+.wa-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; max-height: 720px; overflow: auto; padding: 2px 4px 6px 2px; }
+.wa-catalog-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; min-height: 150px; padding: 12px; border: 1px solid #dce7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05); }
+.wa-catalog-card img { width: 88px; height: 112px; align-self: center; object-fit: contain; border-radius: 10px; background: #f7fafb; }
+.wa-catalog-card-copy { min-width: 0; display: grid; align-content: start; gap: 5px; }
+.wa-catalog-card-copy > span,.wa-catalog-card-copy small { color: #718497; font-size: 0.72rem; overflow-wrap: anywhere; }
+.wa-catalog-card-copy > strong { color: #17324d; font-size: 0.9rem; line-height: 1.3; }
+.wa-catalog-price { display: grid; gap: 2px; margin-top: 3px; }
+.wa-catalog-price b { color: #087f79; font-size: 0.95rem; }
+.wa-catalog-price span { color: #5f7487; font-size: 0.75rem; }
+.wa-catalog-card-copy em { width: fit-content; margin-top: 3px; padding: 4px 7px; border-radius: 999px; background: #e8f7f5; color: #0d756f; font-size: 0.72rem; font-style: normal; font-weight: 700; }
+
+@media (max-width: 640px) {
+  .wa-catalog-preview-head { align-items: stretch; flex-direction: column; }
+  .wa-catalog-preview-head input { width: 100%; }
+  .wa-catalog-grid { grid-template-columns: 1fr; max-height: 620px; }
+}
+
 /* Compact enterprise dock: clear hierarchy, large tap targets and iOS safe-area. */
 .mobile-tab-bar.app-dock,
 .simple-tab-bar.app-dock {

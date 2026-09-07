@@ -58,6 +58,7 @@ type Dashboard = {
   registrations: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
   catalogImageStats: { selected: number; eligible: number; withImage: number };
+  catalogProducts: Array<{ sku: string; name: string; brand: string; size: string; mrp: number; sellingRate: number; minimumOrderQuantity: number; imageUrl: string }>;
   catalogFeedUrl: string;
 };
 
@@ -204,6 +205,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [offer, setOffer] = useState({ counterpartyIds: [] as string[], productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", expiresAt: localDateTime(8) });
   const [catalogImageMappings, setCatalogImageMappings] = useState("");
   const [catalogImageReport, setCatalogImageReport] = useState("");
+  const [catalogSearch, setCatalogSearch] = useState("");
 
   const headers = { authorization: `Bearer ${sessionToken}` };
   async function refresh() {
@@ -255,6 +257,13 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 
   const mappedRetailers = dashboard?.retailers || [];
   const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
+  const visibleCatalogProducts = useMemo(() => {
+    const query = catalogSearch.trim().toLowerCase().replace(/\s+/g, "");
+    const products = dashboard?.catalogProducts || [];
+    if (!query) return products;
+    return products.filter((product) => [product.name, product.sku, product.brand, product.size]
+      .some((value) => value.toLowerCase().replace(/\s+/g, "").includes(query)));
+  }, [catalogSearch, dashboard?.catalogProducts]);
   return <div className="stacked-sections">
     <section className="metric-grid">
       {whatsappAdmin ? <Panel title={dashboard?.configuration.mode || "Loading"} eyebrow="WhatsApp connection"><p>{dashboard?.configuration.connected ? "Meta Cloud API credentials detected." : "Safe simulation mode: messages are logged but not sent."}</p></Panel> : null}
@@ -310,6 +319,30 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
         <button className="primary-button" disabled={busy}>Import catalogue images</button>
       </form>
       {catalogImageReport ? <p className="helper-text" style={{ whiteSpace: "pre-line" }}>{catalogImageReport}</p> : null}
+      <div className="wa-catalog-preview">
+        <div className="wa-catalog-preview-head">
+          <div><strong>Catalogue preview</strong><span>{visibleCatalogProducts.length} products</span></div>
+          <input type="search" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search name, SKU or brand" aria-label="Search WhatsApp catalogue" />
+        </div>
+        <div className="wa-catalog-grid">
+          {visibleCatalogProducts.map((product) => {
+            const discount = product.mrp > 0 && product.sellingRate > 0 ? Math.max(0, (product.mrp - product.sellingRate) / product.mrp * 100) : 0;
+            return <article className="wa-catalog-card" key={product.sku}>
+              <img src={product.imageUrl} alt="" loading="lazy" />
+              <div className="wa-catalog-card-copy">
+                <span>{product.brand || "Aapoorti"}{product.size ? ` · ${product.size}` : ""}</span>
+                <strong>{product.name}</strong>
+                <small>{product.sku}</small>
+                <div className="wa-catalog-price">
+                  {product.sellingRate > 0 ? <b>₹{product.sellingRate.toFixed(2)}</b> : <b>Rate pending</b>}
+                  {product.mrp > 0 ? <span>MRP ₹{product.mrp.toFixed(2)}{discount > 0 ? ` · ${discount.toFixed(1)}% off` : ""}</span> : <span>MRP pending</span>}
+                </div>
+                <em>Minimum order {product.minimumOrderQuantity}</em>
+              </div>
+            </article>;
+          })}
+        </div>
+      </div>
     </Panel>
     </> : null}
 

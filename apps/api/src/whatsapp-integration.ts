@@ -1254,7 +1254,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = isWhatsAppAdminUser(currentUser);
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats, catalogProducts] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -1303,9 +1303,26 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
          SELECT rate FROM sales_orders
          WHERE product_sku=p.sku AND rate>0 AND status<>'Cancelled'
          ORDER BY created_at DESC LIMIT 1
-       ) history ON TRUE`)
+       ) history ON TRUE`),
+    executeDatabaseQuery<Record<string, unknown>>(
+      isAdmin
+        ? `SELECT p.sku, p.name, p.brand, p.size, p.mrp, p.minimum_order_quantity,
+                  p.catalog_image_key, p.catalog_image_updated_at,
+                  COALESCE(p.offer_price, p.rsp, p.mrp, history.rate, 0) AS selling_rate
+           FROM products p
+           LEFT JOIN LATERAL (
+             SELECT rate FROM sales_orders
+             WHERE product_sku=p.sku AND rate>0 AND status<>'Cancelled'
+             ORDER BY created_at DESC LIMIT 1
+           ) history ON TRUE
+           WHERE p.whatsapp_catalog_enabled=TRUE
+           ORDER BY p.name`
+        : `SELECT NULL WHERE FALSE`)
   ]);
   const visibleDraftIds = new Set(drafts.rows.map((row) => text(row.id)));
+  const catalogToken = text(process.env.WHATSAPP_CATALOG_FEED_TOKEN);
+  const publicApi = (process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com").replace(/\/$/, "");
+  const publicWeb = (process.env.PUBLIC_WEB_URL || "https://b2b-api-theta.vercel.app").replace(/\/$/, "");
   return {
     permissions: { whatsappAdmin: isAdmin },
     configuration: {
@@ -1335,6 +1352,18 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       eligible: isAdmin ? numberValue(imageStats.rows[0]?.eligible) : 0,
       withImage: isAdmin ? numberValue(imageStats.rows[0]?.with_image) : 0
     },
+    catalogProducts: isAdmin ? catalogProducts.rows.map((row) => ({
+      sku: text(row.sku),
+      name: text(row.name),
+      brand: text(row.brand),
+      size: text(row.size),
+      mrp: numberValue(row.mrp),
+      sellingRate: numberValue(row.selling_rate),
+      minimumOrderQuantity: Math.max(1, numberValue(row.minimum_order_quantity, 1)),
+      imageUrl: row.catalog_image_key && catalogToken
+        ? `${publicApi}/whatsapp/catalog/images/${encodeURIComponent(text(row.sku))}?token=${encodeURIComponent(catalogToken)}&v=${encodeURIComponent(text(row.catalog_image_updated_at))}`
+        : `${publicWeb}/business-connect-icon-512.png`
+    })) : [],
     catalogFeedUrl: isAdmin
       ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/feed.csv?token=${encodeURIComponent(process.env.WHATSAPP_CATALOG_FEED_TOKEN || "SET_A_SECRET")}`
       : ""
