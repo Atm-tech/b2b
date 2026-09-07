@@ -81,6 +81,7 @@ import {
   resolveWhatsAppWishlist,
   saveWhatsAppPriceRule,
   saveWhatsAppRetailer,
+  seedWhatsAppTestProducts,
   seedWhatsAppTestRetailers,
   sendWhatsAppBroadcast,
   sendWhatsAppInvoiceSummary,
@@ -1244,6 +1245,11 @@ app.post("/whatsapp/catalog/images/import", async (req, res) => wrap(res, async 
 app.post("/whatsapp/setup/test-retailers", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return seedWhatsAppTestRetailers(currentUser);
+}));
+
+app.post("/whatsapp/setup/test-products", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  return seedWhatsAppTestProducts(currentUser);
 }));
 
 app.get("/whatsapp/setup/status", async (req, res) => {

@@ -2172,6 +2172,56 @@ export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {
   return getWhatsAppDashboard(currentUser);
 }
 
+export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `WITH seed (sku,name,department,category,unit,weight,moq,stock,rsp,mrp) AS (
+       VALUES
+         ('WA-TEST-BISCUIT-5','WA TEST BISCUIT 100G','Grocery','Biscuits','Pack',0.10,5,50,18,20),
+         ('WA-TEST-SOAP-12','WA TEST SOAP 100G','Personal Care','Bath Soap','Piece',0.10,12,120,27,30),
+         ('WA-TEST-DRINK-24','WA TEST DRINK 750ML','Beverages','Soft Drinks','Bottle',0.75,24,240,45,50)
+     ), products_upserted AS (
+       INSERT INTO products (
+         sku,name,division,department,section_name,category,sub_category,unit,
+         default_gst_rate,default_tax_mode,default_weight_kg,tolerance_kg,tolerance_percent,
+         allowed_warehouse_ids_json,slabs_json,remarks,brand,short_name,size,rsp,mrp,
+         offer_label,offer_price,minimum_order_quantity,whatsapp_catalog_enabled,created_by,created_at
+       )
+       SELECT sku,name,'Test',department,'WhatsApp Test',category,'Test Products',unit,
+              18,'Exclusive',weight,0.01,10,'["C21"]'::jsonb,'[]'::jsonb,
+              'WhatsApp ordering and proforma test product','Aapoorti Test',name,
+              CASE WHEN unit='Bottle' THEN '750ML' ELSE '100G' END,rsp,mrp,
+              'Test rate',rsp,moq,TRUE,$1,NOW()
+       FROM seed
+       ON CONFLICT (sku) DO UPDATE SET
+         name=EXCLUDED.name,division=EXCLUDED.division,department=EXCLUDED.department,
+         section_name=EXCLUDED.section_name,category=EXCLUDED.category,sub_category=EXCLUDED.sub_category,
+         unit=EXCLUDED.unit,default_gst_rate=EXCLUDED.default_gst_rate,
+         default_tax_mode=EXCLUDED.default_tax_mode,default_weight_kg=EXCLUDED.default_weight_kg,
+         allowed_warehouse_ids_json=EXCLUDED.allowed_warehouse_ids_json,rsp=EXCLUDED.rsp,mrp=EXCLUDED.mrp,
+         offer_label=EXCLUDED.offer_label,offer_price=EXCLUDED.offer_price,
+         minimum_order_quantity=EXCLUDED.minimum_order_quantity,whatsapp_catalog_enabled=TRUE
+       RETURNING sku
+     ), lots_inserted AS (
+       INSERT INTO inventory_lots (
+         lot_id,source_order_id,source_type,warehouse_id,product_sku,
+         quantity_available,quantity_reserved,quantity_blocked,status,created_at
+       )
+       SELECT 'LOT-' || sku || '-C21','WA-TEST-SETUP','WhatsApp Test Setup','C21',sku,stock,0,0,'Available',NOW()
+       FROM seed
+       ON CONFLICT (lot_id) DO NOTHING
+       RETURNING product_sku
+     )
+     SELECT p.sku,p.name,p.minimum_order_quantity AS moq,p.rsp,p.mrp,
+            COALESCE(SUM(l.quantity_available-l.quantity_reserved),0) AS available_c21
+     FROM products p
+     LEFT JOIN inventory_lots l ON l.product_sku=p.sku AND l.warehouse_id='C21' AND l.status='Available'
+     WHERE p.sku IN (SELECT sku FROM seed)
+     GROUP BY p.sku ORDER BY p.sku`,
+    [currentUser.username]
+  );
+  return { products: result.rows };
+}
+
 export async function saveWhatsAppRetailer(input: {
   counterpartyId: string; phone: string; salesmanId: number; defaultWarehouseId: string;
   billingType: "B2B" | "B2C"; paymentMode: PaymentMode; cashTiming?: string;
