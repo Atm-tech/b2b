@@ -4995,6 +4995,28 @@ body.so-viewport-locked .sales-catalog textarea {
 
 .wa-broadcast-actions > button { width: auto; min-height: 42px; padding: 9px 14px; }
 
+.wa-broadcast-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wa-broadcast-presets > button { width: auto; min-height: 38px; padding: 7px 12px; }
+
+.wa-auto-welcome-note {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #c9e5dc;
+  border-radius: 14px;
+  background: #edf9f5;
+  color: #315d54;
+}
+
+.wa-auto-welcome-note strong { color: #087b68; }
+.wa-auto-welcome-note span { font-size: 0.82rem; line-height: 1.45; }
+
 .wa-section-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

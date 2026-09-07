@@ -17,20 +17,21 @@ const whatsappAdminSections: Array<{ key: WhatsAppAdminSection; label: string; v
   { key: "Broadcast", label: "Broadcast", view: "WhatsApp" }
 ];
 
-const retailerWelcomeMessage = `Namaste {retailer} 👋
+const festivalBroadcast = `Namaste {retailer} 👋
 
-Aapoorti Wholesale WhatsApp ordering mein aapka swagat hai.
+Aapoorti Wholesale ki taraf se aapko aur aapke parivaar ko [Festival name] ki hardik shubhkamnayein! 🎉
 
-Yahan aap product dhoondh sakte hain, apna rate/MRP/discount dekh sakte hain, quantity select karke cart bana sakte hain aur order finalize kar sakte hain.
+[Offer ya delivery schedule yahan likhein]
 
-Order kaise karein:
-1. Product ka naam type karein — jaise Lux
-2. Sahi item select karein
-3. Quantity bhejein
-4. Aur item chahiye to Add More choose karein
-5. Total check karke Finalize karein
+Order ke liye product ka naam ya *catalogue* bhejein.`;
 
-Demo ke liye *demo*, catalogue ke liye *catalogue* aur madad ke liye *help* bhejein.`;
+const featureBroadcast = `Namaste {retailer} 👋
+
+Aapoorti Wholesale mein naya feature aa gaya hai: [Feature name]
+
+[Simple fayda aur use karne ka tareeka yahan likhein]
+
+Madad ke liye *help* bhejein.`;
 
 type RetailerProfile = {
   counterpartyId: string;
@@ -246,8 +247,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [offerDepartment, setOfferDepartment] = useState("");
   const [broadcastSearch, setBroadcastSearch] = useState("");
   const [broadcastRetailerIds, setBroadcastRetailerIds] = useState<string[]>([]);
-  const [broadcastMessage, setBroadcastMessage] = useState(retailerWelcomeMessage);
-  const [welcomeOnly, setWelcomeOnly] = useState(true);
+  const [broadcastMessage, setBroadcastMessage] = useState("");
   const [broadcastReport, setBroadcastReport] = useState("");
   const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>("Home");
 
@@ -284,8 +284,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     try {
       const { data } = await api.post<{ sent: number; skipped: number; failed: number; dashboard: Dashboard; results: Array<{ retailer: string; status: string; error?: string }> }>("/whatsapp/broadcasts", {
         counterpartyIds: broadcastRetailerIds,
-        message: broadcastMessage,
-        welcomeOnly
+        message: broadcastMessage
       }, { headers });
       setDashboard(data.dashboard);
       setBroadcastReport([`${data.sent} sent · ${data.skipped} skipped · ${data.failed} failed`, ...data.results.filter((item) => item.status !== "Sent").map((item) => `${item.retailer}: ${item.error || item.status}`)].join("\n"));
@@ -448,11 +447,12 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <button className="primary-button" disabled={busy}>Send offer</button>
     </form></Panel>} /> : null}
 
-    {whatsappAdmin && activeSection === "Broadcast" ? <TwoCol left={<Panel title="Broadcast message" eyebrow="Welcome and announcements"><form className="form-grid" onSubmit={sendBroadcast}>
-      <label className="wide-field">Message<textarea rows={13} value={broadcastMessage} onChange={(event) => setBroadcastMessage(event.target.value)} maxLength={3500} placeholder="Write a clear Hinglish message" /></label>
+    {whatsappAdmin && activeSection === "Broadcast" ? <TwoCol left={<Panel title="Broadcast announcement" eyebrow="Festival, feature and service updates"><form className="form-grid" onSubmit={sendBroadcast}>
+      <p className="wa-auto-welcome-note wide-field"><strong>First welcome is automatic.</strong><span>Retailer ki first mapping ya registration approval ke baad Hinglish welcome aur ordering guide automatically bheja jayega.</span></p>
+      <div className="wa-broadcast-presets wide-field"><button className="ghost-button" type="button" onClick={() => setBroadcastMessage(festivalBroadcast)}>Festival message</button><button className="ghost-button" type="button" onClick={() => setBroadcastMessage(featureBroadcast)}>New feature</button><button className="ghost-button" type="button" onClick={() => setBroadcastMessage("")}>Clear</button></div>
+      <label className="wide-field">Announcement<textarea rows={13} value={broadcastMessage} onChange={(event) => setBroadcastMessage(event.target.value)} maxLength={3500} placeholder="Festival, new feature, delivery update or another announcement likhein" /></label>
       <p className="field-hint wide-field">Use <strong>{"{retailer}"}</strong> where the retail outlet name should appear. {broadcastMessage.length}/3500 characters.</p>
-      <label className="checkbox-line"><input type="checkbox" checked={welcomeOnly} onChange={(event) => setWelcomeOnly(event.target.checked)} />First-time welcome only — skip retailers already welcomed</label>
-      <div className="wa-broadcast-actions wide-field"><button className="ghost-button" type="button" onClick={() => { setBroadcastMessage(retailerWelcomeMessage); setWelcomeOnly(true); }}>Reset welcome guide</button><button className="primary-button" disabled={busy || !broadcastRetailerIds.length || !broadcastMessage.trim()}>Review & send</button></div>
+      <div className="wa-broadcast-actions wide-field"><button className="primary-button" disabled={busy || !broadcastRetailerIds.length || !broadcastMessage.trim()}>Review & send announcement</button></div>
       <p className="helper-text wide-field">WhatsApp allows a normal text broadcast only inside the retailer's active 24-hour chat window. Outside it, Meta requires an approved message template.</p>
       {broadcastReport ? <pre className="import-report wide-field">{broadcastReport}</pre> : null}
     </form></Panel>} right={<Panel title="Choose recipients" eyebrow="Active retailers with consent"><div className="form-grid">

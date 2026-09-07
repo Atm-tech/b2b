@@ -277,6 +277,33 @@ async function sendTemplate(phone: string, name: string, parameters: string[], r
   }, relatedEntityType, relatedEntityId);
 }
 
+async function sendFirstTimeWelcome(counterpartyId: string) {
+  const retailerResult = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name
+     FROM whatsapp_retailers wr
+     JOIN counterparties c ON c.id=wr.counterparty_id
+     JOIN users u ON u.id=wr.salesman_id
+     WHERE wr.counterparty_id=$1 AND wr.active=TRUE`, [counterpartyId]
+  );
+  if (!retailerResult.rows[0]) return;
+  const retailer = mapRetailer(retailerResult.rows[0]);
+  if (!retailer.optedInAt) return;
+  const alreadyWelcomed = await executeDatabaseQuery(
+    `SELECT id FROM whatsapp_messages
+     WHERE related_entity_type='BroadcastWelcome' AND related_entity_id=$1 AND status<>'Failed'
+     LIMIT 1`, [counterpartyId]
+  );
+  if (alreadyWelcomed.rowCount) return;
+  const welcomeTemplate = text(process.env.WHATSAPP_WELCOME_TEMPLATE);
+  if (welcomeTemplate) {
+    await sendTemplate(retailer.phoneE164, welcomeTemplate, [retailer.retailerName, retailer.salesmanName], "BroadcastWelcome", counterpartyId);
+  } else {
+    await sendText(retailer.phoneE164,
+      `Namaste ${retailer.retailerName} 👋\n\nAapoorti Wholesale WhatsApp ordering mein aapka swagat hai. Aapko ${retailer.salesmanName} ke saath map kar diya gaya hai.\n\nYahan aap product dhoondh sakte hain, apna rate/MRP/discount dekh sakte hain, quantity select karke cart bana sakte hain aur order finalize kar sakte hain.\n\nOrder kaise karein:\n1. Product ka naam type karein — jaise Lux\n2. Sahi item select karein\n3. Quantity bhejein\n4. Aur item chahiye to Add More choose karein\n5. Total check karke Finalize karein\n\nDemo ke liye *demo*, catalogue ke liye *catalogue* aur madad ke liye *help* bhejein.`,
+      "BroadcastWelcome", counterpartyId);
+  }
+}
+
 async function getRetailerByPhone(phoneValue: string) {
   const phone = normalizeWhatsAppPhone(phoneValue);
   const result = await executeDatabaseQuery<Record<string, unknown>>(
@@ -1428,6 +1455,7 @@ export async function saveWhatsAppRetailer(input: {
     [input.counterpartyId, phone, input.salesmanId, input.defaultWarehouseId, input.billingType,
       input.paymentMode, input.cashTiming || null, input.deliveryMode, input.optedIn, input.active, currentUser.fullName]
   );
+  if (input.optedIn && input.active) await sendFirstTimeWelcome(input.counterpartyId).catch(() => undefined);
   return getWhatsAppDashboard(currentUser);
 }
 
@@ -1480,9 +1508,7 @@ export async function approveWhatsAppRegistration(registrationId: string, input:
      SET status='Approved',stage='Completed',approved_at=NOW(),approved_by=$2,counterparty_id=$3,updated_at=NOW()
      WHERE id=$1`, [registrationId, currentUser.fullName, counterpartyId]
   );
-  await sendText(phone,
-    `Registration approved ✅ Aapko ${text(salesman.rows[0].full_name)} ke saath map kar diya gaya hai. Guided order ke liye “demo” bhejein, ya product name type karein.`,
-    "Registration", registrationId);
+  await sendFirstTimeWelcome(counterpartyId).catch(() => undefined);
   return getWhatsAppDashboard(currentUser);
 }
 
@@ -1551,7 +1577,6 @@ export async function createWhatsAppOffer(input: {
 export async function sendWhatsAppBroadcast(input: {
   counterpartyIds: string[];
   message: string;
-  welcomeOnly: boolean;
 }, currentUser: StaffUser) {
   if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can send broadcasts.");
   const counterpartyIds = Array.from(new Set(input.counterpartyIds)).slice(0, 500);
@@ -1578,20 +1603,9 @@ export async function sendWhatsAppBroadcast(input: {
       results.push({ counterpartyId, retailer: retailer.retailerName, status: "Skipped", error: "WhatsApp consent is not recorded." });
       continue;
     }
-    if (input.welcomeOnly) {
-      const alreadyWelcomed = await executeDatabaseQuery(
-        `SELECT id FROM whatsapp_messages
-         WHERE related_entity_type='BroadcastWelcome' AND related_entity_id=$1 AND status<>'Failed'
-         LIMIT 1`, [counterpartyId]
-      );
-      if (alreadyWelcomed.rowCount) {
-        results.push({ counterpartyId, retailer: retailer.retailerName, status: "Skipped", error: "Welcome already sent." });
-        continue;
-      }
-    }
     try {
       const personalizedMessage = message.replaceAll("{retailer}", retailer.retailerName);
-      await sendText(retailer.phoneE164, personalizedMessage, input.welcomeOnly ? "BroadcastWelcome" : "Broadcast", counterpartyId);
+      await sendText(retailer.phoneE164, personalizedMessage, "Broadcast", counterpartyId);
       results.push({ counterpartyId, retailer: retailer.retailerName, status: "Sent" });
     } catch (error) {
       results.push({ counterpartyId, retailer: retailer.retailerName, status: "Failed", error: error instanceof Error ? error.message : "WhatsApp send failed." });

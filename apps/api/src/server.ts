@@ -1250,8 +1250,7 @@ app.post("/whatsapp/broadcasts", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return sendWhatsAppBroadcast({
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
-    message: requiredString(req.body?.message, "Message"),
-    welcomeOnly: req.body?.welcomeOnly !== false
+    message: requiredString(req.body?.message, "Message")
   }, currentUser);
 }));
 
