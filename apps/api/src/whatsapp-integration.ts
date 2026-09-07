@@ -1596,7 +1596,7 @@ export async function denyWhatsAppDraft(draftId: string, reason: string, current
   const denialReason = compact(reason || "Unable to fulfil this request right now", 300);
   await executeDatabaseQuery(
     `UPDATE whatsapp_order_drafts
-     SET status='Denied', reviewed_at=NOW(), note=CONCAT(note, CASE WHEN note='' THEN '' ELSE ' | ' END, $2)
+     SET status='Denied', reviewed_at=NOW(), note=CONCAT(COALESCE(note, ''), CASE WHEN COALESCE(note, '')='' THEN '' ELSE ' | ' END, $2::text)
      WHERE id=$1`, [draftId, `Denied: ${denialReason}`]
   );
   await sendText(text(loaded.draft.phone_e164),
