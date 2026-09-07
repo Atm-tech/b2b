@@ -3,7 +3,7 @@ import type { AppUser, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aap
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
 import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
-import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
+import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
 type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles">;
@@ -170,6 +170,12 @@ function compact(value: string, max: number) {
   return value.trim().slice(0, max);
 }
 
+function mrpDiscountLabel(mrpValue: unknown, rateValue: unknown) {
+  const mrp = numberValue(mrpValue);
+  if (!(mrp > 0)) return "MRP not configured";
+  return `MRP Rs.${mrp.toFixed(2)} | ${discountPercentFromMrp(mrp, rateValue).toFixed(2)}% off`;
+}
+
 async function matchingProducts(query = "", limit = 10) {
   const snapshot = await getSnapshot();
   const historicallyPricedSkus = new Set(
@@ -210,7 +216,7 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
           rows: products.map((product) => ({
             id: `wa-product:${encodeURIComponent(product.sku)}`,
             title: compact(product.shortName || product.name, 24),
-            description: compact([product.brand, product.size, "Select for your rate"].filter(Boolean).join(" · "), 72)
+            description: compact([product.brand, product.size, numberValue(product.mrp) > 0 ? `MRP Rs.${numberValue(product.mrp).toFixed(2)}` : "MRP pending", "Select for your rate"].filter(Boolean).join(" · "), 72)
           }))
         }]
       }
@@ -437,6 +443,7 @@ async function productPricing(counterpartyId: string, productSku: string) {
     sku: text(row.sku),
     name: text(row.name),
     rate,
+    mrp: numberValue(row.mrp),
     cdPercent: numberValue(row.cd_percent),
     todPercent: numberValue(row.tod_percent),
     minimumQuantity: Math.max(1, numberValue(row.minimum_quantity, 1)),
@@ -547,7 +554,7 @@ async function declineWishlist(profile: RetailerProfile) {
 
 async function loadCartLines(phone: string) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
-    `SELECT lines.product_sku, products.name AS product_name,
+    `SELECT lines.product_sku, products.name AS product_name, products.mrp,
             lines.quantity AS approved_quantity, lines.rate, lines.cd_percent,
             lines.tod_percent, lines.gst_rate, lines.tax_mode, lines.note
      FROM whatsapp_cart_lines lines
@@ -564,9 +571,9 @@ function cartSummary(lines: Record<string, unknown>[]) {
   const details = lines.map((line, index) => {
     const amounts = lineAmounts(line);
     total += amounts.totalAmount;
-    return `${index + 1}. ${text(line.product_name)} — ${numberValue(line.approved_quantity)} × Rs.${numberValue(line.rate).toFixed(2)} = Rs.${amounts.totalAmount.toFixed(2)}`;
+    return `${index + 1}. ${text(line.product_name)} — ${numberValue(line.approved_quantity)} × Rs.${numberValue(line.rate).toFixed(2)} (${mrpDiscountLabel(line.mrp, line.rate)}) = Rs.${amounts.totalAmount.toFixed(2)}`;
   });
-  const visible = details.slice(0, 7);
+  const visible = details.slice(0, 5);
   if (details.length > visible.length) visible.push(`+ ${details.length - visible.length} more item(s)`);
   return { total, body: visible.join("\n") };
 }
@@ -794,7 +801,7 @@ async function loadDraft(draftId: string) {
   );
   if (!drafts.rows[0]) throw new Error("WhatsApp order draft not found.");
   const lines = await executeDatabaseQuery<Record<string, unknown>>(
-    `SELECT l.*, p.name AS product_name FROM whatsapp_order_draft_lines l JOIN products p ON p.sku = l.product_sku WHERE l.draft_id = $1 ORDER BY l.id`, [draftId]
+    `SELECT l.*, p.name AS product_name, p.mrp FROM whatsapp_order_draft_lines l JOIN products p ON p.sku = l.product_sku WHERE l.draft_id = $1 ORDER BY l.id`, [draftId]
   );
   return { draft: drafts.rows[0], lines: lines.rows };
 }
@@ -804,7 +811,7 @@ function draftSummary(draftId: string, retailerName: string, rows: Record<string
   const details = rows.map((line, index) => {
     const amounts = lineAmounts(line as never);
     total += amounts.totalAmount;
-    return `${index + 1}. ${text(line.product_name)}\n   ${numberValue(line.approved_quantity)} × ₹${numberValue(line.rate).toFixed(2)} | CD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}%\n   ₹${amounts.totalAmount.toFixed(2)} incl. tax`;
+    return `${index + 1}. ${text(line.product_name)}\n   ${mrpDiscountLabel(line.mrp, line.rate)}\n   ${numberValue(line.approved_quantity)} × ₹${numberValue(line.rate).toFixed(2)} | CD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}%\n   ₹${amounts.totalAmount.toFixed(2)} incl. tax`;
   }).join("\n");
   return `🧾 *Aapoorti Wholesale Order*\n${draftId} | ${retailerName}\n\n${details}\n\n*Estimated total: ₹${total.toFixed(2)}*\nRates and stock are locked only after you confirm.`;
 }
@@ -913,7 +920,7 @@ async function handleInboundMessage(message: JsonObject) {
       await selectCartProduct(profile, sku, messageId);
       const quantities = [...new Set([pricing.minimumQuantity, Math.max(pricing.minimumQuantity, 5), Math.max(pricing.minimumQuantity, 10)])].slice(0, 3);
       await sendButtons(from,
-        `${pricing.name}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nQuantity choose karein, ya sirf quantity type karein, jaise: 25`,
+        `${pricing.name}\n${mrpDiscountLabel(pricing.mrp, pricing.rate)}\nYour rate: Rs.${pricing.rate.toFixed(2)}\nQuantity choose karein, ya sirf quantity type karein, jaise: 25`,
         quantities.map((quantity) => ({ id: `wa-qty:${encodeURIComponent(sku)}:${quantity}`, title: `Qty ${quantity}` })),
         "ProductSelection", sku);
       return;
@@ -1451,7 +1458,7 @@ export async function createWhatsAppOffer(input: {
         `INSERT INTO whatsapp_offer_lines (id,offer_id,product_sku,quantity,rate,cd_percent,tod_percent,minimum_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [id("WAOL"), offerId, line.productSku, Math.max(line.minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, Math.max(1, line.minimumQuantity)]
       );
-      namedLines.push(`${pricing.name}: ₹${rate.toFixed(2)} | Qty ${Math.max(line.minimumQuantity, line.quantity)} | CD ${line.cdPercent}% | TOD ${line.todPercent}%`);
+      namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(line.minimumQuantity, line.quantity)} | CD ${line.cdPercent}% | TOD ${line.todPercent}%`);
     }
     const expiry = new Date(input.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     const body = `🎯 *Special rate for ${retailer.retailerName}*\n${namedLines.join("\n")}\nValid until ${expiry}. Reply YES or tap Order Now.`;
@@ -1527,9 +1534,9 @@ export async function sendWhatsAppInvoiceSummary(draftId: string, currentUser: S
   if (!text(loaded.draft.sales_cart_id)) throw new Error("The sales order has not been created yet.");
   if (!currentUser.roles.some((role) => role === "Admin" || role === "Accounts") && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
   const orders = await executeDatabaseQuery<Record<string, unknown>>(
-    `SELECT so.*, p.name AS product_name FROM sales_orders so JOIN products p ON p.sku=so.product_sku WHERE COALESCE(so.cart_id,so.id)=$1 ORDER BY so.created_at,so.id`, [text(loaded.draft.sales_cart_id)]
+    `SELECT so.*, p.name AS product_name, p.mrp FROM sales_orders so JOIN products p ON p.sku=so.product_sku WHERE COALESCE(so.cart_id,so.id)=$1 ORDER BY so.created_at,so.id`, [text(loaded.draft.sales_cart_id)]
   );
-  const rows = orders.rows.map((order, index) => `${index + 1}. ${text(order.product_name)} — ${numberValue(order.quantity)} × ₹${numberValue(order.rate).toFixed(2)} = ₹${numberValue(order.total_amount).toFixed(2)}`);
+  const rows = orders.rows.map((order, index) => `${index + 1}. ${text(order.product_name)} — ${mrpDiscountLabel(order.mrp, order.rate)} — ${numberValue(order.quantity)} × ₹${numberValue(order.rate).toFixed(2)} = ₹${numberValue(order.total_amount).toFixed(2)}`);
   const total = orders.rows.reduce((sum, order) => sum + numberValue(order.total_amount) + numberValue(order.delivery_charge), 0);
   await sendText(text(loaded.draft.phone_e164), `🧾 *Aapoorti Invoice Summary*\nOrder ${text(loaded.draft.sales_cart_id)}\n${rows.join("\n")}\n*Total: ₹${total.toFixed(2)}*\nThe final tax invoice remains available from Aapoorti staff.`, "Draft", draftId);
   return { sent: true };

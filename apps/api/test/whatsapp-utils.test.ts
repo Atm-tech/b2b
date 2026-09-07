@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
+import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
 
 test("normalizes Indian local and international WhatsApp numbers", () => {
   assert.equal(normalizeWhatsAppPhone("98765 43210"), "919876543210");
@@ -37,4 +37,10 @@ test("matches WhatsApp product searches without spaces and across common misspel
   assert.ok(scoreWhatsAppProductQuery("gudday", ["Britannia Good Day Biscuit"]) >= 800);
   assert.ok(scoreWhatsAppProductQuery("colget", ["Colgate Strong Teeth"]) >= 600);
   assert.equal(scoreWhatsAppProductQuery("unrelated item", ["Maggi Noodles"]), 0);
+});
+
+test("calculates honest MRP discounts and rejects missing or invalid MRP", () => {
+  assert.equal(discountPercentFromMrp(100, 82.5), 17.5);
+  assert.equal(discountPercentFromMrp(0, 9), 0);
+  assert.equal(discountPercentFromMrp(100, 110), 0);
 });

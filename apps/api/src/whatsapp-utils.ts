@@ -62,6 +62,13 @@ export function scoreWhatsAppProductQuery(query: string, values: unknown[]) {
   return Math.round(400 + similarities.reduce((sum, similarity) => sum + similarity, 0) / similarities.length * 300);
 }
 
+export function discountPercentFromMrp(mrpValue: unknown, rateValue: unknown) {
+  const mrp = Number(mrpValue);
+  const rate = Number(rateValue);
+  if (!Number.isFinite(mrp) || !Number.isFinite(rate) || mrp <= 0 || rate < 0 || rate >= mrp) return 0;
+  return Math.round((mrp - rate) / mrp * 10000) / 100;
+}
+
 export function normalizeWhatsAppPhone(value: string) {
   let digits = value.replace(/\D/g, "");
   if (digits.startsWith("00")) digits = digits.slice(2);
