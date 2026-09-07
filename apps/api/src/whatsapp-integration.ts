@@ -1999,11 +1999,7 @@ export async function updateWhatsAppLiveChat(ticketId: string, input: { status?:
 }
 
 export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
-  productSku: string;
-  quantity: number;
-  rate: number;
-  cdPercent: number;
-  todPercent: number;
+  lines: Array<{ productSku: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
   warehouseId: string;
   paymentMode: PaymentMode;
   cashTiming?: string;
@@ -2014,33 +2010,59 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
   if (text(ticket.status) !== "Open") throw new Error("Reopen this chat before creating an order.");
   const profile = await getRetailerByPhone(text(ticket.phone_e164));
   if (!profile) throw new Error("Retailer mapping is no longer active.");
-  const pricing = await productPricing(profile.counterpartyId, input.productSku);
-  if (!(input.quantity >= pricing.minimumQuantity)) throw new Error(`${pricing.name} has a minimum order quantity of ${pricing.minimumQuantity}.`);
-  if (!(input.rate > 0)) throw new Error("Rate must be greater than zero.");
-  if (input.cdPercent < 0 || input.todPercent < 0 || input.cdPercent + input.todPercent >= 100) throw new Error("Enter valid CD/TOD percentages.");
-  const draftId = await createDraft(profile, "Live chat", "", [{
-    productSku: input.productSku,
-    quantity: input.quantity,
-    rate: input.rate,
-    cdPercent: input.cdPercent,
-    todPercent: input.todPercent,
-    gstRate: pricing.gstRate,
-    taxMode: pricing.taxMode,
-    note: compact(input.note || `Created from chat ${ticketId}`, 500)
-  }], "", false);
+  if (!input.lines.length) throw new Error("Add at least one product to the order.");
+  if (input.lines.length > 50) throw new Error("A chat order can contain up to 50 products.");
+  if (new Set(input.lines.map((line) => line.productSku)).size !== input.lines.length) throw new Error("Each product can appear only once in an order.");
+  const draftLines: DraftLineInput[] = [];
+  for (const line of input.lines) {
+    const pricing = await productPricing(profile.counterpartyId, line.productSku);
+    if (!(line.quantity >= pricing.minimumQuantity)) throw new Error(`${pricing.name} has a minimum order quantity of ${pricing.minimumQuantity}.`);
+    if (!(line.rate > 0)) throw new Error(`${pricing.name}: rate must be greater than zero.`);
+    if (line.cdPercent < 0 || line.todPercent < 0 || line.cdPercent + line.todPercent >= 100) throw new Error(`${pricing.name}: enter valid CD/TOD percentages.`);
+    draftLines.push({
+      productSku: line.productSku,
+      quantity: line.quantity,
+      rate: line.rate,
+      cdPercent: line.cdPercent,
+      todPercent: line.todPercent,
+      gstRate: pricing.gstRate,
+      taxMode: pricing.taxMode,
+      note: compact(input.note || `Created from chat ${ticketId}`, 500)
+    });
+  }
+  const draftId = await createDraft(profile, "Live chat", "", draftLines, "", false);
   const loaded = await loadDraft(draftId);
+  const snapshot = await getSnapshot();
+  const shortages = loaded.lines.filter((line) => {
+    const stock = snapshot.stockSummary.find((item) => item.warehouseId === input.warehouseId && item.productSku === text(line.product_sku));
+    return numberValue(line.approved_quantity) > (stock?.availableQuantity || 0);
+  });
   try {
-    await reviewWhatsAppDraft(draftId, {
-      warehouseId: input.warehouseId || profile.defaultWarehouseId,
-      paymentMode: input.paymentMode || profile.paymentMode,
-      cashTiming: input.cashTiming || profile.cashTiming,
-      deliveryMode: input.deliveryMode || profile.deliveryMode,
-      note: compact(input.note || `Created from live chat ${ticketId}`, 1000),
-      lines: loaded.lines.map((line) => ({
-        id: text(line.id), quantity: input.quantity, rate: input.rate,
-        cdPercent: input.cdPercent, todPercent: input.todPercent
-      }))
-    }, currentUser);
+    if (shortages.length) {
+      for (const line of loaded.lines) {
+        const stock = snapshot.stockSummary.find((item) => item.warehouseId === input.warehouseId && item.productSku === text(line.product_sku));
+        await executeDatabaseQuery(`UPDATE whatsapp_order_draft_lines SET stock_at_review=$3 WHERE id=$1 AND draft_id=$2`, [text(line.id), draftId, stock?.availableQuantity || 0]);
+      }
+      const shortageNames = shortages.map((line) => text(line.product_name)).join(", ");
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_order_drafts SET warehouse_id=$2,payment_mode=$3,cash_timing=$4,delivery_mode=$5,note=$6,status='Needs Review',reviewed_at=NOW() WHERE id=$1`,
+        [draftId, input.warehouseId, input.paymentMode, input.cashTiming || null, input.deliveryMode,
+          compact(`${input.note || `Created from live chat ${ticketId}`} | Stock review: ${shortageNames}`, 1000)]
+      );
+      await sendText(profile.phoneE164, `Order ${draftId} note kar liya hai. ${shortageNames} ka stock verify karke ${profile.salesmanName} final confirmation bhejenge.`, "Draft", draftId);
+    } else {
+      await reviewWhatsAppDraft(draftId, {
+        warehouseId: input.warehouseId || profile.defaultWarehouseId,
+        paymentMode: input.paymentMode || profile.paymentMode,
+        cashTiming: input.cashTiming || profile.cashTiming,
+        deliveryMode: input.deliveryMode || profile.deliveryMode,
+        note: compact(input.note || `Created from live chat ${ticketId}`, 1000),
+        lines: loaded.lines.map((line) => {
+          const submitted = input.lines.find((item) => item.productSku === text(line.product_sku))!;
+          return { id: text(line.id), quantity: submitted.quantity, rate: submitted.rate, cdPercent: submitted.cdPercent, todPercent: submitted.todPercent };
+        })
+      }, currentUser);
+    }
   } catch (error) {
     await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [draftId]);
     await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [draftId]);
@@ -2048,9 +2070,11 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
   }
   await executeDatabaseQuery(
     `UPDATE whatsapp_service_tickets SET linked_order_id=$2,last_message_preview=$3,last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
-    [ticketId, draftId, `Order ${draftId} sent for retailer confirmation`]
+    [ticketId, draftId, shortages.length
+      ? `Order ${draftId} created for stock review`
+      : `Order ${draftId} sent for retailer confirmation`]
   );
-  return { draftId, dashboard: await getWhatsAppDashboard(currentUser), liveChat: await getWhatsAppLiveChat(currentUser, ticketId) };
+  return { draftId, confirmationSent: shortages.length === 0, dashboard: await getWhatsAppDashboard(currentUser), liveChat: await getWhatsAppLiveChat(currentUser, ticketId) };
 }
 
 export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {

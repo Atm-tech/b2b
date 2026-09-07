@@ -1205,12 +1205,15 @@ app.post("/whatsapp/live-chat/:id/update", async (req, res) => wrap(res, async (
 
 app.post("/whatsapp/live-chat/:id/order", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  const rawLines = Array.isArray(req.body?.lines) ? req.body.lines : [req.body];
   return createWhatsAppDraftFromLiveChat(req.params.id, {
-    productSku: requiredString(req.body?.productSku, "Product"),
-    quantity: requiredNumber(req.body?.quantity, "Quantity"),
-    rate: requiredNumber(req.body?.rate, "Rate"),
-    cdPercent: optionalNumber(req.body?.cdPercent) || 0,
-    todPercent: optionalNumber(req.body?.todPercent) || 0,
+    lines: rawLines.map((line: Record<string, unknown>, index: number) => ({
+      productSku: requiredString(line?.productSku, `Product ${index + 1}`),
+      quantity: requiredNumber(line?.quantity, `Quantity ${index + 1}`),
+      rate: requiredNumber(line?.rate, `Rate ${index + 1}`),
+      cdPercent: optionalNumber(line?.cdPercent) || 0,
+      todPercent: optionalNumber(line?.todPercent) || 0
+    })),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
     paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming),
