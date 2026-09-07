@@ -1381,7 +1381,7 @@ async function handleInboundMessage(message: JsonObject) {
         await executeDatabaseQuery(`UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`, [saved, ticketId]);
         await executeDatabaseQuery(
           `UPDATE whatsapp_service_tickets
-           SET media_id=$2,media_type=$3,details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$4) END,
+           SET media_id=$2,media_type=$3,details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$4::text) END,
                unread_staff_count=unread_staff_count+1,last_message_preview=$4,last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
           [ticketId, text(media?.id), text(media?.mime_type) || messageType, text(media?.caption) || `${messageType} received`]
         );
@@ -1477,7 +1477,7 @@ async function handleInboundMessage(message: JsonObject) {
       );
       if (pendingChange.rows[0]) {
         await executeDatabaseQuery(
-          `UPDATE whatsapp_order_drafts SET status = 'Needs Review', note = CONCAT(note, CASE WHEN note = '' THEN '' ELSE ' | ' END, $2) WHERE id = $1`,
+          `UPDATE whatsapp_order_drafts SET status = 'Needs Review', note = CONCAT(note, CASE WHEN note = '' THEN '' ELSE ' | ' END, $2::text) WHERE id = $1`,
           [pendingChange.rows[0].id, `Retailer requested: ${body}`]
         );
         await sendText(from, "Change request received. Your salesperson will review stock and rate, then send the revised order here.", "Draft", pendingChange.rows[0].id);
@@ -2450,10 +2450,10 @@ export async function replyWhatsAppServiceTicket(ticketId: string, message: stri
   await sendText(text(ticket.phone_e164), `${currentUser.fullName}: ${cleanMessage}`, "ServiceTicket", ticketId);
   await executeDatabaseQuery(
     `UPDATE whatsapp_service_tickets
-     SET details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$2) END,
-         status=$3,unread_staff_count=0,last_message_preview=$4,last_message_at=NOW(),claimed_at=COALESCE(claimed_at,NOW()),
-         updated_at=NOW(),resolved_at=CASE WHEN $3='Resolved' THEN NOW() ELSE NULL END,
-         closed_by=CASE WHEN $3='Resolved' THEN $5 ELSE NULL END
+     SET details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$2::text) END,
+         status=$3::text,unread_staff_count=0,last_message_preview=$4::text,last_message_at=NOW(),claimed_at=COALESCE(claimed_at,NOW()),
+         updated_at=NOW(),resolved_at=CASE WHEN $3::text='Resolved' THEN NOW() ELSE NULL END,
+         closed_by=CASE WHEN $3::text='Resolved' THEN $5::text ELSE NULL END
      WHERE id=$1`,
     [ticketId, `Staff: ${cleanMessage}`, close ? "Resolved" : "Open", cleanMessage, currentUser.fullName]
   );
