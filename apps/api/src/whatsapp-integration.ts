@@ -203,7 +203,7 @@ async function matchingProducts(query = "", limit = 10) {
     .map((item) => item.product);
 }
 
-async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "") {
+async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "", intro = "") {
   const products = await matchingProducts(query);
   if (!products.length) {
     if (query && profile) return offerWishlist(profile, query, messageId);
@@ -214,7 +214,7 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
     interactive: {
       type: "list",
       header: { type: "text", text: compact(query ? `Did you mean: ${query}?` : "Aapoorti Catalogue", 60) },
-      body: { text: "Kya aap inmein se koi product chahte hain? Select kijiye; phir aapka rate aur quantity options milenge." },
+      body: { text: [intro, "Kya aap inmein se koi product chahte hain? Select kijiye; phir aapka rate aur quantity options milenge."].filter(Boolean).join("\n\n") },
       footer: { text: "Final stock & special rate salesperson verify karega." },
       action: {
         button: "View products",
@@ -233,16 +233,18 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
 
 let nativeCatalogUnavailableUntil = 0;
 
-async function sendCatalog(phone: string) {
+async function sendCatalog(profile: RetailerProfile) {
+  const phone = profile.phoneE164;
+  const greeting = `Hi ${profile.retailerName} 👋`;
   if (!process.env.WHATSAPP_CATALOG_ID || nativeCatalogUnavailableUntil > Date.now()) {
-    return sendProductPicker(phone);
+    return sendProductPicker(phone, "", profile, "", greeting);
   }
   try {
     return await sendGraphMessage(phone, {
       type: "interactive",
       interactive: {
         type: "catalog_message",
-        body: { text: "Aapoorti Wholesale catalogue kholiye, items select kijiye aur cart WhatsApp par bhej dijiye." },
+        body: { text: `${greeting}\n\nAapoorti Wholesale catalogue kholiye, items select kijiye aur cart WhatsApp par bhej dijiye.` },
         action: { name: "catalog_message" },
         footer: { text: "Special retailer rates are applied during sales review." }
       }
@@ -251,7 +253,7 @@ async function sendCatalog(phone: string) {
     const message = error instanceof Error ? error.message : "";
     if (!/131009|catalog/i.test(message)) throw error;
     nativeCatalogUnavailableUntil = Date.now() + 10 * 60 * 1000;
-    return sendProductPicker(phone);
+    return sendProductPicker(phone, "", profile, "", greeting);
   }
 }
 
@@ -1029,7 +1031,7 @@ async function handleInboundMessage(message: JsonObject) {
       return;
     }
     if (/^(hi|hello|hey|namaste|menu|catalog|catalogue|catlog)$/i.test(normalized)) {
-      await sendCatalog(from);
+      await sendCatalog(profile);
       return;
     }
     const productSearch = /^(?:search|find|product|item)\s+(.+)$/i.exec(body);
