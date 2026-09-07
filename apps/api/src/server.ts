@@ -67,6 +67,7 @@ import {
   getWhatsAppCatalogFeed,
   getWhatsAppDashboard,
   getWhatsAppMetaDiagnostics,
+  getWhatsAppPendingOrderCount,
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   reviewWhatsAppDraft,
@@ -1135,6 +1136,15 @@ app.get("/whatsapp/dashboard", async (req, res) => {
   try {
     const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
     res.json(await getWhatsAppDashboard(currentUser));
+  } catch (error) {
+    res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
+  }
+});
+
+app.get("/whatsapp/pending-count", async (req, res) => {
+  try {
+    const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+    res.json(await getWhatsAppPendingOrderCount(currentUser));
   } catch (error) {
     res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
   }

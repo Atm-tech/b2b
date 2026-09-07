@@ -194,6 +194,7 @@ function App() {
   const [pendingQrTarget, setPendingQrTarget] = useState<OrderQrTarget | null>(() => readOrderQrTargetFromLocation());
   const [purchaseCatalogSearchToken, setPurchaseCatalogSearchToken] = useState(0);
   const [salesCatalogSearchToken, setSalesCatalogSearchToken] = useState(0);
+  const [whatsappPendingOrderCount, setWhatsAppPendingOrderCount] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
@@ -306,6 +307,36 @@ function App() {
       setActiveView(nextViews[0]);
     }
   }, [activeView, currentUser, simpleMode]);
+
+  useEffect(() => {
+    const roles = currentUser?.roles?.length ? currentUser.roles : currentUser ? [currentUser.role] : [];
+    if (!sessionToken || !roles.some((role) => role === "Admin" || role === "Sales")) {
+      setWhatsAppPendingOrderCount(0);
+      return;
+    }
+    let cancelled = false;
+    const loadPendingCount = async () => {
+      try {
+        const { data } = await api.get<{ count: number }>("/whatsapp/pending-count", {
+          headers: { authorization: `Bearer ${sessionToken}` }
+        });
+        if (!cancelled) setWhatsAppPendingOrderCount(Math.max(0, Number(data.count) || 0));
+      } catch {
+        // Keep the last known badge count during transient network failures.
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadPendingCount();
+    };
+    void loadPendingCount();
+    const interval = window.setInterval(() => void loadPendingCount(), 20_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [currentUser, sessionToken]);
 
   useEffect(() => {
     if (currentUser) window.localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
@@ -1640,7 +1671,9 @@ function App() {
           ? purchaserOrderCount
           : view === "Sales" || view === "SalesOrders"
             ? salesOrderCount
-            : 0;
+            : view === "WhatsApp"
+              ? whatsappPendingOrderCount
+              : 0;
         const isFloatingPoSoButton = (currentRoles.includes("Purchaser") && view === "Purchase") || (currentRoles.includes("Sales") && view === "Sales");
         return <button key={view} type="button" className={`${view === activeView ? "tab-button active" : "tab-button"}${currentRoles.includes("Purchaser") && view === "Purchase" ? " purchaser-po-tab" : ""}${currentRoles.includes("Sales") && view === "Sales" ? " purchaser-po-tab" : ""}${view === "WhatsApp" ? " whatsapp-business-tab" : ""}`} onClick={() => navigateToView(view)} aria-label={view === "WhatsApp" ? "WhatsApp Business" : undefined} aria-current={view === activeView ? "page" : undefined}>
           <span className="dock-icon"><SidebarVectorIcon view={view} /></span>

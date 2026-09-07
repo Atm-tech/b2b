@@ -1309,6 +1309,18 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   };
 }
 
+export async function getWhatsAppPendingOrderCount(currentUser: StaffUser) {
+  const isAdmin = isWhatsAppAdminUser(currentUser);
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT COUNT(*)::int AS count
+     FROM whatsapp_order_drafts
+     WHERE status IN ('Needs Review', 'Change Requested')
+     ${isAdmin ? "" : "AND salesman_id = $1"}`,
+    isAdmin ? [] : [currentUser.id]
+  );
+  return { count: numberValue(result.rows[0]?.count) };
+}
+
 export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {
   await executeDatabaseQuery(
     `INSERT INTO counterparties (
