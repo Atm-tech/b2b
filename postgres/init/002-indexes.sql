@@ -62,7 +62,9 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_cart_lines_phone ON whatsapp_cart_lines(
 CREATE INDEX IF NOT EXISTS idx_whatsapp_wishlist_salesman_status ON whatsapp_wishlist_requests(salesman_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_registration_phone_status ON whatsapp_registration_requests(phone_e164, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone_created ON whatsapp_messages(phone_e164, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_entity_created ON whatsapp_messages(related_entity_type, related_entity_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_service_tickets_owner ON whatsapp_service_tickets(salesman_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_live_chat_unread ON whatsapp_service_tickets(salesman_id, unread_staff_count, last_message_at DESC) WHERE kind='Live Chat' AND status='Open';
 CREATE INDEX IF NOT EXISTS idx_whatsapp_service_tickets_retailer ON whatsapp_service_tickets(counterparty_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_order_events_draft ON whatsapp_order_events(draft_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_broadcast_campaigns_created ON whatsapp_broadcast_campaigns(created_at DESC);

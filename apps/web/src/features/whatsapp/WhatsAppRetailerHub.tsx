@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
 import type { AppSnapshot, AppUser, PaymentMode } from "@aapoorti-b2b/domain";
@@ -6,7 +6,7 @@ import { api, formatDateTimeIst } from "../../app/shared";
 import { SidebarVectorIcon } from "../../components/navigation";
 import { DataTable, Panel, TwoCol } from "../../components/ui";
 
-type WhatsAppAdminSection = "Home" | "Orders" | "Retailers" | "Catalogue" | "Offers" | "Broadcast" | "Service" | "Insights";
+type WhatsAppAdminSection = "Home" | "Orders" | "Retailers" | "Catalogue" | "Offers" | "Broadcast" | "Chat" | "Service" | "Insights";
 
 const whatsappAdminSections: Array<{ key: WhatsAppAdminSection; label: string; view: "Overview" | "SalesOrders" | "Parties" | "Products" | "WhatsApp" }> = [
   { key: "Home", label: "Home", view: "Overview" },
@@ -15,6 +15,7 @@ const whatsappAdminSections: Array<{ key: WhatsAppAdminSection; label: string; v
   { key: "Catalogue", label: "Catalogue", view: "Products" },
   { key: "Offers", label: "Offers", view: "WhatsApp" },
   { key: "Broadcast", label: "Broadcast", view: "WhatsApp" },
+  { key: "Chat", label: "Chats", view: "WhatsApp" },
   { key: "Service", label: "Service", view: "WhatsApp" },
   { key: "Insights", label: "Insights", view: "Overview" }
 ];
@@ -99,6 +100,27 @@ type Dashboard = {
   catalogFeedUrl: string;
   retailerEntryLink: string;
 };
+type LiveChatTicket = Record<string, unknown> & {
+  id: string;
+  retailer_name: string;
+  phone_e164: string;
+  salesman_id: number;
+  salesman_name: string;
+  status: string;
+  unread_staff_count: number;
+  last_message_preview: string;
+  last_message_at: string;
+};
+type LiveChatMessage = {
+  id: string;
+  direction: "Inbound" | "Outbound";
+  messageType: string;
+  status: string;
+  body: string;
+  errorMessage: string;
+  createdAt: string;
+};
+type LiveChatInbox = { selectedTicketId: string; unreadTotal: number; tickets: LiveChatTicket[]; messages: LiveChatMessage[] };
 
 function errorMessage(error: unknown) {
   return axios.isAxiosError(error) ? String(error.response?.data?.message || error.message) : "WhatsApp action failed.";
@@ -273,6 +295,10 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [broadcastWarehouse, setBroadcastWarehouse] = useState("");
   const [broadcastTag, setBroadcastTag] = useState("");
   const [ticketReplies, setTicketReplies] = useState<Record<string, string>>({});
+  const [liveChat, setLiveChat] = useState<LiveChatInbox>({ selectedTicketId: "", unreadTotal: 0, tickets: [], messages: [] });
+  const [chatSearch, setChatSearch] = useState("");
+  const [chatReply, setChatReply] = useState("");
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
   const [wishlistProducts, setWishlistProducts] = useState<Record<string, string>>({});
   const [retailerTagDrafts, setRetailerTagDrafts] = useState<Record<string, string>>({});
   const [broadcastReport, setBroadcastReport] = useState("");
@@ -288,6 +314,63 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
   useEffect(() => { void refresh(); }, [sessionToken]);
+
+  async function refreshLiveChat(ticketId = liveChat.selectedTicketId, markRead = false) {
+    try {
+      const path = ticketId ? `/whatsapp/live-chat?ticketId=${encodeURIComponent(ticketId)}` : "/whatsapp/live-chat";
+      const { data } = markRead && ticketId
+        ? await api.post<LiveChatInbox>(`/whatsapp/live-chat/${encodeURIComponent(ticketId)}/read`, {}, { headers })
+        : await api.get<LiveChatInbox>(path, { headers });
+      setLiveChat(data);
+    } catch (error) {
+      onError(errorMessage(error));
+    }
+  }
+
+  useEffect(() => {
+    if (activeSection !== "Chat") return;
+    void refreshLiveChat(liveChat.selectedTicketId, Boolean(liveChat.selectedTicketId));
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshLiveChat(liveChat.selectedTicketId, Boolean(liveChat.selectedTicketId));
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [activeSection, sessionToken, liveChat.selectedTicketId]);
+
+  useEffect(() => {
+    if (activeSection !== "Chat") return;
+    const messages = chatMessagesRef.current;
+    if (messages) messages.scrollTop = messages.scrollHeight;
+  }, [activeSection, liveChat.messages.length, liveChat.selectedTicketId]);
+
+  async function sendChatReply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const ticketId = liveChat.selectedTicketId;
+    const message = chatReply.trim();
+    if (!ticketId || !message) return;
+    setBusy(true); onError("");
+    try {
+      await api.post(`/whatsapp/service-tickets/${encodeURIComponent(ticketId)}/reply`, { message, close: false }, { headers });
+      setChatReply("");
+      await refreshLiveChat(ticketId, true);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateChat(body: { status?: string; salesmanId?: number }, success: string) {
+    if (!liveChat.selectedTicketId) return;
+    setBusy(true); onError("");
+    try {
+      const { data } = await api.post<LiveChatInbox>(`/whatsapp/live-chat/${encodeURIComponent(liveChat.selectedTicketId)}/update`, body, { headers });
+      setLiveChat(data); onMessage(success);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(path: string, body: unknown, success: string) {
     setBusy(true); onError("");
@@ -398,10 +481,19 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
   const pendingWishlists = (dashboard?.wishlists || []).filter((item) => item.status === "Pending");
   const pendingRegistrations = (dashboard?.registrations || []).filter((item) => item.status === "Pending");
-  const openTickets = (dashboard?.serviceTickets || []).filter((item) => item.status === "Open");
+  const openTickets = (dashboard?.serviceTickets || []).filter((item) => item.status === "Open" && item.kind !== "Live Chat");
+  const openServiceTickets = openTickets;
+  const filteredChats = liveChat.tickets.filter((ticket) => !chatSearch.trim()
+    || [ticket.retailer_name, ticket.phone_e164, ticket.salesman_name, ticket.last_message_preview]
+      .some((value) => normalizedSearch(String(value || "")).includes(normalizedSearch(chatSearch))));
+  const selectedChat = liveChat.tickets.find((ticket) => String(ticket.id) === liveChat.selectedTicketId);
+  const liveChatUnread = liveChat.tickets.length
+    ? liveChat.unreadTotal
+    : (dashboard?.serviceTickets || []).filter((item) => item.kind === "Live Chat" && item.status === "Open")
+      .reduce((total, item) => total + Number(item.unread_staff_count || 0), 0);
   const availableSections = whatsappAdmin || dedicatedWorkspace
     ? whatsappAdminSections
-    : whatsappAdminSections.filter((section) => section.key === "Home" || section.key === "Orders" || section.key === "Service");
+    : whatsappAdminSections.filter((section) => section.key === "Home" || section.key === "Orders" || section.key === "Chat" || section.key === "Service");
   const visibleCatalogProducts = useMemo(() => {
     const query = catalogSearch.trim().toLowerCase().replace(/\s+/g, "");
     const products = dashboard?.catalogProducts || [];
@@ -417,7 +509,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 
     <nav className={`${dedicatedWorkspace ? "wa-admin-dock" : "wa-section-tabs"}${availableSections.length < 5 ? " is-compact" : ""}${availableSections.length === 6 ? " has-six" : ""}${availableSections.length > 6 ? " has-many" : ""}`} aria-label="WhatsApp administration">
       {availableSections.map((section) => {
-        const badge = section.key === "Orders" ? activeDrafts.length : section.key === "Retailers" ? pendingRegistrations.length : section.key === "Offers" ? pendingWishlists.length : section.key === "Service" ? openTickets.length : 0;
+        const badge = section.key === "Orders" ? activeDrafts.length : section.key === "Retailers" ? pendingRegistrations.length : section.key === "Offers" ? pendingWishlists.length : section.key === "Chat" ? liveChatUnread : section.key === "Service" ? openServiceTickets.length : 0;
         return <button key={section.key} type="button" className={activeSection === section.key ? "active" : ""} onClick={() => setActiveSection(section.key)} aria-current={activeSection === section.key ? "page" : undefined}>
           <span><SidebarVectorIcon view={section.view} /></span><strong>{section.label}</strong>{badge > 0 ? <em>{badge > 99 ? "99+" : badge}</em> : null}
         </button>;
@@ -430,7 +522,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
         {whatsappAdmin || dedicatedWorkspace ? <button type="button" onClick={() => setActiveSection("Retailers")}><span className="wa-command-icon retailers"><SidebarVectorIcon view="Parties" /></span><small>New registrations</small><strong>{pendingRegistrations.length}</strong><em>{mappedRetailers.length} retailers mapped</em></button> : null}
         <button type="button" onClick={() => setActiveSection("Orders")}><span className="wa-command-icon wishlist"><SidebarVectorIcon view="WhatsApp" /></span><small>Wishlist requests</small><strong>{pendingWishlists.length}</strong><em>Products retailers need</em></button>
         {whatsappAdmin || dedicatedWorkspace ? <button type="button" onClick={() => setActiveSection("Catalogue")}><span className="wa-command-icon catalogue"><SidebarVectorIcon view="Products" /></span><small>Catalogue ready</small><strong>{dashboard?.catalogImageStats.eligible || 0}</strong><em>{dashboard?.catalogImageStats.withImage || 0} product images</em></button> : null}
-        <button type="button" onClick={() => setActiveSection("Service")}><span className="wa-command-icon service"><SidebarVectorIcon view="WhatsApp" /></span><small>Service & live chat</small><strong>{openTickets.length}</strong><em>{openTickets.length ? "Replies pending" : "Inbox clear"}</em></button>
+        <button type="button" onClick={() => setActiveSection("Chat")}><span className="wa-command-icon service"><SidebarVectorIcon view="WhatsApp" /></span><small>Live chat</small><strong>{liveChatUnread}</strong><em>{liveChatUnread ? "Unread retailer messages" : "Inbox clear"}</em></button>
         {whatsappAdmin ? <button type="button" onClick={() => setActiveSection("Insights")}><span className="wa-command-icon insights"><SidebarVectorIcon view="Overview" /></span><small>30-day conversations</small><strong>{dashboard?.analytics.conversations || 0}</strong><em>{dashboard?.analytics.failed || 0} failed sends</em></button> : null}
       </section>
       <section className="wa-home-strip">
@@ -555,8 +647,39 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       {completedDrafts.length ? <details className="wa-order-history"><summary>Completed orders ({completedDrafts.length})</summary><div className="stacked-sections">{completedDrafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async () => undefined} onDeny={async () => undefined} onInvoice={whatsappAdmin ? async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.") : undefined} onStatus={async (item, status, note) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/status`, { status, note }, "Order status retailer ko bhej diya.")} />)}</div></details> : null}
     </section> : null}
 
+    {activeSection === "Chat" ? <section className="wa-live-chat-shell">
+      <aside className="wa-chat-list">
+        <div className="wa-chat-list-head"><div><span className="eyebrow">WhatsApp inbox</span><h2>Retailer chats</h2></div><span className="wa-queue-count">{liveChatUnread} unread</span></div>
+        <input className="wa-chat-search" type="search" value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="Search retailer or number" />
+        <div className="wa-chat-thread-list">
+          {filteredChats.map((ticket) => <button key={String(ticket.id)} type="button" className={String(ticket.id) === liveChat.selectedTicketId ? "active" : ""} onClick={() => { setChatReply(""); void refreshLiveChat(String(ticket.id), true); }}>
+            <span className="wa-chat-avatar">{String(ticket.retailer_name || "R").trim().charAt(0).toUpperCase()}</span>
+            <span className="wa-chat-thread-copy"><strong>{String(ticket.retailer_name || "Retailer")}</strong><small>{String(ticket.last_message_preview || "Live chat requested")}</small><em>{String(ticket.salesman_name || "Unassigned")}</em></span>
+            <span className="wa-chat-thread-meta"><time>{ticket.last_message_at ? formatDateTimeIst(String(ticket.last_message_at)) : ""}</time>{Number(ticket.unread_staff_count || 0) > 0 ? <b>{Number(ticket.unread_staff_count) > 99 ? "99+" : Number(ticket.unread_staff_count)}</b> : null}</span>
+          </button>)}
+          {!filteredChats.length ? <div className="wa-chat-list-empty">No retailer chat found.</div> : null}
+        </div>
+      </aside>
+      <article className="wa-chat-conversation">
+        {selectedChat ? <>
+          <header className="wa-chat-conversation-head">
+            <div><span className="wa-chat-avatar">{String(selectedChat.retailer_name || "R").trim().charAt(0).toUpperCase()}</span><span><strong>{String(selectedChat.retailer_name || "Retailer")}</strong><small>{String(selectedChat.phone_e164 || "")} · {String(selectedChat.salesman_name || "")}</small></span></div>
+            <div className="wa-chat-actions">
+              {whatsappAdmin ? <select aria-label="Transfer chat" value={String(selectedChat.salesman_id || "")} disabled={busy} onChange={(event) => void updateChat({ salesmanId: Number(event.target.value) }, "Chat transferred.")}>{salespeople.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select> : null}
+              <button className="ghost-button" type="button" disabled={busy} onClick={() => void updateChat({ status: selectedChat.status === "Open" ? "Resolved" : "Open" }, selectedChat.status === "Open" ? "Chat closed." : "Chat reopened.")}>{selectedChat.status === "Open" ? "Close chat" : "Reopen"}</button>
+            </div>
+          </header>
+          <div className="wa-chat-messages" ref={chatMessagesRef} aria-live="polite">
+            {liveChat.messages.map((message) => <div key={message.id} className={`wa-chat-bubble ${message.direction === "Outbound" ? "outbound" : "inbound"}`}><p>{message.body}</p><span>{formatDateTimeIst(message.createdAt)} · {message.direction === "Outbound" ? message.status : "WhatsApp"}</span>{message.errorMessage ? <em>{message.errorMessage}</em> : null}</div>)}
+            {!liveChat.messages.length ? <div className="wa-chat-list-empty">Conversation is ready. Send the first reply below.</div> : null}
+          </div>
+          {selectedChat.status === "Open" ? <form className="wa-chat-composer" onSubmit={sendChatReply}><textarea rows={2} value={chatReply} onChange={(event) => setChatReply(event.target.value)} placeholder="Type a reply — retailer receives it on WhatsApp" /><button className="primary-button" disabled={busy || !chatReply.trim()}>{busy ? "Sending…" : "Send"}</button></form> : <div className="wa-chat-closed">This chat is closed. Reopen it to reply.</div>}
+        </> : <div className="wa-chat-placeholder"><span><SidebarVectorIcon view="WhatsApp" /></span><strong>Select a retailer chat</strong><p>Messages from WhatsApp will appear here automatically.</p></div>}
+      </article>
+    </section> : null}
+
     {activeSection === "Service" ? <section className="stacked-sections">
-      <div className="section-heading"><div><span className="eyebrow">Retailer support</span><h2>Live chat, returns and voice orders</h2></div><span className="wa-queue-count">{openTickets.length} open</span></div>
+      <div className="section-heading"><div><span className="eyebrow">Retailer support</span><h2>Returns, damage and voice orders</h2></div><span className="wa-queue-count">{openServiceTickets.length} open</span></div>
       {openTickets.length ? <div className="wa-ticket-list">{openTickets.map((ticket) => { const ticketId = String(ticket.id || ""); return <article className="panel wa-service-ticket" key={ticketId}><div className="section-heading"><div><span className="eyebrow">{String(ticket.kind || "Support")} · {formatDateTimeIst(String(ticket.updated_at || ticket.created_at || ""))}</span><h3>{String(ticket.retailer_name || "Retailer")}</h3></div><span className="status-pill pending">{String(ticket.priority || "Normal")}</span></div><p className="helper-text">{ticketId} · {String(ticket.phone_e164 || "")} · {String(ticket.salesman_name || "")}{ticket.linked_order_id ? ` · ${String(ticket.linked_order_id)}` : ""}</p><pre className="wa-ticket-thread">{String(ticket.details || "No details yet")}</pre>{ticket.media_id ? <p className="field-hint">WhatsApp proof attached ({String(ticket.media_type || "media")})</p> : null}<form className="wa-ticket-reply" onSubmit={(event) => { event.preventDefault(); void submit(`/whatsapp/service-tickets/${encodeURIComponent(ticketId)}/reply`, { message: ticketReplies[ticketId], close: false }, "Reply sent to retailer."); }}><input value={ticketReplies[ticketId] || ""} onChange={(event) => setTicketReplies((current) => ({ ...current, [ticketId]: event.target.value }))} placeholder="Reply from the app; retailer receives it on WhatsApp" /><button className="primary-button" disabled={busy || !ticketReplies[ticketId]?.trim()}>Send reply</button><button className="ghost-button" type="button" disabled={busy || !ticketReplies[ticketId]?.trim()} onClick={() => void submit(`/whatsapp/service-tickets/${encodeURIComponent(ticketId)}/reply`, { message: ticketReplies[ticketId], close: true }, "Reply sent and ticket resolved.")}>Send & resolve</button></form></article>; })}</div> : <div className="wa-empty-state"><span><SidebarVectorIcon view="WhatsApp" /></span><strong>Support inbox is clear</strong><p>Live chat, return, damage and voice-order requests will appear here.</p></div>}
     </section> : null}
 

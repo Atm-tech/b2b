@@ -563,6 +563,11 @@ CREATE TABLE IF NOT EXISTS whatsapp_service_tickets (
   media_type TEXT,
   status TEXT NOT NULL DEFAULT 'Open',
   priority TEXT NOT NULL DEFAULT 'Normal',
+  unread_staff_count INTEGER NOT NULL DEFAULT 0,
+  last_message_preview TEXT NOT NULL DEFAULT '',
+  last_message_at TIMESTAMPTZ,
+  claimed_at TIMESTAMPTZ,
+  closed_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved_at TIMESTAMPTZ

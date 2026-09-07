@@ -67,9 +67,11 @@ import {
   getWhatsAppCatalogFeed,
   getWhatsAppCatalogImage,
   getWhatsAppDashboard,
+  getWhatsAppLiveChat,
   getWhatsAppMetaDiagnostics,
   getWhatsAppPendingOrderCount,
   importWhatsAppCatalogImages,
+  markWhatsAppLiveChatRead,
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
@@ -84,6 +86,7 @@ import {
   sendWhatsAppOrderUpdate,
   subscribeWhatsAppBusinessAccount,
   updateWhatsAppRetailerPreferences,
+  updateWhatsAppLiveChat,
   verifyWhatsAppSignature,
   verifyWhatsAppWebhook
 } from "./whatsapp-integration.js";
@@ -1176,6 +1179,28 @@ app.get("/whatsapp/pending-count", async (req, res) => {
     res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
   }
 });
+
+app.get("/whatsapp/live-chat", async (req, res) => {
+  try {
+    const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+    res.json(await getWhatsAppLiveChat(currentUser, optionalString(req.query.ticketId)));
+  } catch (error) {
+    res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." });
+  }
+});
+
+app.post("/whatsapp/live-chat/:id/read", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return markWhatsAppLiveChatRead(req.params.id, currentUser);
+}));
+
+app.post("/whatsapp/live-chat/:id/update", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
+  return updateWhatsAppLiveChat(req.params.id, {
+    status: optionalString(req.body?.status) || undefined,
+    salesmanId: req.body?.salesmanId === undefined ? undefined : requiredNumber(req.body.salesmanId, "Salesperson")
+  }, currentUser);
+}));
 
 app.post("/whatsapp/setup/subscribe", async (req, res) => wrap(res, async () => {
   await requireWhatsAppAdmin(req);

@@ -336,12 +336,20 @@ async function createServiceTicket(profile: RetailerProfile, input: {
   mediaId?: string;
   mediaType?: string;
 }) {
+  if (input.kind === "Live Chat") {
+    const existing = await executeDatabaseQuery<{ id: string }>(
+      `SELECT id FROM whatsapp_service_tickets
+       WHERE counterparty_id=$1 AND kind='Live Chat' AND status='Open'
+       ORDER BY updated_at DESC LIMIT 1`, [profile.counterpartyId]
+    );
+    if (existing.rows[0]?.id) return existing.rows[0].id;
+  }
   const ticketId = id("WAT");
   await executeDatabaseQuery(
     `INSERT INTO whatsapp_service_tickets (
        id,counterparty_id,phone_e164,salesman_id,kind,subject,details,linked_order_id,
-       media_id,media_type,status,priority,created_at,updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Open',$11,NOW(),NOW())`,
+       media_id,media_type,status,priority,last_message_at,created_at,updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Open',$11,NOW(),NOW(),NOW())`,
     [ticketId, profile.counterpartyId, profile.phoneE164, profile.salesmanId, input.kind,
       compact(input.subject || input.kind, 160), compact(input.details || "", 2000),
       input.linkedOrderId || null, input.mediaId || null, input.mediaType || null,
@@ -1246,6 +1254,18 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (messageType === "audio") {
       const audio = message.audio as JsonObject | undefined;
+      const liveChat = await executeDatabaseQuery<{ id: string }>(
+        `SELECT id FROM whatsapp_service_tickets WHERE counterparty_id=$1 AND kind='Live Chat' AND status='Open' ORDER BY updated_at DESC LIMIT 1`,
+        [profile.counterpartyId]
+      );
+      if (liveChat.rows[0]?.id) {
+        await executeDatabaseQuery(`UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`, [saved, liveChat.rows[0].id]);
+        await executeDatabaseQuery(
+          `UPDATE whatsapp_service_tickets SET unread_staff_count=unread_staff_count+1,last_message_preview='Voice note',last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
+          [liveChat.rows[0].id]
+        );
+        return;
+      }
       const ticketId = await createServiceTicket(profile, {
         kind: "Voice Order",
         subject: "Retailer sent a voice order",
@@ -1259,15 +1279,19 @@ async function handleInboundMessage(message: JsonObject) {
     if (messageType === "image" || messageType === "document") {
       const media = message[messageType] as JsonObject | undefined;
       const openTicket = await executeDatabaseQuery<Record<string, unknown>>(
-        `SELECT id FROM whatsapp_service_tickets WHERE counterparty_id=$1 AND status='Open' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id,kind FROM whatsapp_service_tickets WHERE counterparty_id=$1 AND status='Open' ORDER BY updated_at DESC LIMIT 1`,
         [profile.counterpartyId]
       );
       if (openTicket.rows[0]) {
+        const ticketId = text(openTicket.rows[0].id);
+        await executeDatabaseQuery(`UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`, [saved, ticketId]);
         await executeDatabaseQuery(
-          `UPDATE whatsapp_service_tickets SET media_id=$2,media_type=$3,details=CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$4),updated_at=NOW() WHERE id=$1`,
-          [text(openTicket.rows[0].id), text(media?.id), text(media?.mime_type) || messageType, text(media?.caption) || `${messageType} received`]
+          `UPDATE whatsapp_service_tickets
+           SET media_id=$2,media_type=$3,details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$4) END,
+               unread_staff_count=unread_staff_count+1,last_message_preview=$4,last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
+          [ticketId, text(media?.id), text(media?.mime_type) || messageType, text(media?.caption) || `${messageType} received`]
         );
-        await sendText(from, `Proof ${text(openTicket.rows[0].id)} ticket mein attach ho gaya. Team review karegi.`);
+        if (text(openTicket.rows[0].kind) !== "Live Chat") await sendText(from, `Proof ${ticketId} ticket mein attach ho gaya. Team review karegi.`);
       } else {
         await sendText(from, "Photo/document mil gaya. Return ya damage claim shuru karne ke liye *return* ya *damage* bhejein, phir proof dobara attach karein.");
       }
@@ -1297,6 +1321,14 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (/^(salesman|agent|live chat|talk to sales|human)$/i.test(normalized)) {
       const ticketId = await createServiceTicket(profile, { kind: "Live Chat", subject: "Retailer requested live salesperson" });
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`,
+        [saved, ticketId]
+      );
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_service_tickets SET unread_staff_count=unread_staff_count+1,last_message_preview=$2,last_message_at=NOW(),updated_at=NOW() WHERE id=$1`,
+        [ticketId, compact(body || "Live chat requested", 240)]
+      );
       await sendText(from, `${profile.salesmanName} ko live-chat request ${ticketId} bhej di gayi hai. Aap apna message yahin type kar sakte hain.`, "ServiceTicket", ticketId);
       return;
     }
@@ -1370,10 +1402,15 @@ async function handleInboundMessage(message: JsonObject) {
       );
       if (liveChat.rows[0] && !/^(menu|catalog|catalogue|order|status|track|stop)$/i.test(normalized)) {
         await executeDatabaseQuery(
-          `UPDATE whatsapp_service_tickets SET details=CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$2),updated_at=NOW() WHERE id=$1`,
-          [text(liveChat.rows[0].id), `Retailer: ${compact(body, 1000)}`]
+          `UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`,
+          [saved, text(liveChat.rows[0].id)]
         );
-        await sendText(from, `Message ${profile.salesmanName} ko bhej diya gaya.`, "ServiceTicket", text(liveChat.rows[0].id));
+        await executeDatabaseQuery(
+          `UPDATE whatsapp_service_tickets
+           SET unread_staff_count=unread_staff_count+1,last_message_preview=$2,last_message_at=NOW(),updated_at=NOW()
+           WHERE id=$1`,
+          [text(liveChat.rows[0].id), compact(body, 240)]
+        );
         return;
       }
       if (cartSession?.stage === "AwaitingWishlistConfirmation" && /^(yes|y|haan|ha|ok|okay|add)$/i.test(normalized)) {
@@ -1736,14 +1773,124 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
 
 export async function getWhatsAppPendingOrderCount(currentUser: StaffUser) {
   const isAdmin = isWhatsAppAdminUser(currentUser);
+  const params = isAdmin ? [] : [currentUser.id];
+  const [orders, chats] = await Promise.all([
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT COUNT(*)::int AS count FROM whatsapp_order_drafts
+       WHERE status IN ('Needs Review', 'Change Requested') ${isAdmin ? "" : "AND salesman_id = $1"}`, params),
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT COALESCE(SUM(unread_staff_count),0)::int AS count FROM whatsapp_service_tickets
+       WHERE kind='Live Chat' AND status='Open' ${isAdmin ? "" : "AND salesman_id = $1"}`, params)
+  ]);
+  const orderCount = numberValue(orders.rows[0]?.count);
+  const chatCount = numberValue(chats.rows[0]?.count);
+  return { count: orderCount + chatCount, orderCount, chatCount };
+}
+
+function liveChatMessageBody(row: Record<string, unknown>) {
+  const payload = (row.payload_json || {}) as JsonObject;
+  const request = (payload.request || {}) as JsonObject;
+  const inboundText = (payload.text || {}) as JsonObject;
+  const outboundText = (request.text || {}) as JsonObject;
+  const inboundInteractive = (payload.interactive || {}) as JsonObject;
+  const outboundInteractive = (request.interactive || {}) as JsonObject;
+  const button = (inboundInteractive.button_reply || {}) as JsonObject;
+  const list = (inboundInteractive.list_reply || {}) as JsonObject;
+  const body = (outboundInteractive.body || {}) as JsonObject;
+  return text(inboundText.body || outboundText.body || button.title || list.title || body.text)
+    || (text(row.message_type) === "audio" ? "Voice note" : text(row.message_type) === "image" ? "Image" : text(row.message_type) === "document" ? "Document" : text(row.message_type));
+}
+
+async function loadLiveChatTicket(ticketId: string, currentUser: StaffUser) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
-    `SELECT COUNT(*)::int AS count
-     FROM whatsapp_order_drafts
-     WHERE status IN ('Needs Review', 'Change Requested')
-     ${isAdmin ? "" : "AND salesman_id = $1"}`,
-    isAdmin ? [] : [currentUser.id]
+    `SELECT ticket.*,c.name AS retailer_name,u.full_name AS salesman_name
+     FROM whatsapp_service_tickets ticket
+     JOIN counterparties c ON c.id=ticket.counterparty_id
+     JOIN users u ON u.id=ticket.salesman_id
+     WHERE ticket.id=$1 AND ticket.kind='Live Chat'`, [ticketId]
   );
-  return { count: numberValue(result.rows[0]?.count) };
+  const ticket = result.rows[0];
+  if (!ticket) throw new Error("Live chat not found.");
+  if (!isWhatsAppAdminUser(currentUser) && numberValue(ticket.salesman_id) !== currentUser.id) {
+    throw new Error("This retailer is mapped to another salesperson.");
+  }
+  return ticket;
+}
+
+export async function getWhatsAppLiveChat(currentUser: StaffUser, selectedTicketId = "") {
+  const isAdmin = isWhatsAppAdminUser(currentUser);
+  const params = isAdmin ? [] : [currentUser.id];
+  const tickets = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT ticket.*,c.name AS retailer_name,u.full_name AS salesman_name
+     FROM whatsapp_service_tickets ticket
+     JOIN counterparties c ON c.id=ticket.counterparty_id
+     JOIN users u ON u.id=ticket.salesman_id
+     WHERE ticket.kind='Live Chat' ${isAdmin ? "" : "AND ticket.salesman_id=$1"}
+     ORDER BY CASE WHEN ticket.status='Open' THEN 0 ELSE 1 END,
+              ticket.last_message_at DESC NULLS LAST,ticket.updated_at DESC LIMIT 100`, params
+  );
+  const selected = selectedTicketId && tickets.rows.some((ticket) => text(ticket.id) === selectedTicketId)
+    ? selectedTicketId
+    : text(tickets.rows[0]?.id);
+  const messages = selected
+    ? await executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT id,wa_message_id,direction,message_type,status,payload_json,error_message,created_at
+       FROM whatsapp_messages
+       WHERE related_entity_type='ServiceTicket' AND related_entity_id=$1
+       ORDER BY created_at ASC,id ASC LIMIT 500`, [selected])
+    : { rows: [] as Record<string, unknown>[] };
+  return {
+    selectedTicketId: selected,
+    unreadTotal: tickets.rows.reduce((total, ticket) => total + numberValue(ticket.unread_staff_count), 0),
+    tickets: tickets.rows,
+    messages: messages.rows.map((message) => ({
+      id: text(message.id),
+      waMessageId: text(message.wa_message_id),
+      direction: text(message.direction),
+      messageType: text(message.message_type),
+      status: text(message.status),
+      body: liveChatMessageBody(message),
+      errorMessage: text(message.error_message),
+      createdAt: String(message.created_at || "")
+    }))
+  };
+}
+
+export async function markWhatsAppLiveChatRead(ticketId: string, currentUser: StaffUser) {
+  await loadLiveChatTicket(ticketId, currentUser);
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_service_tickets SET unread_staff_count=0,claimed_at=COALESCE(claimed_at,NOW()) WHERE id=$1`,
+    [ticketId]
+  );
+  return getWhatsAppLiveChat(currentUser, ticketId);
+}
+
+export async function updateWhatsAppLiveChat(ticketId: string, input: { status?: string; salesmanId?: number }, currentUser: StaffUser) {
+  const ticket = await loadLiveChatTicket(ticketId, currentUser);
+  if (input.salesmanId !== undefined) {
+    if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can transfer chats.");
+    const salesperson = await executeDatabaseQuery(`SELECT id FROM users WHERE id=$1 AND active=TRUE`, [input.salesmanId]);
+    if (!salesperson.rowCount) throw new Error("Select an active salesperson.");
+    await executeDatabaseQuery(
+      `UPDATE whatsapp_service_tickets SET salesman_id=$2,claimed_at=NULL,updated_at=NOW() WHERE id=$1`,
+      [ticketId, input.salesmanId]
+    );
+  }
+  if (input.status !== undefined) {
+    const status = input.status === "Open" ? "Open" : input.status === "Resolved" ? "Resolved" : "";
+    if (!status) throw new Error("Chat status must be Open or Resolved.");
+    await executeDatabaseQuery(
+      `UPDATE whatsapp_service_tickets
+       SET status=$2,resolved_at=CASE WHEN $2='Resolved' THEN NOW() ELSE NULL END,
+           closed_by=CASE WHEN $2='Resolved' THEN $3 ELSE NULL END,updated_at=NOW()
+       WHERE id=$1`, [ticketId, status, currentUser.fullName]
+    );
+    if (status === "Resolved" && text(ticket.phone_e164)) {
+      await sendText(text(ticket.phone_e164), `Chat close kar di gayi hai. Dobara madad ke liye *agent* bhejein.`, "ServiceTicket", ticketId)
+        .catch((error) => console.error("WhatsApp chat-close notification failed", { ticketId, error }));
+    }
+  }
+  return getWhatsAppLiveChat(currentUser, ticketId);
 }
 
 export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {
@@ -2119,9 +2266,12 @@ export async function replyWhatsAppServiceTicket(ticketId: string, message: stri
   await sendText(text(ticket.phone_e164), `${currentUser.fullName}: ${cleanMessage}`, "ServiceTicket", ticketId);
   await executeDatabaseQuery(
     `UPDATE whatsapp_service_tickets
-     SET details=CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$2),status=$3,updated_at=NOW(),resolved_at=CASE WHEN $3='Resolved' THEN NOW() ELSE NULL END
+     SET details=CASE WHEN kind='Live Chat' THEN details ELSE CONCAT(details,CASE WHEN details='' THEN '' ELSE E'\n' END,$2) END,
+         status=$3,unread_staff_count=0,last_message_preview=$4,last_message_at=NOW(),claimed_at=COALESCE(claimed_at,NOW()),
+         updated_at=NOW(),resolved_at=CASE WHEN $3='Resolved' THEN NOW() ELSE NULL END,
+         closed_by=CASE WHEN $3='Resolved' THEN $5 ELSE NULL END
      WHERE id=$1`,
-    [ticketId, `Staff: ${cleanMessage}`, close ? "Resolved" : "Open"]
+    [ticketId, `Staff: ${cleanMessage}`, close ? "Resolved" : "Open", cleanMessage, currentUser.fullName]
   );
   return getWhatsAppDashboard(currentUser);
 }
