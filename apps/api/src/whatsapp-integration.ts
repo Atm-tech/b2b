@@ -1190,11 +1190,14 @@ async function acceptOffer(offerId: string, profile: RetailerProfile, inboundMes
     throw new Error("This special rate has expired. Please request a fresh rate.");
   }
   const offerLines = await executeDatabaseQuery<Record<string, unknown>>(`SELECT * FROM whatsapp_offer_lines WHERE offer_id = $1 ORDER BY id`, [offerId]);
-  const lines: DraftLineInput[] = offerLines.rows.map((line) => ({
-    productSku: text(line.product_sku),
-    quantity: Math.max(numberValue(line.minimum_quantity, 1), quantityOverride || numberValue(line.quantity)),
-    rate: numberValue(line.rate), cdPercent: numberValue(line.cd_percent), todPercent: numberValue(line.tod_percent)
-  }));
+  const lines: DraftLineInput[] = offerLines.rows.map((line) => {
+    const minimum = numberValue(line.minimum_quantity, 1);
+    const maximum = Math.max(0, numberValue(line.max_quantity));
+    const requested = quantityOverride || numberValue(line.quantity);
+    if (quantityOverride && quantityOverride < minimum) throw new Error(`Minimum offer quantity is ${minimum}. Please reply with ${minimum} or more.`);
+    if (maximum > 0 && requested > maximum) throw new Error(`Maximum offer quantity is ${maximum}. Please reply with ${maximum} or less.`);
+    return { productSku: text(line.product_sku), quantity: Math.max(minimum, requested), rate: numberValue(line.rate), cdPercent: numberValue(line.cd_percent), todPercent: numberValue(line.tod_percent) };
+  });
   for (const line of lines) {
     const pricing = await productPricing(profile.counterpartyId, line.productSku);
     line.gstRate = pricing.gstRate;
@@ -2545,7 +2548,7 @@ export async function saveWhatsAppPriceRule(input: {
 
 export async function createWhatsAppOffer(input: {
   counterpartyIds: string[]; expiresAt: string;
-  lines: Array<{ productSku: string; quantity: number; rate: number; cdPercent: number; todPercent: number; minimumQuantity: number }>;
+  lines: Array<{ productSku: string; quantity: number; rate: number; cdPercent: number; todPercent: number; minimumQuantity: number; maxQuantity: number }>;
 }, currentUser: StaffUser) {
   if (!input.counterpartyIds.length || !input.lines.length) throw new Error("Select retailers and at least one product.");
   if (new Date(input.expiresAt).getTime() <= Date.now()) throw new Error("Offer expiry must be in the future.");
@@ -2568,15 +2571,18 @@ export async function createWhatsAppOffer(input: {
       const pricing = await productPricing(counterpartyId, line.productSku);
       const rate = line.rate > 0 ? line.rate : pricing.rate;
       const minimumQuantity = Math.max(pricing.minimumQuantity, line.minimumQuantity);
+      const maxQuantity = Math.max(0, line.maxQuantity || 0);
+      if (maxQuantity > 0 && maxQuantity < minimumQuantity) throw new Error(`${pricing.name}: maximum quantity must be at least the MOQ (${minimumQuantity}).`);
       await executeDatabaseQuery(
-        `INSERT INTO whatsapp_offer_lines (id,offer_id,product_sku,quantity,rate,cd_percent,tod_percent,minimum_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id("WAOL"), offerId, line.productSku, Math.max(minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, minimumQuantity]
+        `INSERT INTO whatsapp_offer_lines (id,offer_id,product_sku,quantity,rate,cd_percent,tod_percent,minimum_quantity,max_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [id("WAOL"), offerId, line.productSku, Math.max(minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, minimumQuantity, maxQuantity]
       );
         const adjustment = line.cdPercent || line.todPercent ? ` | CD ${line.cdPercent}% | TOD ${line.todPercent}%` : "";
-        namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(minimumQuantity, line.quantity)} | Min ${minimumQuantity}${adjustment}`);
+        const limit = maxQuantity > 0 ? ` | Max ${maxQuantity}` : " | Max unlimited";
+        namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(minimumQuantity, line.quantity)} | Min ${minimumQuantity}${limit}${adjustment}`);
     }
     const expiry = new Date(input.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-    const body = `🎯 *Special rate for ${retailer.retailerName}*\n${namedLines.join("\n")}\nValid until ${expiry}. Reply YES or tap Order Now.`;
+    const body = `🎯 *Special rate for ${retailer.retailerName}*\n${namedLines.join("\n")}\nValid until ${expiry}. Tap Order Now, or reply to this message with your required quantity.`;
     const template = text(process.env.WHATSAPP_OFFER_TEMPLATE);
     const sent = template
       ? await sendTemplate(retailer.phoneE164, template, [retailer.retailerName, namedLines.join("; "), expiry], "Offer", offerId)

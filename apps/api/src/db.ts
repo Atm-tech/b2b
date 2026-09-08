@@ -276,6 +276,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS tags_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS matched_product_sku TEXT;
     ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS resolution_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE whatsapp_offer_lines ADD COLUMN IF NOT EXISTS max_quantity DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE whatsapp_wishlist_requests ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
     ALTER TABLE whatsapp_service_tickets ADD COLUMN IF NOT EXISTS unread_staff_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE whatsapp_service_tickets ADD COLUMN IF NOT EXISTS last_message_preview TEXT NOT NULL DEFAULT '';

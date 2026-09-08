@@ -1313,7 +1313,8 @@ app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
     rate: requiredNumber(line.rate, "Rate"),
     cdPercent: optionalNumber(line.cdPercent) || 0,
     todPercent: optionalNumber(line.todPercent) || 0,
-    minimumQuantity: optionalNumber(line.minimumQuantity) || 1
+    minimumQuantity: optionalNumber(line.minimumQuantity) || 1,
+    maxQuantity: Math.max(0, optionalNumber(line.maxQuantity) || 0)
   }));
   return createWhatsAppOffer({
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
