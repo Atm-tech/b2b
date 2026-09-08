@@ -340,7 +340,7 @@ async function sendMainMenu(profile: RetailerProfile) {
 
 async function sendOrderGuide(profile: RetailerProfile) {
   await sendButtons(profile.phoneE164,
-    "Aapoorti order demo:\n1. Product name type karein (example: Lux)\n2. Suggested item select karein\n3. Apna special rate dekhein\n4. Quantity choose karein\n5. Aur items add karein\n6. Total dekhkar Finalize karein\n7. Salesperson stock/rate approve karega\n\nDemo shuru karein?",
+    "Aapoorti B Connect order demo:\n\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. MRP, aapka rate aur saving dekhein\n4. Quantity bhejein\n5. Aur item chahiye ho to Add More karein\n6. Total check karke Finalize karein\n7. Aapke salesperson stock aur rate approve karenge\n\nChaliye, demo shuru karein?",
     [
       { id: "wa-guide:start", title: "Start guided order" },
       { id: "wa-cart:checkout", title: "View my cart" }
@@ -380,7 +380,7 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
     await sendTemplate(retailer.phoneE164, welcomeTemplate, [retailer.retailerName, retailer.salesmanName], "BroadcastWelcome", counterpartyId);
   } else {
     await sendText(retailer.phoneE164,
-      `Namaste ${retailer.retailerName} 👋\n\nAapoorti Wholesale WhatsApp ordering mein aapka swagat hai. Aapko ${retailer.salesmanName} ke saath map kar diya gaya hai.\n\nYahan aap product dhoondh sakte hain, apna rate/MRP/discount dekh sakte hain, quantity select karke cart bana sakte hain aur order finalize kar sakte hain.\n\nOrder kaise karein:\n1. Product ka naam type karein — jaise Lux\n2. Sahi item select karein\n3. Quantity bhejein\n4. Aur item chahiye to Add More choose karein\n5. Total check karke Finalize karein\n\nDemo ke liye *demo*, catalogue ke liye *catalogue* aur madad ke liye *help* bhejein.`,
+      `Namaste ${retailer.retailerName} 👋\n\n*Aapoorti B Connect* mein aapka swagat hai. Aapke order ${retailer.salesmanName} handle karenge.\n\nYahin par product dhoondhiye, MRP aur apna special rate dekhiye, quantity choose kijiye aur cart finalize kijiye.\n\n*Order kaise karein*\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. Quantity bhejein\n4. Aur item chahiye to Add More choose karein\n5. Total check karke Finalize karein\n\n*Quick commands*\n• *demo* — step-by-step practice\n• *catalogue* — poori product list\n• *help* — madad\n• *chat* — salesperson se baat\n\nAap product ka naam bhejkar order shuru kar sakte hain.`,
       "BroadcastWelcome", counterpartyId);
   }
 }
