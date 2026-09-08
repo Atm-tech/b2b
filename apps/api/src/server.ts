@@ -61,6 +61,7 @@ import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
+  clearWhatsAppOrderDrafts,
   clearWhatsAppTestActivity,
   configureWhatsAppCommerce,
   createWhatsAppDraftFromLiveChat,
@@ -1259,6 +1260,11 @@ app.delete("/whatsapp/setup/test-activity", async (req, res) => wrap(res, async 
   return clearWhatsAppTestActivity();
 }));
 
+app.delete("/whatsapp/orders", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  return clearWhatsAppOrderDrafts();
+}));
+
 app.get("/whatsapp/setup/status", async (req, res) => {
   try {
     await requireWhatsAppAdmin(req);
@@ -1276,7 +1282,7 @@ app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
     phone: requiredString(req.body?.phone, "WhatsApp number"),
     salesmanId,
     defaultWarehouseId: requiredString(req.body?.defaultWarehouseId, "Warehouse"),
-    billingType: String(req.body?.billingType || "B2B") === "B2C" ? "B2C" : "B2B",
+    billingType: String(req.body?.billingType || "B2C") === "B2B" ? "B2B" : "B2C",
     paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming),
     deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery",
@@ -1358,6 +1364,7 @@ app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () =
   }));
   return reviewWhatsAppDraft(req.params.id, {
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),
+    billingType: String(req.body?.billingType || "B2C") === "B2B" ? "B2B" : "B2C",
     paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode,
     cashTiming: optionalString(req.body?.cashTiming),
     deliveryMode: String(req.body?.deliveryMode || "Delivery") === "Self Collection" ? "Self Collection" : "Delivery",

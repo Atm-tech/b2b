@@ -72,6 +72,7 @@ type WhatsAppDraft = {
   warehouse_id: string;
   source: string;
   status: string;
+  billing_type: "B2B" | "B2C";
   payment_mode: PaymentMode;
   cash_timing?: string;
   delivery_mode: "Delivery" | "Self Collection";
@@ -163,6 +164,7 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
   onStatus?: (draft: WhatsAppDraft, status: string, note: string) => Promise<void>;
 }) {
   const [warehouseId, setWarehouseId] = useState(() => draft.warehouse_id || pilotWarehouseId(snapshot));
+  const [billingType, setBillingType] = useState<"B2B" | "B2C">(draft.billing_type === "B2B" ? "B2B" : "B2C");
   const [paymentMode, setPaymentMode] = useState<PaymentMode>(draft.payment_mode || "NEFT");
   const [cashTiming, setCashTiming] = useState(draft.cash_timing || "Later");
   const [deliveryMode, setDeliveryMode] = useState<"Delivery" | "Self Collection">(draft.delivery_mode || "Delivery");
@@ -198,12 +200,13 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
     {canReview ? <form className="form-grid" onSubmit={(event) => {
       event.preventDefault();
       void onReview(draft, {
-        warehouseId, paymentMode, cashTiming: paymentMode === "Cash" ? cashTiming : undefined,
+        warehouseId, billingType, paymentMode, cashTiming: paymentMode === "Cash" ? cashTiming : undefined,
         deliveryMode, note,
         lines: lines.map((line) => ({ id: line.id, quantity: Number(line.quantity), rate: Number(line.rate), cdPercent: Number(line.cdPercent || 0), todPercent: Number(line.todPercent || 0) }))
       });
     }}>
       <label>Warehouse<select value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
+      <label>Bill type<select value={billingType} onChange={(event) => setBillingType(event.target.value as "B2B" | "B2C")}><option>B2C</option><option>B2B</option></select></label>
       <label>Payment<select value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)}>{snapshot.settings.paymentMethods.filter((item) => item.active).map((item) => <option key={item.code}>{item.code}</option>)}</select></label>
       {paymentMode === "Cash" ? <label>Cash timing<select value={cashTiming} onChange={(event) => setCashTiming(event.target.value)}><option>In Hand</option><option>At Delivery</option><option>Later</option></select></label> : null}
       <label>Delivery<select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as "Delivery" | "Self Collection")}><option>Delivery</option><option>Self Collection</option></select></label>
@@ -274,7 +277,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   }, [dashboard?.whatsappOnlyRetailers, snapshot.counterparties]);
   const salespeople = useMemo(() => snapshot.users.filter((item) => item.active && (item.roles || [item.role]).includes("Sales")), [snapshot.users]);
   const isAdmin = (currentUser.roles || [currentUser.role]).includes("Admin");
-  const [mapping, setMapping] = useState(() => ({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: pilotWarehouseId(snapshot), billingType: "B2B", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true }));
+  const [mapping, setMapping] = useState(() => ({ counterpartyId: "", phone: "", salesmanId: String(isAdmin ? salespeople[0]?.id || "" : currentUser.id), defaultWarehouseId: pilotWarehouseId(snapshot), billingType: "B2C", paymentMode: "NEFT", cashTiming: "Later", deliveryMode: "Delivery", optedIn: false, active: true }));
   const [rule, setRule] = useState({ counterpartyId: "", productSku: "", specialRate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", validUntil: localDateTime(24), active: true });
   const [offer, setOffer] = useState({ counterpartyIds: [] as string[], productSku: "", quantity: "1", rate: "", cdPercent: "0", todPercent: "0", minimumQuantity: "1", expiresAt: localDateTime(8) });
   const [catalogImageMappings, setCatalogImageMappings] = useState("");
@@ -608,7 +611,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </section>
 
     <TwoCol left={<Panel title="Map retailer" eyebrow="WhatsApp identity and owner"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/retailers", { ...mapping, salesmanId: Number(mapping.salesmanId) }, "Retailer WhatsApp mapping saved."); }}>
-      <label>Retailer<select value={mapping.counterpartyId} onChange={(event) => { const shop = shops.find((item) => item.id === event.target.value); setMapping((current) => ({ ...current, counterpartyId: event.target.value, phone: shop?.mobileNumber || current.phone, billingType: shop?.gstNumber ? "B2B" : "B2C" })); }}><option value="">Select retailer</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name} · {shop.city}</option>)}</select></label>
+      <label>Retailer<select value={mapping.counterpartyId} onChange={(event) => { const shop = shops.find((item) => item.id === event.target.value); setMapping((current) => ({ ...current, counterpartyId: event.target.value, phone: shop?.mobileNumber || current.phone, billingType: "B2C" })); }}><option value="">Select retailer</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name} · {shop.city}</option>)}</select></label>
       <label>WhatsApp number<input value={mapping.phone} onChange={(event) => setMapping((current) => ({ ...current, phone: event.target.value }))} placeholder="919876543210" /></label>
       <label>Assigned salesperson<select value={mapping.salesmanId} onChange={(event) => setMapping((current) => ({ ...current, salesmanId: event.target.value }))}>{salespeople.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}</select></label>
       <label>Warehouse<select value={mapping.defaultWarehouseId} onChange={(event) => setMapping((current) => ({ ...current, defaultWarehouseId: event.target.value }))}>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>

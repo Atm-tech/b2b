@@ -1096,7 +1096,8 @@ function proformaTotals(rows: Record<string, unknown>[]) {
 
 function proformaFooter(draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
   const totals = proformaTotals(rows);
-  return `Subtotal: ₹${totals.taxable.toFixed(2)}\nDiscount (CD/TOD): -₹${totals.discount.toFixed(2)}\nGST: ₹${totals.gst.toFixed(2)}\n*Grand total: ₹${totals.grand.toFixed(2)}*\nPayment: ${text(draft.payment_mode) || "Pending"} | Delivery: ${text(draft.delivery_mode) || "Pending"}`;
+  const discount = totals.discount > 0 ? `\nDiscount: -₹${totals.discount.toFixed(2)}` : "";
+  return `Subtotal: ₹${totals.taxable.toFixed(2)}${discount}\nGST: ₹${totals.gst.toFixed(2)}\n*Grand total: ₹${totals.grand.toFixed(2)}*\nPayment: ${text(draft.payment_mode) || "Pending"} | Delivery: ${text(draft.delivery_mode) || "Pending"}`;
 }
 
 function compactProforma(draftId: string, draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
@@ -1121,7 +1122,12 @@ function compactProforma(draftId: string, draft: Record<string, unknown>, rows: 
 function detailedProforma(draftId: string, draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
   const details = rows.map((line, index) => {
     const amounts = lineAmounts(line);
-    return `*${index + 1}. ${text(line.product_name)}*\n${mrpDiscountLabel(line.mrp, line.rate)}\nQty ${numberValue(line.approved_quantity)} × Rate ₹${numberValue(line.rate).toFixed(2)}\nCD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}% | GST ${amounts.gstRate}% ${amounts.taxMode}\nTaxable ₹${amounts.taxableAmount.toFixed(2)} | Discount ₹${(amounts.cdAmount + amounts.todAmount).toFixed(2)} | GST ₹${amounts.gstAmount.toFixed(2)}\nLine total: ₹${amounts.totalAmount.toFixed(2)}`;
+    const discount = amounts.cdAmount + amounts.todAmount;
+    const rateAdjustment = numberValue(line.cd_percent) || numberValue(line.tod_percent)
+      ? `\nCD ${numberValue(line.cd_percent)}% | TOD ${numberValue(line.tod_percent)}%`
+      : "";
+    const discountAmount = discount > 0 ? ` | Discount ₹${discount.toFixed(2)}` : "";
+    return `*${index + 1}. ${text(line.product_name)}*\n${mrpDiscountLabel(line.mrp, line.rate)}\nQty ${numberValue(line.approved_quantity)} × Rate ₹${numberValue(line.rate).toFixed(2)}${rateAdjustment}\nGST ${amounts.gstRate}% ${amounts.taxMode}\nTaxable ₹${amounts.taxableAmount.toFixed(2)}${discountAmount} | GST ₹${amounts.gstAmount.toFixed(2)}\nLine total: ₹${amounts.totalAmount.toFixed(2)}`;
   }).join("\n\n");
   return `🧾 *AAPOORTI WHOLESALE — PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}\nSalesperson: ${text(draft.salesman_name)}\nWarehouse: ${text(draft.warehouse_id)}\n\n${details}\n\n${proformaFooter(draft, rows)}\n\nFinal tax invoice will be generated after order confirmation and processing.`;
 }
@@ -2184,6 +2190,7 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
     } else {
       await reviewWhatsAppDraft(draftId, {
         warehouseId: input.warehouseId || profile.defaultWarehouseId,
+        billingType: "B2C",
         paymentMode: input.paymentMode || profile.paymentMode,
         cashTiming: input.cashTiming || profile.cashTiming,
         deliveryMode: input.deliveryMode || profile.deliveryMode,
@@ -2415,6 +2422,30 @@ export async function clearWhatsAppTestActivity() {
   return { cleared: true, ...(result.rows[0] || {}) };
 }
 
+// Removes order workflow data only. Retailer mappings, chats, catalogue and
+// audit messages are intentionally preserved so the WhatsApp desk stays usable.
+export async function clearWhatsAppOrderDrafts() {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `WITH drafts AS MATERIALIZED (
+       SELECT id FROM whatsapp_order_drafts
+     ), updated_retailers AS (
+       UPDATE whatsapp_retailers SET billing_type='B2C',updated_at=NOW() WHERE billing_type <> 'B2C' RETURNING counterparty_id
+     ), deleted_events AS (
+       DELETE FROM whatsapp_order_events WHERE draft_id IN (SELECT id FROM drafts) RETURNING id
+     ), deleted_lines AS (
+       DELETE FROM whatsapp_order_draft_lines WHERE draft_id IN (SELECT id FROM drafts) RETURNING id
+     ), deleted_drafts AS (
+       DELETE FROM whatsapp_order_drafts WHERE id IN (SELECT id FROM drafts) RETURNING id
+     )
+     SELECT (SELECT COUNT(*) FROM deleted_drafts)::int AS drafts,
+            (SELECT COUNT(*) FROM deleted_lines)::int AS draft_lines,
+            (SELECT COUNT(*) FROM deleted_events)::int AS events,
+            (SELECT COUNT(*) FROM updated_retailers)::int AS retailers_set_b2c`,
+    []
+  );
+  return { cleared: true, ...(result.rows[0] || {}) };
+}
+
 export async function saveWhatsAppRetailer(input: {
   counterpartyId: string; phone: string; salesmanId: number; defaultWarehouseId: string;
   billingType: "B2B" | "B2C"; paymentMode: PaymentMode; cashTiming?: string;
@@ -2481,7 +2512,7 @@ export async function approveWhatsAppRegistration(registrationId: string, input:
        counterparty_id,phone_e164,salesman_id,default_warehouse_id,billing_type,payment_mode,
        delivery_mode,opted_in_at,active,created_by,created_at,updated_at
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),TRUE,$8,NOW(),NOW())`,
-    [counterpartyId, phone, input.salesmanId, input.defaultWarehouseId, gstin === "NA" ? "B2C" : "B2B",
+    [counterpartyId, phone, input.salesmanId, input.defaultWarehouseId, "B2C",
       input.paymentMode, input.deliveryMode, currentUser.fullName]
   );
   await executeDatabaseQuery(
@@ -2541,7 +2572,8 @@ export async function createWhatsAppOffer(input: {
         `INSERT INTO whatsapp_offer_lines (id,offer_id,product_sku,quantity,rate,cd_percent,tod_percent,minimum_quantity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [id("WAOL"), offerId, line.productSku, Math.max(minimumQuantity, line.quantity), rate, line.cdPercent, line.todPercent, minimumQuantity]
       );
-      namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(minimumQuantity, line.quantity)} | Min ${minimumQuantity} | CD ${line.cdPercent}% | TOD ${line.todPercent}%`);
+        const adjustment = line.cdPercent || line.todPercent ? ` | CD ${line.cdPercent}% | TOD ${line.todPercent}%` : "";
+        namedLines.push(`${pricing.name}: ${mrpDiscountLabel(pricing.mrp, rate)} | Your rate ₹${rate.toFixed(2)} | Qty ${Math.max(minimumQuantity, line.quantity)} | Min ${minimumQuantity}${adjustment}`);
     }
     const expiry = new Date(input.expiresAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     const body = `🎯 *Special rate for ${retailer.retailerName}*\n${namedLines.join("\n")}\nValid until ${expiry}. Reply YES or tap Order Now.`;
@@ -2621,7 +2653,7 @@ export async function sendWhatsAppBroadcast(input: {
 }
 
 export async function reviewWhatsAppDraft(draftId: string, input: {
-  warehouseId: string; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Delivery" | "Self Collection";
+  warehouseId: string; billingType: "B2B" | "B2C"; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Delivery" | "Self Collection";
   note?: string; lines: Array<{ id: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
 }, currentUser: StaffUser) {
   const loaded = await loadDraft(draftId);
@@ -2648,8 +2680,8 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
     );
   }
   await executeDatabaseQuery(
-    `UPDATE whatsapp_order_drafts SET warehouse_id=$2,payment_mode=$3,cash_timing=$4,delivery_mode=$5,note=$6,status='Staff Approved',reviewed_at=NOW() WHERE id=$1`,
-    [draftId, input.warehouseId, input.paymentMode, input.cashTiming || null, input.deliveryMode, input.note || text(loaded.draft.note)]
+    `UPDATE whatsapp_order_drafts SET warehouse_id=$2,billing_type=$3,payment_mode=$4,cash_timing=$5,delivery_mode=$6,note=$7,status='Staff Approved',reviewed_at=NOW() WHERE id=$1`,
+    [draftId, input.warehouseId, input.billingType, input.paymentMode, input.cashTiming || null, input.deliveryMode, input.note || text(loaded.draft.note)]
   );
   const finalDraft = await loadDraft(draftId);
   const summary = compactProforma(draftId, finalDraft.draft, finalDraft.lines);
