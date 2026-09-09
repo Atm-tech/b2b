@@ -1728,7 +1728,7 @@ async function handleInboundMessage(message: JsonObject) {
       await sendAccountSummary(profile);
       return;
     }
-    if (/^(salesman|agent|live chat|talk to sales|human)$/i.test(normalized)) {
+    if (/^(chat|salesman|agent|live chat|talk to sales|human)$/i.test(normalized)) {
       const ticketId = await createServiceTicket(profile, { kind: "Live Chat", subject: "Retailer requested live salesperson" });
       await executeDatabaseQuery(
         `UPDATE whatsapp_messages SET related_entity_type='ServiceTicket',related_entity_id=$2 WHERE id=$1`,
