@@ -1183,6 +1183,30 @@ async function sendDraftForRetailerApproval(draftId: string) {
   );
 }
 
+async function sendDraftChangeProductPicker(profile: RetailerProfile, draftId: string) {
+  const loaded = await loadDraft(draftId);
+  if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
+  await sendGraphMessage(profile.phoneE164, {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "Change quantity" },
+      body: { text: "Is proforma mein jis product ki quantity change karni hai, use select karein. Rate change available nahi hai." },
+      action: {
+        button: "Select product",
+        sections: [{
+          title: "Invoice products",
+          rows: loaded.lines.slice(0, 10).map((line) => ({
+            id: `wa-change-product:${encodeURIComponent(draftId)}:${encodeURIComponent(text(line.product_sku))}`,
+            title: compact(text(line.product_name), 24),
+            description: compact(`Current qty ${numberValue(line.approved_quantity)} | Rate Rs.${numberValue(line.rate).toFixed(2)}`, 72)
+          }))
+        }]
+      }
+    }
+  }, "Draft", draftId);
+}
+
 async function finalizeDraft(draftId: string) {
   const claimed = await executeDatabaseQuery(
     `UPDATE whatsapp_order_drafts SET status = 'Processing', retailer_confirmed_at = NOW()
@@ -1450,8 +1474,27 @@ async function handleInboundMessage(message: JsonObject) {
       return;
     }
     if (buttonId.startsWith("wa-change:")) {
-      await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Change Requested' WHERE id = $1 AND counterparty_id = $2`, [buttonId.slice("wa-change:".length), profile.counterpartyId]);
-      await sendText(from, "Required quantity ya rate change type karke bhejein. Sales team revised proforma wapas bhejegi; final approval aapka hoga.");
+      const draftId = buttonId.slice("wa-change:".length);
+      await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Change Requested' WHERE id = $1 AND counterparty_id = $2`, [draftId, profile.counterpartyId]);
+      await sendDraftChangeProductPicker(profile, draftId);
+      return;
+    }
+    if (buttonId.startsWith("wa-change-product:")) {
+      const match = buttonId.match(/^wa-change-product:([^:]+):(.+)$/);
+      if (!match) throw new Error("Invalid product change selection.");
+      const draftId = decodeURIComponent(match[1]);
+      const productSku = decodeURIComponent(match[2]);
+      const loaded = await loadDraft(draftId);
+      const line = loaded.lines.find((candidate) => text(candidate.product_sku) === productSku);
+      if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || !line) throw new Error("That product is not part of this proforma.");
+      const pricing = await productPricing(profile.counterpartyId, productSku);
+      await executeDatabaseQuery(
+        `INSERT INTO whatsapp_cart_sessions (phone_e164,counterparty_id,selected_product_sku,stage,last_inbound_message_id,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+         ON CONFLICT (phone_e164) DO UPDATE SET counterparty_id=EXCLUDED.counterparty_id,selected_product_sku=EXCLUDED.selected_product_sku,stage=EXCLUDED.stage,last_inbound_message_id=EXCLUDED.last_inbound_message_id,updated_at=NOW()`,
+        [profile.phoneE164, profile.counterpartyId, productSku, `AwaitingDraftChangeQuantity:${draftId}`, messageId]
+      );
+      await sendText(from, `${pricing.name}\nCurrent quantity: ${numberValue(line.approved_quantity)}\nMinimum order quantity: ${pricing.minimumQuantity}\n\nRequired quantity type karein. Rate change available nahi hai.`, "Draft", draftId);
       return;
     }
     if (buttonId.startsWith("wa-offer:")) {
@@ -1614,16 +1657,44 @@ async function handleInboundMessage(message: JsonObject) {
       return;
     }
     if (body) {
+      const changeSession = await loadCartSession(profile.phoneE164);
+      const draftChangeMatch = changeSession?.stage.match(/^AwaitingDraftChangeQuantity:(.+)$/);
+      if (draftChangeMatch && changeSession?.selectedProductSku) {
+        if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+          await sendText(from, "Required quantity type karein. Rate change available nahi hai.");
+          return;
+        }
+        const draftId = draftChangeMatch[1];
+        const loaded = await loadDraft(draftId);
+        if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || text(loaded.draft.status) !== "Change Requested") {
+          await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164=$1`, [profile.phoneE164]);
+          await sendText(from, "Yeh change request expire ho gayi hai. Latest proforma se Request Change select karein.");
+          return;
+        }
+        const pricing = await productPricing(profile.counterpartyId, changeSession.selectedProductSku);
+        const quantity = numberValue(normalized);
+        if (quantity < pricing.minimumQuantity) {
+          await sendText(from, `${pricing.name} ki minimum order quantity ${pricing.minimumQuantity} hai. Required quantity ${pricing.minimumQuantity} ya usse zyada type karein.`);
+          return;
+        }
+        await executeDatabaseQuery(
+          `UPDATE whatsapp_order_draft_lines SET requested_quantity=$3,approved_quantity=$3 WHERE draft_id=$1 AND product_sku=$2`,
+          [draftId, changeSession.selectedProductSku, quantity]
+        );
+        await executeDatabaseQuery(
+          `UPDATE whatsapp_order_drafts SET note=CONCAT(note,CASE WHEN note='' THEN '' ELSE ' | ' END,$2::text) WHERE id=$1`,
+          [draftId, `Retailer quantity changed: ${pricing.name} to ${quantity}`]
+        );
+        await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164=$1`, [profile.phoneE164]);
+        await sendDraftForRetailerApproval(draftId);
+        return;
+      }
       const pendingChange = await executeDatabaseQuery<{ id: string }>(
         `SELECT id FROM whatsapp_order_drafts WHERE counterparty_id = $1 AND status = 'Change Requested' ORDER BY created_at DESC LIMIT 1`,
         [profile.counterpartyId]
       );
       if (pendingChange.rows[0]) {
-        await executeDatabaseQuery(
-          `UPDATE whatsapp_order_drafts SET status = 'Needs Review', note = CONCAT(note, CASE WHEN note = '' THEN '' ELSE ' | ' END, $2::text) WHERE id = $1`,
-          [pendingChange.rows[0].id, `Retailer requested: ${body}`]
-        );
-        await sendText(from, "Change request received. Your salesperson will review stock and rate, then send the revised order here.", "Draft", pendingChange.rows[0].id);
+        await sendDraftChangeProductPicker(profile, pendingChange.rows[0].id);
         return;
       }
     }
