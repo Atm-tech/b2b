@@ -702,7 +702,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <details className="wa-catalog-tools">
         <summary>Meta feed and image tools</summary>
         <div className="wa-catalog-tools-body">
-          <div className="settings-line"><span className="helper-text">If WhatsApp is showing a stale or short catalogue, reconnect the linked Meta catalogue without changing products.</span><button className="ghost-button" type="button" disabled={busy} onClick={() => void submit("/whatsapp/setup/catalog", {}, "WhatsApp catalogue link refreshed. Meta may take a few minutes to update the storefront.")}>Re-link WhatsApp catalogue</button></div>
+          <div className="settings-line"><span className="helper-text">Activate production inbound replies once after connecting a new WhatsApp Business Account. The catalogue is already linked in WhatsApp Manager.</span><button className="ghost-button" type="button" disabled={busy} onClick={() => void submit("/whatsapp/setup/subscribe", {}, "Production WhatsApp replies are now activated.")}>Activate production replies</button></div>
           <div className="settings-line"><input readOnly value={dashboard?.catalogFeedUrl || "Loading…"} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.catalogFeedUrl || "")}>Copy feed URL</button></div>
           <form className="form-grid" onSubmit={importCatalogImages}>
             <label className="wide-field">Verified product image URLs<textarea rows={5} value={catalogImageMappings} onChange={(event) => setCatalogImageMappings(event.target.value)} placeholder={"SKU,https://licensed-source.example/product.jpg\nSKU-2,https://licensed-source.example/product-2.png"} /></label>

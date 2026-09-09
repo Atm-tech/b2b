@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { calculateSalesAmounts, calculateTaxAmounts, inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
-import { whatsappCatalogMinimums, whatsappCatalogProductAliases } from "./whatsapp-catalog-minimums.js";
+import { whatsappCatalogMinimums, whatsappCatalogProductAliases, whatsappCatalogSalePrices } from "./whatsapp-catalog-minimums.js";
 import type {
   AppSnapshot,
   AppUser,
@@ -208,17 +208,19 @@ async function backfillProductWeights() {
 async function syncWhatsAppCatalogMinimums() {
   const names = whatsappCatalogMinimums.map((item) => item.articleName);
   const quantities = whatsappCatalogMinimums.map((item) => item.minimumOrderQuantity);
+  const salePrices = whatsappCatalogMinimums.map((item) => whatsappCatalogSalePrices[item.articleName]);
   const aliases = whatsappCatalogMinimums.map((item) => whatsappCatalogProductAliases[item.articleName] || "");
   // The workbook remains the source of truth for the production catalogue, but
   // dedicated WhatsApp test products must survive startup/deploy reconciliation.
   await pool.query("UPDATE products SET whatsapp_catalog_enabled = FALSE WHERE sku NOT LIKE 'WA-TEST-%'");
   const updated = await pool.query<{ sku: string }>(
     `WITH source AS (
-       SELECT article_name, minimum_quantity, product_sku
-       FROM UNNEST($1::text[], $2::double precision[], $3::text[]) AS source_values(article_name, minimum_quantity, product_sku)
+       SELECT article_name, minimum_quantity, sale_price, product_sku
+       FROM UNNEST($1::text[], $2::double precision[], $3::double precision[], $4::text[]) AS source_values(article_name, minimum_quantity, sale_price, product_sku)
      )
      UPDATE products product
      SET minimum_order_quantity = source.minimum_quantity,
+         rsp = source.sale_price,
          whatsapp_catalog_enabled = TRUE
      FROM source
      WHERE (source.product_sku <> '' AND product.sku = source.product_sku)
@@ -228,7 +230,7 @@ async function syncWhatsAppCatalogMinimums() {
         OR REGEXP_REPLACE(UPPER(COALESCE(NULLIF(product.article_name, ''), product.name)), '[^A-Z0-9]+', '', 'g')
          = REGEXP_REPLACE(UPPER(source.article_name), '[^A-Z0-9]+', '', 'g')
      RETURNING product.sku`,
-    [names, quantities, aliases]
+      [names, quantities, salePrices, aliases]
   );
   if (updated.rowCount !== whatsappCatalogMinimums.length) {
     console.warn(`WhatsApp catalogue MOQ sync matched ${updated.rowCount || 0} of ${whatsappCatalogMinimums.length} workbook rows.`);
