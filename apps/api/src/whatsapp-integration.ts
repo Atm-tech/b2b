@@ -2661,6 +2661,29 @@ export async function saveWhatsAppRetailer(input: {
   return getWhatsAppDashboard(currentUser);
 }
 
+export async function removeWhatsAppRetailer(counterpartyId: string, currentUser: StaffUser) {
+  if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can remove a retailer mapping.");
+  const retailer = await executeDatabaseQuery<{ phone_e164: string }>(
+    `SELECT phone_e164 FROM whatsapp_retailers WHERE counterparty_id=$1`, [counterpartyId]
+  );
+  const phone = text(retailer.rows[0]?.phone_e164);
+  if (!phone) throw new Error("WhatsApp retailer mapping was not found.");
+  const drafts = await executeDatabaseQuery<{ id: string }>(
+    `SELECT id FROM whatsapp_order_drafts WHERE counterparty_id=$1 OR phone_e164=$2`, [counterpartyId, phone]
+  );
+  const draftIds = drafts.rows.map((item) => item.id);
+  if (draftIds.length) {
+    await executeDatabaseQuery(`DELETE FROM whatsapp_order_events WHERE draft_id = ANY($1::text[])`, [draftIds]);
+    await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id = ANY($1::text[])`, [draftIds]);
+    await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id = ANY($1::text[])`, [draftIds]);
+  }
+  await executeDatabaseQuery(`DELETE FROM whatsapp_cart_lines WHERE phone_e164=$1`, [phone]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164=$1`, [phone]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_registration_requests WHERE phone_e164=$1 AND status IN ('Draft','Pending')`, [phone]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_retailers WHERE counterparty_id=$1`, [counterpartyId]);
+  return getWhatsAppDashboard(currentUser);
+}
+
 export async function approveWhatsAppRegistration(registrationId: string, input: {
   salesmanId: number;
   defaultWarehouseId: string;

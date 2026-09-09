@@ -79,6 +79,7 @@ import {
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
+  removeWhatsAppRetailer,
   reviewWhatsAppDraft,
   replyWhatsAppServiceTicket,
   resolveWhatsAppWishlist,
@@ -1295,6 +1296,11 @@ app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
     optedIn: Boolean(req.body?.optedIn),
     active: req.body?.active !== false
   }, currentUser);
+}));
+
+app.delete("/whatsapp/retailers/:id", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  return removeWhatsAppRetailer(req.params.id, currentUser);
 }));
 
 app.post("/whatsapp/price-rules", async (req, res) => wrap(res, async () => {
