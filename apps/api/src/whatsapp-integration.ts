@@ -885,6 +885,13 @@ async function addCartLines(profile: RetailerProfile, messageId: string, lines: 
 
 async function sendCartChoices(profile: RetailerProfile) {
   const lines = await loadCartLines(profile.phoneE164);
+  // There is only one retailer-facing approval at a time. As soon as an item
+  // is added after a proforma exists, replace it with one fresh combined
+  // proforma instead of leaving an invisible second temporary cart behind.
+  if (lines.length && await getRetailerOpenProforma(profile)) {
+    await finalizeCart(profile, "");
+    return;
+  }
   const summary = cartSummary(lines);
   await sendButtons(profile.phoneE164,
     `Added to cart.\n\n${summary.body}\n\nEstimated total: Rs.${summary.total.toFixed(2)}\n\nAur product add karna hai?`,
@@ -907,6 +914,10 @@ async function getRetailerOpenProforma(profile: RetailerProfile) {
 
 async function sendCartCheckout(profile: RetailerProfile) {
   const lines = await loadCartLines(profile.phoneE164);
+  if (lines.length && await getRetailerOpenProforma(profile)) {
+    await finalizeCart(profile, "");
+    return;
+  }
   if (!lines.length) {
     const draftId = await getRetailerOpenProforma(profile);
     if (draftId) {
