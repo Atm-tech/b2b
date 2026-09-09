@@ -990,39 +990,27 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
        ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
     );
     if (openDraft.rows[0]?.id) {
-      const draftId = openDraft.rows[0].id;
-      const existing = await loadDraft(draftId);
+      const previousDraftId = openDraft.rows[0].id;
+      const existing = await loadDraft(previousDraftId);
+      const combinedLines = new Map<string, DraftLineInput>();
+      for (const line of existing.lines) {
+        combinedLines.set(text(line.product_sku), {
+          productSku: text(line.product_sku), quantity: numberValue(line.approved_quantity), rate: numberValue(line.rate),
+          cdPercent: numberValue(line.cd_percent), todPercent: numberValue(line.tod_percent),
+          gstRate: numberValue(line.gst_rate) as GstRate,
+          taxMode: text(line.tax_mode) === "Inclusive" ? "Inclusive" : "Exclusive", note: text(line.note)
+        });
+      }
       for (const line of lines) {
-        const current = existing.lines.find((candidate) => text(candidate.product_sku) === line.productSku);
-        if (current) {
-          const combinedQuantity = numberValue(current.approved_quantity) + line.quantity;
-          await executeDatabaseQuery(
-            `UPDATE whatsapp_order_draft_lines SET requested_quantity=$3,approved_quantity=$3 WHERE id=$1 AND draft_id=$2`,
-            [text(current.id), draftId, combinedQuantity]
-          );
-        } else {
-          await executeDatabaseQuery(
-            `INSERT INTO whatsapp_order_draft_lines (
-               id, draft_id, product_sku, requested_quantity, approved_quantity, rate,
-               cd_percent, tod_percent, gst_rate, tax_mode, note
-             ) VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10)`,
-            [id("WADL"), draftId, line.productSku, line.quantity, line.rate, line.cdPercent || 0,
-              line.todPercent || 0, line.gstRate === "NA" ? 0 : line.gstRate || 0,
-              line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive", line.note || ""]
-          );
-        }
+        const current = combinedLines.get(line.productSku);
+        combinedLines.set(line.productSku, current ? { ...current, quantity: current.quantity + line.quantity } : line);
       }
-      await executeDatabaseQuery(
-        `UPDATE whatsapp_order_drafts
-         SET source_message_id=$2,note=CONCAT(note,CASE WHEN note='' THEN '' ELSE ' | ' END,$3::text),updated_at=NOW()
-         WHERE id=$1`,
-        [draftId, sourceMessageId || null, `${source} items added by retailer`]
-      );
-      if (sendRetailerProforma) {
-        await sendText(profile.phoneE164, "Items existing proforma mein add kar diye gaye hain. Revised proforma neeche hai.", "Draft", draftId);
-        await sendDraftForRetailerApproval(draftId);
-      }
-      return draftId;
+      // The prior approval message must never remain actionable once the cart changes.
+      // Replace its draft with one fresh combined proforma for this retailer.
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_events WHERE draft_id=$1`, [previousDraftId]);
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [previousDraftId]);
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [previousDraftId]);
+      lines.splice(0, lines.length, ...combinedLines.values());
     }
   }
   const draftId = id("WAD");
