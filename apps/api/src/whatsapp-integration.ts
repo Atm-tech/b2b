@@ -909,9 +909,11 @@ async function sendCartCheckout(profile: RetailerProfile) {
   const lines = await loadCartLines(profile.phoneE164);
   if (!lines.length) {
     const draftId = await getRetailerOpenProforma(profile);
-    await sendText(profile.phoneE164, draftId
-      ? `Temporary cart empty hai, lekin aapka unconfirmed proforma ${draftId} abhi active hai. Catalogue se aur items bhej sakte hain, ya latest proforma par Confirm Order karein.`
-      : "Your cart is empty. Product name type karein, jaise: Lux");
+    if (draftId) {
+      await sendDraftForRetailerApproval(draftId);
+      return;
+    }
+    await sendText(profile.phoneE164, "Your cart is empty. Product name type karein, jaise: Lux");
     return;
   }
   const summary = cartSummary(lines);
