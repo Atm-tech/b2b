@@ -153,6 +153,7 @@ function App() {
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
   const orderNotificationBaseline = useRef<Set<string> | null>(null);
+  const [notificationPromptOpen, setNotificationPromptOpen] = useState(false);
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
   const [warehouseForm, setWarehouseForm] = useState({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" as "Warehouse" | "Yard" });
@@ -571,6 +572,20 @@ function App() {
     }
     orderNotificationBaseline.current = current;
   }, [snapshot]);
+
+  useEffect(() => {
+    if (!currentUser || typeof Notification === "undefined" || Notification.permission !== "default") return;
+    if (window.localStorage.getItem("aapoorti-notification-prompt-dismissed") !== "1") setNotificationPromptOpen(true);
+  }, [currentUser]);
+
+  async function requestAppNotifications() {
+    if (typeof Notification === "undefined") return;
+    const permission = await Notification.requestPermission();
+    setNotificationPromptOpen(false);
+    window.localStorage.setItem("aapoorti-notification-prompt-dismissed", "1");
+    if (permission === "granted") setMessage("Notifications enabled for new orders and retailer chats.");
+    else setError("Notifications are blocked. Browser settings se Aapoorti B Connect notifications allow kar sakte hain.");
+  }
 
   useEffect(() => {
     if (!snapshot) return;
@@ -1402,6 +1417,7 @@ function App() {
 
       {isOffline ? <div className="offline-pill" role="status">Offline mode</div> : null}
       {showIosInstallGuide ? <IosInstallGuide browserName={iosBrowser} onClose={() => setShowIosInstallGuide(false)} /> : null}
+      {notificationPromptOpen ? <div className="notification-permission-overlay" role="presentation"><section className="notification-permission-card" role="dialog" aria-modal="true" aria-labelledby="notification-permission-title"><span className="eyebrow">Stay updated</span><h2 id="notification-permission-title">Enable order alerts?</h2><p>New sales, purchase orders and retailer WhatsApp chats will appear as app and desktop notifications.</p><div><button className="primary-button" type="button" onClick={() => void requestAppNotifications()}>Enable notifications</button><button className="ghost-button" type="button" onClick={() => { setNotificationPromptOpen(false); window.localStorage.setItem("aapoorti-notification-prompt-dismissed", "1"); }}>Not now</button></div></section></div> : null}
 
       {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <section className="hero panel hero-compact">
         <div>

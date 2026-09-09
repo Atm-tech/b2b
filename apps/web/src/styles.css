@@ -2419,6 +2419,13 @@ body.so-viewport-locked .sales-catalog textarea {
   color: #fff;
 }
 
+.notification-permission-overlay { position: fixed; z-index: 150; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(13, 41, 51, .34); backdrop-filter: blur(5px); }
+.notification-permission-card { width: min(100%, 420px); display: grid; gap: 12px; padding: 24px; border: 1px solid rgba(255,255,255,.78); border-radius: 22px; background: #fff; box-shadow: 0 24px 70px rgba(13, 41, 51, .28); }
+.notification-permission-card h2,.notification-permission-card p { margin: 0; }
+.notification-permission-card p { color: #607976; line-height: 1.5; }
+.notification-permission-card > div { display: flex; flex-wrap: wrap; gap: 9px; }
+.notification-permission-card button { width: auto; min-height: 42px; margin: 0; padding: 9px 14px; }
+
 .rate-popup-sheet {
   width: min(92vw, 520px);
   max-width: min(75vw, 520px);
