@@ -1003,16 +1003,39 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
   const lines: DraftLineInput[] = [];
   const minimumAdjustments: string[] = [];
   const minimumSummary: string[] = [];
+  const unavailableItems: Array<{ name: string; quantity: number }> = [];
   for (const item of rawItems) {
     const sku = text(item.product_retailer_id);
-    const pricing = await productPricing(profile.counterpartyId, sku);
     const requestedQuantity = Math.max(1, numberValue(item.quantity, 1));
+    let pricing: Awaited<ReturnType<typeof productPricing>>;
+    try {
+      pricing = await productPricing(profile.counterpartyId, sku);
+    } catch {
+      unavailableItems.push({ name: sku || "Catalogue item", quantity: requestedQuantity });
+      continue;
+    }
     const quantity = Math.max(pricing.minimumQuantity, requestedQuantity);
     if (requestedQuantity < pricing.minimumQuantity) {
       minimumAdjustments.push(`${pricing.name}: ${requestedQuantity} â†’ ${pricing.minimumQuantity}`);
     }
     minimumSummary.push(`${pricing.name}: MOQ ${pricing.minimumQuantity} | Cart qty ${quantity}`);
     lines.push({ productSku: sku, quantity, rate: pricing.rate, cdPercent: pricing.cdPercent, todPercent: pricing.todPercent, gstRate: pricing.gstRate, taxMode: pricing.taxMode });
+  }
+  for (const item of unavailableItems) {
+    await executeDatabaseQuery(
+      `INSERT INTO whatsapp_wishlist_requests (
+         id, counterparty_id, phone_e164, salesman_id, requested_product,
+         requested_quantity, status, source_message_id, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,'Pending',$7,NOW(),NOW())`,
+      [id("WAW"), profile.counterpartyId, profile.phoneE164, profile.salesmanId,
+        item.name, item.quantity, messageId || null]
+    );
+  }
+  if (!lines.length) {
+    await sendText(profile.phoneE164,
+      `Yeh catalogue items abhi available catalogue list mein nahi hain, isliye order create nahi hua. Wishlist sales team ko bhej di gayi hai:\n${unavailableItems.map((item) => `â€¢ ${item.name} | Qty ${item.quantity}`).join("\n")}`,
+      "Wishlist", profile.counterpartyId);
+    return "";
   }
   const draftId = await createDraft(profile, "Catalogue", messageId, lines);
   const loaded = await loadDraft(draftId);
@@ -1025,6 +1048,11 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
   await sendText(profile.phoneE164,
     compactProforma(draftId, loaded.draft, loaded.lines).replace("Please confirm or request a change.", "Preliminary catalogue proforma — final confirmation sales review ke baad aayega."),
     "Draft", draftId);
+  if (unavailableItems.length) {
+    await sendText(profile.phoneE164,
+      `In items ka live product record available nahi tha, isliye unhe order se alag karke wishlist mein bhej diya hai:\n${unavailableItems.map((item) => `â€¢ ${item.name} | Qty ${item.quantity}`).join("\n")}\n\nBaaki available items ki proforma upar bhej di gayi hai.`,
+      "Wishlist", draftId);
+  }
   return draftId;
 }
 
