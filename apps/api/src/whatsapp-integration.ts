@@ -895,10 +895,23 @@ async function sendCartChoices(profile: RetailerProfile) {
     ], "Cart", profile.phoneE164);
 }
 
+async function getRetailerOpenProforma(profile: RetailerProfile) {
+  const result = await executeDatabaseQuery<{ id: string }>(
+    `SELECT id FROM whatsapp_order_drafts
+     WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart')
+       AND status IN ('Needs Review','Change Requested','Awaiting Retailer')
+     ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
+  );
+  return result.rows[0]?.id || "";
+}
+
 async function sendCartCheckout(profile: RetailerProfile) {
   const lines = await loadCartLines(profile.phoneE164);
   if (!lines.length) {
-    await sendText(profile.phoneE164, "Your cart is empty. Product name type karein, jaise: Lux");
+    const draftId = await getRetailerOpenProforma(profile);
+    await sendText(profile.phoneE164, draftId
+      ? `Temporary cart empty hai, lekin aapka unconfirmed proforma ${draftId} abhi active hai. Catalogue se aur items bhej sakte hain, ya latest proforma par Confirm Order karein.`
+      : "Your cart is empty. Product name type karein, jaise: Lux");
     return;
   }
   const summary = cartSummary(lines);
@@ -918,7 +931,10 @@ async function sendCartCheckout(profile: RetailerProfile) {
 async function clearCart(profile: RetailerProfile) {
   await executeDatabaseQuery(`DELETE FROM whatsapp_cart_lines WHERE phone_e164 = $1`, [profile.phoneE164]);
   await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164 = $1`, [profile.phoneE164]);
-  await sendText(profile.phoneE164, "Cart cleared. Naya order shuru karne ke liye product name type karein, jaise: Lux");
+  const draftId = await getRetailerOpenProforma(profile);
+  await sendText(profile.phoneE164, draftId
+    ? `Temporary cart clear ho gaya. Existing proforma ${draftId} cancel nahi hua; catalogue se aur item add kar sakte hain ya latest proforma par Confirm Order karein.`
+    : "Cart cleared. Naya order shuru karne ke liye product name type karein, jaise: Lux");
 }
 
 async function finalizeCart(profile: RetailerProfile, messageId: string) {
@@ -969,7 +985,8 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
   if (isRetailerCartSource) {
     const openDraft = await executeDatabaseQuery<{ id: string }>(
       `SELECT id FROM whatsapp_order_drafts
-       WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart') AND status='Awaiting Retailer'
+       WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart')
+         AND status IN ('Needs Review','Change Requested','Awaiting Retailer')
        ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
     );
     if (openDraft.rows[0]?.id) {
@@ -2001,7 +2018,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT o.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_offers o JOIN counterparties c ON c.id = o.counterparty_id JOIN users u ON u.id = o.salesman_id ${isAdmin ? "" : "WHERE o.salesman_id = $1"} ORDER BY o.created_at DESC LIMIT 100`, params),
     executeDatabaseQuery<Record<string, unknown>>(
-      `SELECT d.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_order_drafts d JOIN counterparties c ON c.id = d.counterparty_id JOIN users u ON u.id = d.salesman_id ${isAdmin ? "" : "WHERE d.salesman_id = $1"} ORDER BY d.created_at DESC LIMIT 150`, params),
+      `SELECT d.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_order_drafts d JOIN counterparties c ON c.id = d.counterparty_id JOIN users u ON u.id = d.salesman_id ${isAdmin ? "WHERE NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review')" : "WHERE d.salesman_id = $1 AND NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review')"} ORDER BY d.created_at DESC LIMIT 150`, params),
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT l.*, p.name AS product_name
        FROM whatsapp_order_draft_lines l
