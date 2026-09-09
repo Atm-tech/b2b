@@ -633,7 +633,7 @@ async function handleRetailerRegistration(message: JsonObject, phone: string, me
     await sendText(phone, "Details submit karne ke liye Confirm Registration button dabayein, ya Edit Details choose karein.");
     return;
   }
-  if (!body) {
+  if (!body && !(text(request.stage) === "AwaitingAddress" && message.location)) {
     await sendText(phone, "Please requested detail text mein bhejein.");
     return;
   }
@@ -662,10 +662,28 @@ async function handleRetailerRegistration(message: JsonObject, phone: string, me
   }
   if (text(request.stage) === "AwaitingCity") {
     await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET city=$2,stage='AwaitingAddress',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 120)]);
-    await sendText(phone, "Step 5/5: Complete delivery address bhejein.");
+    await sendText(phone, "Step 5/5: Complete delivery address type karein, ya WhatsApp attachment mein Location share karein.");
     return;
   }
   if (text(request.stage) === "AwaitingAddress") {
+    const location = message.location as JsonObject | undefined;
+    const latitude = numberValue(location?.latitude);
+    const longitude = numberValue(location?.longitude);
+    if (location && latitude && longitude) {
+      const locationLabel = compact([text(location.name), text(location.address)].filter(Boolean).join(", "), 300);
+      const address = locationLabel || `Location pin: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_registration_requests SET delivery_address=$2,latitude=$3,longitude=$4,location_label=$5,stage='AwaitingConfirmation',updated_at=NOW() WHERE id=$1`,
+        [requestId, address, latitude, longitude, locationLabel]
+      );
+      const refreshed = await executeDatabaseQuery<Record<string, unknown>>(`SELECT * FROM whatsapp_registration_requests WHERE id=$1`, [requestId]);
+      request = refreshed.rows[0];
+      await sendButtons(phone,
+        `Location received. Please verify:\nShop: ${text(request.shop_name)}\nOwner: ${text(request.owner_name)}\nGSTIN: ${text(request.gstin)}\nCity: ${text(request.city)}\nAddress: ${text(request.delivery_address)}`,
+        [{ id: "wa-register:confirm", title: "Confirm Registration" }, { id: "wa-register:restart", title: "Edit Details" }],
+        "Registration", requestId);
+      return;
+    }
     await executeDatabaseQuery(`UPDATE whatsapp_registration_requests SET delivery_address=$2,stage='AwaitingConfirmation',updated_at=NOW() WHERE id=$1`, [requestId, compact(body, 300)]);
     request = { ...request, delivery_address: compact(body, 300) };
     const refreshed = await executeDatabaseQuery<Record<string, unknown>>(`SELECT * FROM whatsapp_registration_requests WHERE id=$1`, [requestId]);
@@ -2773,10 +2791,11 @@ export async function approveWhatsAppRegistration(registrationId: string, input:
     await executeDatabaseQuery(
       `INSERT INTO counterparties (
          id,type,name,gst_number,bank_name,bank_account_number,ifsc_code,mobile_number,
-         address,city,delivery_address,delivery_city,contact_person,channel_scope,created_by,created_at
-       ) VALUES ($1,'Shop',$2,$3,'N/A','N/A','N/A',$4,$5,$6,$5,$6,$7,'WhatsApp',$8,NOW())`,
+         address,city,delivery_address,delivery_city,contact_person,latitude,longitude,location_label,channel_scope,created_by,created_at
+       ) VALUES ($1,'Shop',$2,$3,'N/A','N/A','N/A',$4,$5,$6,$5,$6,$7,$8,$9,$10,'WhatsApp',$11,NOW())`,
       [counterpartyId, text(registration.shop_name), gstin, phone, text(registration.delivery_address),
-        text(registration.city), text(registration.owner_name), currentUser.fullName]
+        text(registration.city), text(registration.owner_name), registration.latitude || null, registration.longitude || null,
+        text(registration.location_label), currentUser.fullName]
     );
   }
   await executeDatabaseQuery(
@@ -2934,7 +2953,8 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
   const loaded = await loadDraft(draftId);
   if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
   if (["Processing", "Completed"].includes(text(loaded.draft.status))) throw new Error("A confirmed order cannot be edited.");
-  if (input.lines.length !== loaded.lines.length) throw new Error("Review every order line before sending confirmation.");
+  if (!input.lines.length) throw new Error("Keep at least one product, or deny the complete order.");
+  if (input.lines.length > loaded.lines.length || new Set(input.lines.map((line) => line.id)).size !== input.lines.length) throw new Error("Review contains invalid order lines.");
   const snapshot = await getSnapshot();
   for (const line of input.lines) {
     if (!(line.quantity > 0) || !(line.rate > 0)) throw new Error("Approved quantity and rate must be greater than zero.");
@@ -2954,6 +2974,10 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
        WHERE id=$1 AND draft_id=$2`, [line.id, draftId, line.quantity, line.rate, line.cdPercent, line.todPercent, stock?.availableQuantity || 0]
     );
   }
+  await executeDatabaseQuery(
+    `DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1 AND id <> ALL($2::text[])`,
+    [draftId, input.lines.map((line) => line.id)]
+  );
   await executeDatabaseQuery(
     `UPDATE whatsapp_order_drafts SET warehouse_id=$2,billing_type=$3,payment_mode=$4,cash_timing=$5,delivery_mode=$6,note=$7,status='Staff Approved',reviewed_at=NOW() WHERE id=$1`,
     [draftId, input.warehouseId, input.billingType, input.paymentMode, input.cashTiming || null, input.deliveryMode, input.note || text(loaded.draft.note)]

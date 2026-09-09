@@ -188,15 +188,19 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
     </div>
     <p className="helper-text">{draft.id} · {draft.phone_e164} · Assigned to {draft.salesman_name}{draft.sales_cart_id ? ` · SO ${draft.sales_cart_id}` : ""}</p>
     {draft.status === "Needs Review" && /Stock review:/i.test(draft.note || "") ? <p className="helper-text"><strong>Stock confirmation required:</strong> edit the quantity/rate below and send confirmation, or deny the order. The retailer is waiting for {draft.salesman_name}.</p> : null}
-    <div className="table-wrap"><table><thead><tr><th>Product</th><th>Requested</th><th>Approved</th><th>Rate</th><th>CD %</th><th>TOD %</th></tr></thead><tbody>
-      {draft.lines.map((line, index) => <tr key={line.id}>
+    <div className="table-wrap"><table><thead><tr><th>Product</th><th>Requested</th><th>Approved</th><th>Rate</th><th>CD %</th><th>TOD %</th>{canReview ? <th /> : null}</tr></thead><tbody>
+      {draft.lines.filter((line) => lines.some((item) => item.id === line.id)).map((line) => {
+        const currentLine = lines.find((item) => item.id === line.id)!;
+        return <tr key={line.id}>
         <td><strong>{line.product_name}</strong><small>{line.product_sku}</small></td>
         <td>{line.requested_quantity}</td>
-        <td><input type="number" min="0.01" step="any" disabled={!canReview} value={lines[index]?.quantity || ""} onChange={(event) => setLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: event.target.value } : item))} /></td>
-        <td><input type="number" min="0.01" step="any" disabled={!canReview} value={lines[index]?.rate || ""} onChange={(event) => setLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, rate: event.target.value } : item))} /></td>
-        <td><input type="number" min="0" max="99" step="any" disabled={!canReview} value={lines[index]?.cdPercent || ""} onChange={(event) => setLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, cdPercent: event.target.value } : item))} /></td>
-        <td><input type="number" min="0" max="99" step="any" disabled={!canReview} value={lines[index]?.todPercent || ""} onChange={(event) => setLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, todPercent: event.target.value } : item))} /></td>
-      </tr>)}
+        <td><input type="number" min="0.01" step="any" disabled={!canReview} value={currentLine.quantity} onChange={(event) => setLines((current) => current.map((item) => item.id === line.id ? { ...item, quantity: event.target.value } : item))} /></td>
+        <td><input type="number" min="0.01" step="any" disabled={!canReview} value={currentLine.rate} onChange={(event) => setLines((current) => current.map((item) => item.id === line.id ? { ...item, rate: event.target.value } : item))} /></td>
+        <td><input type="number" min="0" max="99" step="any" disabled={!canReview} value={currentLine.cdPercent} onChange={(event) => setLines((current) => current.map((item) => item.id === line.id ? { ...item, cdPercent: event.target.value } : item))} /></td>
+        <td><input type="number" min="0" max="99" step="any" disabled={!canReview} value={currentLine.todPercent} onChange={(event) => setLines((current) => current.map((item) => item.id === line.id ? { ...item, todPercent: event.target.value } : item))} /></td>
+        {canReview ? <td><button className="wa-line-remove" type="button" disabled={busy || lines.length === 1} title={lines.length === 1 ? "Keep one product or deny the order" : "Remove product"} onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}>Remove</button></td> : null}
+      </tr>;
+      })}
     </tbody></table></div>
     {canReview ? <form className="form-grid" onSubmit={(event) => {
       event.preventDefault();
@@ -309,6 +313,9 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [chatOrderLines, setChatOrderLines] = useState<ChatOrderLine[]>([]);
   const [activeChatDraftId, setActiveChatDraftId] = useState("");
   const chatMessagesRef = useRef<HTMLDivElement>(null);
+  const liveChatSeenRef = useRef<Map<string, string> | null>(null);
+  const [chatAlert, setChatAlert] = useState<{ retailer: string; preview: string } | null>(null);
+  const [desktopAlertsEnabled, setDesktopAlertsEnabled] = useState(() => typeof Notification !== "undefined" && Notification.permission === "granted");
   const [wishlistProducts, setWishlistProducts] = useState<Record<string, string>>({});
   const [retailerTagDrafts, setRetailerTagDrafts] = useState<Record<string, string>>({});
   const [broadcastReport, setBroadcastReport] = useState("");
@@ -324,6 +331,53 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
   useEffect(() => { void refresh(); }, [sessionToken]);
+
+  async function checkLiveChatUpdates() {
+    try {
+      const { data } = await api.get<LiveChatInbox>("/whatsapp/live-chat", { headers });
+      const latest = new Map(data.tickets.map((ticket) => [ticket.id, String(ticket.last_message_at || "")]));
+      const previous = liveChatSeenRef.current;
+      if (previous) {
+        const incoming = data.tickets.find((ticket) => Number(ticket.unread_staff_count || 0) > 0 && previous.get(ticket.id) !== latest.get(ticket.id));
+        if (incoming) {
+          const retailer = String(incoming.retailer_name || "Retailer");
+          const preview = String(incoming.last_message_preview || "New WhatsApp message");
+          setChatAlert({ retailer, preview });
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification(`New WhatsApp message — ${retailer}`, { body: preview, icon: "/business-connect-icon-192.png", tag: `wa-chat-${incoming.id}` });
+          }
+        }
+      }
+      liveChatSeenRef.current = latest;
+      if (activeSection !== "Chat") setLiveChat((current) => ({ ...current, unreadTotal: data.unreadTotal, tickets: data.tickets }));
+    } catch {
+      // The regular inbox refresh surfaces connection errors while this background poll stays quiet.
+    }
+  }
+
+  useEffect(() => {
+    void checkLiveChatUpdates();
+    const timer = window.setInterval(() => { if (document.visibilityState !== "hidden") void checkLiveChatUpdates(); }, 8000);
+    return () => window.clearInterval(timer);
+  }, [sessionToken, activeSection]);
+
+  async function enableDesktopAlerts() {
+    if (typeof Notification === "undefined") return;
+    const permission = await Notification.requestPermission();
+    setDesktopAlertsEnabled(permission === "granted");
+    if (permission !== "granted") onError("Browser notification permission allow karein, tab desktop alert dikhega.");
+  }
+
+  useEffect(() => {
+    if (!dedicatedWorkspace) return;
+    const preventZoom = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && ["+", "-", "=", "0"].includes(event.key)) event.preventDefault();
+    };
+    const preventPinchZoom = (event: WheelEvent) => { if (event.ctrlKey) event.preventDefault(); };
+    window.addEventListener("keydown", preventZoom);
+    window.addEventListener("wheel", preventPinchZoom, { passive: false });
+    return () => { window.removeEventListener("keydown", preventZoom); window.removeEventListener("wheel", preventPinchZoom); };
+  }, [dedicatedWorkspace]);
 
   async function refreshLiveChat(ticketId = liveChat.selectedTicketId, markRead = false) {
     try {
@@ -590,6 +644,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       .some((value) => value.toLowerCase().replace(/\s+/g, "").includes(query)));
   }, [catalogSearch, dashboard?.catalogProducts]);
   return <div className={`wa-admin-workspace${dedicatedWorkspace ? " is-dedicated" : ""}`}>
+    {!desktopAlertsEnabled && typeof Notification !== "undefined" ? <button className="ghost-button wa-alert-enable" type="button" onClick={() => void enableDesktopAlerts()}>Enable chat alerts</button> : null}
+    {chatAlert ? <button className="wa-chat-alert" type="button" onClick={() => { setActiveSection("Chat"); setChatAlert(null); }}><strong>New retailer message — {chatAlert.retailer}</strong><span>{chatAlert.preview}</span><em>Open chat</em></button> : null}
     <header className="wa-admin-head">
       <div><span className="eyebrow">Retailer commerce</span><h1>{activeSection === "Home" ? "Good to see you" : activeSection}</h1><p>{activeSection === "Home" ? "Everything requiring your attention, in one place." : "WhatsApp Wholesale control centre"}</p></div>
       <button className="wa-sync-button" type="button" disabled={busy} onClick={() => void refresh()} aria-label="Refresh WhatsApp data"><span aria-hidden="true">↻</span> Refresh</button>
