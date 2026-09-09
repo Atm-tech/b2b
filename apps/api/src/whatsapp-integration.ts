@@ -1001,13 +1001,24 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
 async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: string, order: JsonObject) {
   const rawItems = Array.isArray(order.product_items) ? order.product_items as JsonObject[] : [];
   const lines: DraftLineInput[] = [];
+  const minimumAdjustments: string[] = [];
   for (const item of rawItems) {
     const sku = text(item.product_retailer_id);
     const pricing = await productPricing(profile.counterpartyId, sku);
-    const quantity = Math.max(pricing.minimumQuantity, numberValue(item.quantity, 1));
+    const requestedQuantity = Math.max(1, numberValue(item.quantity, 1));
+    const quantity = Math.max(pricing.minimumQuantity, requestedQuantity);
+    if (requestedQuantity < pricing.minimumQuantity) {
+      minimumAdjustments.push(`${pricing.name}: ${requestedQuantity} â†’ ${pricing.minimumQuantity}`);
+    }
     lines.push({ productSku: sku, quantity, rate: pricing.rate, cdPercent: pricing.cdPercent, todPercent: pricing.todPercent, gstRate: pricing.gstRate, taxMode: pricing.taxMode });
   }
-  return createDraft(profile, "Catalogue", messageId, lines);
+  const draftId = await createDraft(profile, "Catalogue", messageId, lines);
+  if (minimumAdjustments.length) {
+    await sendText(profile.phoneE164,
+      `WhatsApp catalogue cart quantity 1 se start hota hai. MOQ ke hisaab se aapka order update hua:\n${minimumAdjustments.map((item) => `â€¢ ${item}`).join("\n")}\n\nSales review ke baad final confirmation bheja jayega.`,
+      "Draft", draftId);
+  }
+  return draftId;
 }
 
 async function addNaturalTextToCart(profile: RetailerProfile, messageId: string, body: string) {
@@ -2862,16 +2873,20 @@ export async function getWhatsAppCatalogFeed(token: string) {
     if (order.status !== "Cancelled" && order.rate > 0 && !latestSaleRates.has(order.productSku)) latestSaleRates.set(order.productSku, order.rate);
   }
   const publicWeb = (process.env.PUBLIC_WEB_URL || "https://b2b-api-theta.vercel.app").replace(/\/$/, "");
-  const header = ["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand"];
+  const header = ["id", "title", "description", "availability", "condition", "price", "sale_price", "link", "image_link", "brand"];
   const rows = snapshot.products.flatMap((product: ProductMaster) => {
     // A retailer catalogue must never expose an internal purchase rate. Products
     // without a customer-facing price stay out of Meta until their RSP/MRP is set.
     const rate = product.offerPrice || product.rsp || product.mrp || latestSaleRates.get(product.sku) || 0;
     if (!product.whatsappCatalogEnabled || rate <= 0) return [];
+    const mrp = numberValue(product.mrp);
+    const cataloguePrice = mrp > 0 ? mrp : rate;
+    const salePrice = rate > 0 && mrp > rate ? rate : 0;
+    const offPercent = discountPercentFromMrp(mrp, rate);
     return [
       [
-        product.sku, product.name, [product.size, product.unit, `Minimum order ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
-        "in stock", "new", `${rate.toFixed(2)} INR`, `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
+        product.sku, product.name, [product.size, product.unit, mrp > 0 ? `MRP Rs.${mrp.toFixed(2)}` : "", offPercent > 0 ? `${offPercent.toFixed(2)}% off MRP` : "", `Minimum order ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
+        "in stock", "new", `${cataloguePrice.toFixed(2)} INR`, salePrice ? `${salePrice.toFixed(2)} INR` : "", `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
         product.catalogImageKey
           ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/images/${encodeURIComponent(product.sku)}?token=${encodeURIComponent(expected)}&v=${encodeURIComponent(product.catalogImageUpdatedAt || product.catalogImageKey)}`
           : `${publicWeb}/business-connect-icon-512.png`,
