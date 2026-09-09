@@ -153,6 +153,7 @@ function App() {
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
   const orderNotificationBaseline = useRef<Set<string> | null>(null);
+  const whatsappBadgeBaseline = useRef<number | null>(null);
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false);
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
@@ -330,7 +331,18 @@ function App() {
         const { data } = await api.get<{ count: number }>("/whatsapp/pending-count", {
           headers: { authorization: `Bearer ${sessionToken}` }
         });
-        if (!cancelled) setWhatsAppPendingOrderCount(Math.max(0, Number(data.count) || 0));
+        if (cancelled) return;
+        const count = Math.max(0, Number(data.count) || 0);
+        const previous = whatsappBadgeBaseline.current;
+        setWhatsAppPendingOrderCount(count);
+        whatsappBadgeBaseline.current = count;
+        document.title = count > 0 ? `(${count}) B CONNECT` : "B CONNECT";
+        const appNavigator = navigator as Navigator & { setAppBadge?: (value?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+        if (count > 0) void appNavigator.setAppBadge?.(count);
+        else void appNavigator.clearAppBadge?.();
+        if (previous !== null && count > previous && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("New WhatsApp attention item", { body: `${count - previous} new retailer chat or order item needs review.`, icon: "/business-connect-icon-192.png", tag: "whatsapp-attention" });
+        }
       } catch {
         // Keep the last known badge count during transient network failures.
       }
