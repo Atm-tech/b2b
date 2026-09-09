@@ -711,7 +711,9 @@ textarea {
 }
 
 html.so-viewport-locked,
-body.so-viewport-locked {
+body.so-viewport-locked,
+html.wa-viewport-locked,
+body.wa-viewport-locked {
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
@@ -724,7 +726,12 @@ body.so-viewport-locked .app-shell,
 body.so-viewport-locked .workspace-shell,
 body.so-viewport-locked .simple-workspace,
 body.so-viewport-locked .content-shell,
-body.so-viewport-locked .sales-catalog {
+body.so-viewport-locked .sales-catalog,
+body.wa-viewport-locked #root,
+body.wa-viewport-locked .app-shell,
+body.wa-viewport-locked .workspace-shell,
+body.wa-viewport-locked .content-shell,
+body.wa-viewport-locked .wa-admin-workspace {
   width: 100%;
   max-width: 100%;
   min-width: 0;
