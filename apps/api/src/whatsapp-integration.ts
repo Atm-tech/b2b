@@ -309,9 +309,9 @@ async function sendMainMenu(profile: RetailerProfile) {
     type: "interactive",
     interactive: {
       type: "list",
-      header: { type: "text", text: "Aapoorti Wholesale" },
-      body: { text: `Namaste ${profile.retailerName} 👋\nKya karna chahenge? Neeche Menu button dabakar option select karein.` },
-      footer: { text: compact(`Aapke salesperson: ${profile.salesmanName}`, 60) },
+      header: { type: "text", text: "AAPOORTI B CONNECT" },
+      body: { text: `Namaste ${profile.retailerName} 👋\n\nOrder, catalogue aur support—sab yahin WhatsApp par. Neeche *Open Menu* dabakar apna option choose karein.` },
+      footer: { text: compact(`Your sales contact: ${profile.salesmanName}`, 60) },
       action: {
         button: "Open Menu",
         sections: [
@@ -337,6 +337,52 @@ async function sendMainMenu(profile: RetailerProfile) {
       }
     }
   }, "MainMenu", profile.counterpartyId);
+}
+
+async function sendFeaturedDeals(profile: RetailerProfile) {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT p.sku,p.name,p.mrp,p.minimum_order_quantity,
+            COALESCE(NULLIF(rule.special_rate,0),NULLIF(p.offer_price,0),NULLIF(p.rsp,0),NULLIF(p.mrp,0),history.rate,0) AS rate
+     FROM products p
+     LEFT JOIN LATERAL (
+       SELECT special_rate
+       FROM whatsapp_price_rules
+       WHERE counterparty_id=$1 AND product_sku=p.sku AND active=TRUE
+         AND valid_from<=NOW() AND (valid_until IS NULL OR valid_until>NOW())
+       ORDER BY updated_at DESC LIMIT 1
+     ) rule ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT rate FROM sales_orders
+       WHERE product_sku=p.sku AND rate>0 AND status<>'Cancelled'
+       ORDER BY (shop_id=$1) DESC,created_at DESC LIMIT 1
+     ) history ON TRUE
+     WHERE p.whatsapp_catalog_enabled=TRUE AND COALESCE(p.mrp,0)>0
+     ORDER BY ((p.mrp-COALESCE(NULLIF(rule.special_rate,0),NULLIF(p.offer_price,0),NULLIF(p.rsp,0),NULLIF(p.mrp,0),history.rate,0))/NULLIF(p.mrp,0)) DESC,p.name
+     LIMIT 3`,
+    [profile.counterpartyId]
+  );
+  const deals = result.rows
+    .map((item) => ({
+      name: compact(text(item.name), 56),
+      mrp: numberValue(item.mrp),
+      rate: numberValue(item.rate),
+      minimumQuantity: Math.max(1, numberValue(item.minimum_order_quantity, 1))
+    }))
+    .filter((item) => item.mrp > item.rate && item.rate > 0);
+  if (!deals.length) return;
+  const lines = deals.map((item, index) => {
+    const saving = ((item.mrp - item.rate) / item.mrp) * 100;
+    return `*${index + 1}. ${item.name}*\nMRP ₹${item.mrp.toFixed(2)}  →  *Your rate ₹${item.rate.toFixed(2)}*  (${saving.toFixed(1)}% OFF)\nMOQ: ${item.minimumQuantity}`;
+  });
+  await sendButtons(profile.phoneE164,
+    `🔥 *Best savings for you*\n\n${lines.join("\n\n")}\n\nRates aur MOQ proforma mein final verify honge.`,
+    [
+      { id: "wa-menu:catalogue", title: "Browse catalogue" },
+      { id: "wa-menu:order", title: "Start order" },
+      { id: "wa-menu:agent", title: "Chat with sales" }
+    ],
+    "FeaturedDeals", profile.counterpartyId
+  );
 }
 
 async function sendOrderGuide(profile: RetailerProfile) {
@@ -1500,6 +1546,7 @@ async function handleInboundMessage(message: JsonObject) {
         [ticketId]
       );
       await sendText(from, `${profile.salesmanName} ko live-chat request bhej di gayi hai. Aap apna message yahin type kar sakte hain.`, "ServiceTicket", ticketId);
+      await sendFeaturedDeals(profile).catch(() => undefined);
       return;
     }
     if (buttonId.startsWith("wa-product:")) {
@@ -1739,6 +1786,7 @@ async function handleInboundMessage(message: JsonObject) {
         [ticketId, compact(body || "Live chat requested", 240)]
       );
       await sendText(from, `${profile.salesmanName} ko live-chat request ${ticketId} bhej di gayi hai. Aap apna message yahin type kar sakte hain.`, "ServiceTicket", ticketId);
+      await sendFeaturedDeals(profile).catch(() => undefined);
       return;
     }
     if (/^(return|damage|damaged|complaint|claim)$/i.test(normalized)) {
@@ -1774,6 +1822,7 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (/^(hi|hello|hey|namaste|menu)$/i.test(normalized)) {
       await sendMainMenu(profile);
+      await sendFeaturedDeals(profile).catch(() => undefined);
       return;
     }
     if (/^(catalog|catalogue|catlog)$/i.test(normalized)) {
