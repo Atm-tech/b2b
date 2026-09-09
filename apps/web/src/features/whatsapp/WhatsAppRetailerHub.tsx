@@ -454,6 +454,19 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
 
+  async function clearPilotActivity() {
+    setBusy(true); onError("");
+    try {
+      const { data } = await api.delete<Dashboard>("/whatsapp/setup/test-activity", { headers });
+      setDashboard(data);
+      onMessage("Test WhatsApp chats, carts, proformas, offers and wishlists cleared.");
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendBroadcast(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!window.confirm(`Send this WhatsApp message to ${broadcastRetailerIds.length} selected retailer${broadcastRetailerIds.length === 1 ? "" : "s"}?`)) return;
@@ -606,7 +619,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </> : null}
 
     {whatsappAdmin && activeSection === "Retailers" ? <>
-    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div>
+    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
       {pendingRegistrations.length ? pendingRegistrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
     </section>
 
