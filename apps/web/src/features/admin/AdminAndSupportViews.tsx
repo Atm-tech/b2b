@@ -247,7 +247,7 @@ export function isStaplesNonBrandedCategory(category: string, subCategory: strin
   return category.trim().toLowerCase() === "staples" && subCategory.trim().toLowerCase() === "non branded";
 }
 
-export function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapshot; orders: PurchaseOrder[] }) {
+export function AnalystPurchaseView({ snapshot, orders, onLoadDateRange }: { snapshot: AppSnapshot; orders: PurchaseOrder[]; onLoadDateRange?: (range: { fromDate: string; toDate: string }) => void }) {
   const [openId, setOpenId] = useState("");
   const [partySearch, setPartySearch] = useState("");
   const [settlementFilter, setSettlementFilter] = useState<"All" | "Unsettled" | "Settled">("All");
@@ -341,6 +341,7 @@ export function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapsho
         </label>
       </div>
       <div className="payment-card-actions top-gap">
+        <button className="primary-button" type="button" disabled={!fromDate || !toDate} onClick={() => onLoadDateRange?.({ fromDate, toDate })}>Load selected dates</button>
         <button className="ghost-button" type="button" onClick={() => downloadReportCsv("purchase-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
         <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
       </div>
@@ -383,7 +384,7 @@ export function AnalystPurchaseView({ snapshot, orders }: { snapshot: AppSnapsho
   );
 }
 
-export function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot; orders: SalesOrder[] }) {
+export function AnalystSalesView({ snapshot, orders, onLoadDateRange }: { snapshot?: AppSnapshot; orders: SalesOrder[]; onLoadDateRange?: (range: { fromDate: string; toDate: string }) => void }) {
   const [openId, setOpenId] = useState("");
   const [partySearch, setPartySearch] = useState("");
   const [settlementFilter, setSettlementFilter] = useState<"All" | "Unsettled" | "Settled">("All");
@@ -477,6 +478,7 @@ export function AnalystSalesView({ snapshot, orders }: { snapshot?: AppSnapshot;
         </label>
       </div>
       <div className="payment-card-actions">
+        <button className="primary-button" type="button" disabled={!fromDate || !toDate} onClick={() => onLoadDateRange?.({ fromDate, toDate })}>Load selected dates</button>
         <button className="ghost-button" type="button" onClick={() => downloadReportCsv("sales-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
         <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
         {snapshot ? <button className="ghost-button" type="button" onClick={() => downloadDailySalesReportPdf(snapshot, orders)}>Daily PDF</button> : null}

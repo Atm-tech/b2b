@@ -1414,7 +1414,20 @@ async function getCachedSnapshotSections() {
   return snapshotSectionCache as SnapshotSections;
 }
 
-export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
+export type SnapshotOrderRange = { fromDate?: string; toDate?: string };
+
+function snapshotDateKey(value: string) {
+  return value.slice(0, 10);
+}
+
+function defaultSnapshotOrderRange(): Required<SnapshotOrderRange> {
+  const toDate = snapshotDateKey(now());
+  const from = new Date(`${toDate}T00:00:00.000Z`);
+  from.setUTCDate(from.getUTCDate() - 6);
+  return { fromDate: from.toISOString().slice(0, 10), toDate };
+}
+
+export async function getSnapshot(currentUser?: AppUser, requestedRange?: SnapshotOrderRange): Promise<AppSnapshot> {
   await ready;
   await reconcileDeliveryCashCollectionsWhenDue();
   const {
@@ -1439,27 +1452,39 @@ export async function getSnapshot(currentUser?: AppUser): Promise<AppSnapshot> {
     settings
   } = await getCachedSnapshotSections();
   const stockSummary = buildStockSummary(warehouses, products, inventoryLots);
+  const defaultRange = defaultSnapshotOrderRange();
+  const fromDate = requestedRange?.fromDate || defaultRange.fromDate;
+  const toDate = requestedRange?.toDate || defaultRange.toDate;
+  const includesOrderDate = (createdAt: string) => {
+    const dateKey = snapshotDateKey(createdAt);
+    return dateKey >= fromDate && dateKey <= toDate;
+  };
+  const visiblePurchaseOrders = purchaseOrders.filter((item) => includesOrderDate(item.createdAt));
+  const visibleSalesOrders = salesOrders.filter((item) => includesOrderDate(item.createdAt));
+  const visibleOrderIds = new Set([...visiblePurchaseOrders, ...visibleSalesOrders].map((item) => item.id));
+  const visibleCartIds = new Set([...visiblePurchaseOrders, ...visibleSalesOrders].map((item) => item.cartId).filter(Boolean) as string[]);
+  const linksToVisibleOrder = (linkedOrderId: string) => visibleOrderIds.has(linkedOrderId) || visibleCartIds.has(linkedOrderId);
   let snapshotWithoutMetrics = {
     settings,
     users,
     warehouses,
     products,
     counterparties,
-    purchaseOrders,
-    salesOrders,
+    purchaseOrders: visiblePurchaseOrders,
+    salesOrders: visibleSalesOrders,
     purchaseReturns,
     salesReturns,
     probationarySales,
-    payments,
+    payments: payments.filter((item) => linksToVisibleOrder(item.linkedOrderId)),
     receiptChecks,
     inventoryLots,
     stockSummary,
-    ledgerEntries,
-    deliveryTasks,
+    ledgerEntries: ledgerEntries.filter((item) => linksToVisibleOrder(item.linkedOrderId)),
+    deliveryTasks: deliveryTasks.filter((item) => item.linkedOrderIds.some((id) => linksToVisibleOrder(id))),
     deliveryDockets,
     deliveryConsignments,
     goodsWarrants,
-    notes
+    notes: notes.filter((item) => linksToVisibleOrder(item.entityId))
   };
   if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("In Delivery") || currentUser.roles.includes("Out Delivery") || currentUser.roles.includes("Delivery"))) {
     const scopedWarehouseIds = new Set(currentUser.warehouseIds);

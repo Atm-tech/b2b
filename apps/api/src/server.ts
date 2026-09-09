@@ -326,7 +326,12 @@ app.post("/auth/logout", async (req, res) => wrap(res, async () => {
 app.get("/snapshot", async (req, res) => {
   try {
     const currentUser = await getCurrentUser(req);
-    res.json(await getSnapshot(currentUser));
+    const ordersFrom = optionalString(req.query.ordersFrom);
+    const ordersTo = optionalString(req.query.ordersTo);
+    if ((ordersFrom && !/^\d{4}-\d{2}-\d{2}$/.test(ordersFrom)) || (ordersTo && !/^\d{4}-\d{2}-\d{2}$/.test(ordersTo))) {
+      throw new Error("Order date filters must use YYYY-MM-DD.");
+    }
+    res.json(await getSnapshot(currentUser, { fromDate: ordersFrom, toDate: ordersTo }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unauthorized.";
     res.status(401).json({ message });

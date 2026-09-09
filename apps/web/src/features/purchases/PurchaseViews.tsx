@@ -145,10 +145,11 @@ export function PurchaserPurchaseWorkspace({
   );
 }
 
-export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, onOpenStatus }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void; onOpenStatus?: (target: OrderQrTarget) => void }) {
+export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpdatePo, onOpenStatus, onLoadDateRange }: { snapshot: AppSnapshot; currentUser?: AppUser; orders: AppSnapshot["purchaseOrders"]; onUpdatePo?: (orderId: string) => void; onOpenStatus?: (target: OrderQrTarget) => void; onLoadDateRange?: (range: { fromDate: string; toDate: string }) => void }) {
   const allGroups = groupPurchaseOrders(orders).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
+  const last7FromDate = indiaDateKey(new Date(new Date(`${todayDate}T00:00:00`).setDate(new Date(`${todayDate}T00:00:00`).getDate() - 6)));
   const latestAvailableDate = allGroups.length > 0 ? indiaDateKey(new Date(groupNewestCreatedAt(allGroups[0].lines))) : todayDate;
   const hasTodayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === todayDate);
   const hasYesterdayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === yesterdayDate);
@@ -159,13 +160,15 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
   const [viewMode, setViewMode] = useState<"orders" | "payments">("orders");
   const [openPaymentId, setOpenPaymentId] = useState("");
   const [searchText, setSearchText] = useState("");
-  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
-  const [selectedFromDate, setSelectedFromDate] = useState(indiaDateKey());
+  const [datePreset, setDatePreset] = useState<"last7" | "today" | "yesterday" | "custom">("last7");
+  const [selectedFromDate, setSelectedFromDate] = useState(last7FromDate);
   const [selectedToDate, setSelectedToDate] = useState(indiaDateKey());
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [customFromDraft, setCustomFromDraft] = useState(indiaDateKey());
   const [customToDraft, setCustomToDraft] = useState(indiaDateKey());
-  const activeRange = datePreset === "today"
+  const activeRange = datePreset === "last7"
+    ? { fromDate: last7FromDate, toDate: todayDate }
+    : datePreset === "today"
     ? { fromDate: todayDate, toDate: todayDate }
     : datePreset === "yesterday"
       ? { fromDate: yesterdayDate, toDate: yesterdayDate }
@@ -243,6 +246,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
       </div>
       <section className="order-control-surface">
       <div className="date-filter-strip">
+        <button className={datePreset === "last7" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("last7"); setSelectedFromDate(last7FromDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: last7FromDate, toDate: todayDate }); }}>Last 7 days</button>
         <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
         <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
         <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomFromDraft(activeRange.fromDate); setCustomToDraft(activeRange.toDate); setCustomDateOpen(true); }}>Custom Date</button>
@@ -378,6 +382,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
               setSelectedToDate(normalized.toDate);
               setDatePreset("custom");
               setCustomDateOpen(false);
+              onLoadDateRange?.(normalized);
             }}>Done</button>
           </div>
         </div>

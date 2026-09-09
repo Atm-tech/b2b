@@ -49,17 +49,20 @@ TaxModeInput,
 userRoleList
 } from "../../app/shared";
 
-export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent, onLogCollectionNote, onOpenStatus }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; onLogCollectionNote: (orderId: string, note: string) => Promise<boolean | void>; onOpenStatus?: (target: OrderQrTarget) => void; }) {
+export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent, onLogCollectionNote, onOpenStatus, onLoadDateRange }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; onLogCollectionNote: (orderId: string, note: string) => Promise<boolean | void>; onOpenStatus?: (target: OrderQrTarget) => void; onLoadDateRange?: (range: { fromDate: string; toDate: string }) => void; }) {
   const allGroups = groupSalesOrders(orders).sort((left, right) => groupNewestCreatedAt(left.lines) - groupNewestCreatedAt(right.lines));
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
-  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "custom">("today");
-  const [selectedFromDate, setSelectedFromDate] = useState(indiaDateKey());
+  const last7FromDate = indiaDateKey(new Date(new Date(`${todayDate}T00:00:00`).setDate(new Date(`${todayDate}T00:00:00`).getDate() - 6)));
+  const [datePreset, setDatePreset] = useState<"last7" | "today" | "yesterday" | "custom">("last7");
+  const [selectedFromDate, setSelectedFromDate] = useState(last7FromDate);
   const [selectedToDate, setSelectedToDate] = useState(indiaDateKey());
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [customFromDraft, setCustomFromDraft] = useState(indiaDateKey());
   const [customToDraft, setCustomToDraft] = useState(indiaDateKey());
-  const activeRange = datePreset === "today"
+  const activeRange = datePreset === "last7"
+    ? { fromDate: last7FromDate, toDate: todayDate }
+    : datePreset === "today"
     ? { fromDate: todayDate, toDate: todayDate }
     : datePreset === "yesterday"
       ? { fromDate: yesterdayDate, toDate: yesterdayDate }
@@ -188,6 +191,7 @@ export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, o
       </div>
       <section className="order-control-surface">
       <div className="date-filter-strip">
+        <button className={datePreset === "last7" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("last7"); setSelectedFromDate(last7FromDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: last7FromDate, toDate: todayDate }); }}>Last 7 days</button>
         <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
         <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
         <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomFromDraft(activeRange.fromDate); setCustomToDraft(activeRange.toDate); setCustomDateOpen(true); }}>Custom Date</button>
@@ -387,6 +391,7 @@ export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, o
               setSelectedToDate(normalized.toDate);
               setDatePreset("custom");
               setCustomDateOpen(false);
+              onLoadDateRange?.(normalized);
             }}>Done</button>
           </div>
         </div>

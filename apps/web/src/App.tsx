@@ -527,11 +527,14 @@ function App() {
     }
   }, [currentUser, snapshot, deliveryManagerWarehouseId]);
 
-  async function refresh(user = currentUser) {
+  async function refresh(user = currentUser, orderRange?: { fromDate: string; toDate: string }) {
     const token = window.localStorage.getItem(TOKEN_KEY) || sessionToken;
     if (!user || !token) return;
     try {
-      const { data } = await api.get<AppSnapshot>("/snapshot", { headers: { authorization: `Bearer ${token}` } });
+      const { data } = await api.get<AppSnapshot>("/snapshot", {
+        headers: { authorization: `Bearer ${token}` },
+        params: orderRange ? { ordersFrom: orderRange.fromDate, ordersTo: orderRange.toDate } : undefined
+      });
       setSnapshot(data);
     } catch (submitError) {
       clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
@@ -1406,7 +1409,7 @@ function App() {
           {activeView === "ExcelMaker" ? <StandaloneExcelMaker /> : null}
           {activeView === "GoodsWarrants" ? <GoodsWarrantView snapshot={snapshot} sessionToken={sessionToken} setSnapshot={setSnapshot} setLoading={setLoading} setError={setError} setMessage={setMessage} /> : null}
           {activeView === "Parties" ? partiesView : null}
-          {activeView === "Purchase" ? (isAdminUser ? <AnalystPurchaseView snapshot={snapshot} orders={snapshot.purchaseOrders} /> : <>
+          {activeView === "Purchase" ? (isAdminUser ? <AnalystPurchaseView snapshot={snapshot} orders={snapshot.purchaseOrders} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : <>
             <PurchaserPurchaseWorkspace
               snapshot={snapshot}
               currentUser={currentUser}
@@ -1449,7 +1452,7 @@ function App() {
               onEditorDirtyChange={setPurchaseEditorDirty}
             />
           </>) : null}
-          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseEditorDirty(false); setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
+          {activeView === "Purchases" ? ((isDataAnalyst || isAccountsUser) ? <AnalystPurchaseView snapshot={snapshot} orders={purchaseOrdersView} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : <PurchaserPurchaseSummary snapshot={snapshot} currentUser={currentUser} orders={purchaseOrdersView.filter((order) => isAdminUser || order.purchaserId === currentUser.id || order.purchaserName === currentUser.fullName)} onUpdatePo={(orderId) => { setPurchaseEditorDirty(false); setPurchaseUpdateOrderId(orderId); setActiveView("Purchase"); }} onOpenStatus={(target) => openOrderStatus(target)} onLoadDateRange={(range) => void refresh(currentUser, range)} />) : null}
           {activeView === "PurchaseReturns" ? <ReturnsWorkspace
             side="Purchase"
             snapshot={snapshot}
@@ -1460,7 +1463,7 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
           /> : null}
-          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
             snapshot={snapshot}
             mode="sales"
             title="Salesman Order Booking"
@@ -1502,7 +1505,7 @@ function App() {
             }}
             rightPanel={null}
           />)) : null}
-          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} />) : null}
+          {activeView === "SalesOrders" ? ((isDataAnalyst || isAccountsUser) ? <AnalystSalesView snapshot={snapshot} orders={salesOrdersView} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : <SalesOrderSummary snapshot={snapshot} currentUser={currentUser} orders={salesOrdersView.filter((order) => isAdminUser || isCollectionAgent || order.salesmanId === currentUser.id || order.salesmanName === currentUser.fullName)} onUpdateSo={(orderId) => { setSalesEditorDirty(false); setSalesUpdateOrderId(orderId); setActiveView("Sales"); }} onCreatePayment={(body) => post("/payments", body, "Collection saved for accounts reconciliation.")} onTagCollectionAgent={(orderId, assignedTo) => post("/notes", { entityType: "Sales Order", entityId: orderId, note: `Collection assignment: ${assignedTo}`, visibility: "Operational" }, "Collection agent tagged.")} onLogCollectionNote={(orderId, note) => post("/notes", { entityType: "Sales Order", entityId: orderId, note, visibility: "Operational" }, "Collection override logged.")} onOpenStatus={(target) => openOrderStatus(target)} onLoadDateRange={(range) => void refresh(currentUser, range)} />) : null}
           {activeView === "SalesReturns" ? <ReturnsWorkspace
             side="Sales"
             snapshot={snapshot}
