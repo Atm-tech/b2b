@@ -148,6 +148,13 @@ async function showSystemNotification(title: string, body: string, tag: string) 
   new Notification(title, options);
 }
 
+function vapidKeyBytes(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [sessionToken, setSessionToken] = useState("");
@@ -612,9 +619,26 @@ function App() {
     const permission = await Notification.requestPermission();
     setNotificationPromptOpen(false);
     window.localStorage.setItem("aapoorti-notification-prompt-dismissed", "1");
-    if (permission === "granted") setMessage("Notifications enabled for new orders and retailer chats.");
+    if (permission === "granted") {
+      await subscribeToPushNotifications();
+      setMessage("Notifications enabled for new orders and retailer chats.");
+    }
     else setError("Notifications are blocked. Browser settings se Aapoorti B Connect notifications allow kar sakte hain.");
   }
+
+  async function subscribeToPushNotifications() {
+    if (!sessionToken || typeof Notification === "undefined" || Notification.permission !== "granted" || !("serviceWorker" in navigator)) return;
+    const { data } = await api.get<{ publicKey: string }>("/push/config", { headers: { authorization: `Bearer ${sessionToken}` } });
+    if (!data.publicKey) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription()
+      || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(data.publicKey) });
+    await api.post("/push/subscription", subscription.toJSON(), { headers: { authorization: `Bearer ${sessionToken}` } });
+  }
+
+  useEffect(() => {
+    void subscribeToPushNotifications().catch(() => undefined);
+  }, [sessionToken, currentUser]);
 
   useEffect(() => {
     if (!snapshot) return;

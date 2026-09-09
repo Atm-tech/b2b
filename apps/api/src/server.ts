@@ -58,6 +58,7 @@ import {
 import { isWorkbookFile, parseCsvRows, parseWorkbookRows } from "./product-import.js";
 import { getProofObject, putProofObject, r2Enabled, type ProofCategory } from "./object-storage.js";
 import { runAssistant } from "./assistant-service.js";
+import { savePushSubscription, webPushPublicKey } from "./push-notifications.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
@@ -1129,6 +1130,21 @@ app.get("/assistant/training-examples", async (req, res) => {
     res.status(400).json({ message: error instanceof Error ? error.message : "Could not load voice training examples." });
   }
 });
+
+app.get("/push/config", async (req, res) => {
+  try {
+    await getCurrentUser(req);
+    res.json({ publicKey: webPushPublicKey() });
+  } catch (error) {
+    res.status(401).json({ message: error instanceof Error ? error.message : "Unauthorized." });
+  }
+});
+
+app.post("/push/subscription", async (req, res) => wrap(res, async () => {
+  const currentUser = await getCurrentUser(req);
+  await savePushSubscription(currentUser.id, req.body);
+  return { ok: true };
+}));
 
 app.get("/whatsapp/webhook", (req, res) => {
   if (!verifyWhatsAppWebhook(req.query as Record<string, unknown>)) {

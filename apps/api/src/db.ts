@@ -290,6 +290,15 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE whatsapp_registration_requests ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
     ALTER TABLE whatsapp_registration_requests ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
     ALTER TABLE whatsapp_registration_requests ADD COLUMN IF NOT EXISTS location_label TEXT NOT NULL DEFAULT '';
+    CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      subscription_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user ON web_push_subscriptions(user_id);
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_entity_created ON whatsapp_messages(related_entity_type, related_entity_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_whatsapp_live_chat_unread ON whatsapp_service_tickets(salesman_id, unread_staff_count, last_message_at DESC) WHERE kind='Live Chat' AND status='Open';
     DO $$

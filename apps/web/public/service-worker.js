@@ -47,6 +47,17 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
     const existing = windows[0];
-    return existing ? existing.focus() : clients.openWindow("/");
+    return existing ? existing.focus() : clients.openWindow(event.notification.data?.url || "/");
+  }));
+});
+
+self.addEventListener("push", (event) => {
+  const payload = event.data ? event.data.json() : {};
+  event.waitUntil(self.registration.showNotification(payload.title || "B CONNECT", {
+    body: payload.body || "You have a new update.",
+    icon: "/business-connect-icon-192.png",
+    badge: "/business-connect-icon-192.png",
+    tag: payload.tag || "b-connect-update",
+    data: { url: payload.url || "/" }
   }));
 });

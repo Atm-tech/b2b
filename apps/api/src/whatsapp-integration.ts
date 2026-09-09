@@ -5,6 +5,7 @@ import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
 import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
+import { sendPushToUser } from "./push-notifications.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -1418,6 +1419,7 @@ async function handleInboundMessage(message: JsonObject) {
     }
     return;
   }
+  void sendPushToUser(profile.salesmanId, "New retailer WhatsApp message", `${profile.retailerName} sent a message.`, "/");
   try {
     if (messageType === "order" && message.order && typeof message.order === "object") {
       await createDraftFromCatalogOrder(profile, messageId, message.order as JsonObject);
