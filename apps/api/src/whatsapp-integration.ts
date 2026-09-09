@@ -1547,6 +1547,14 @@ async function handleInboundMessage(message: JsonObject) {
         return;
       }
       await sendLongText(from, detailedProforma(draftId, loaded.draft, loaded.lines), "Draft", draftId);
+      const sent = await sendButtons(from, "Proforma check kar lijiye. Confirm Order se order process hoga, ya Request Change se quantity update kar sakte hain.", [
+        { id: `wa-confirm:${draftId}`, title: "Confirm Order" },
+        { id: `wa-change:${draftId}`, title: "Request Change" }
+      ], "Draft", draftId);
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_order_drafts SET confirmation_message_id=$2, reviewed_at=NOW() WHERE id=$1`,
+        [draftId, sent.messageId]
+      );
       return;
     }
     if (buttonId.startsWith("wa-change:")) {
