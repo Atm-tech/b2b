@@ -133,6 +133,21 @@ function BootLoader() {
   );
 }
 
+async function showSystemNotification(title: string, body: string, tag: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const options = { body, icon: "/business-connect-icon-192.png", tag };
+  try {
+    const registration = await navigator.serviceWorker?.ready;
+    if (registration) {
+      await registration.showNotification(title, options);
+      return;
+    }
+  } catch {
+    // Fall through to the page notification API when the service worker is unavailable.
+  }
+  new Notification(title, options);
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [sessionToken, setSessionToken] = useState("");
@@ -341,7 +356,7 @@ function App() {
         if (count > 0) void appNavigator.setAppBadge?.(count);
         else void appNavigator.clearAppBadge?.();
         if (previous !== null && count > previous && typeof Notification !== "undefined" && Notification.permission === "granted") {
-          new Notification("New WhatsApp attention item", { body: `${count - previous} new retailer chat or order item needs review.`, icon: "/business-connect-icon-192.png", tag: "whatsapp-attention" });
+          void showSystemNotification("New WhatsApp attention item", `${count - previous} new retailer chat or order item needs review.`, "whatsapp-attention");
         }
       } catch {
         // Keep the last known badge count during transient network failures.
@@ -580,7 +595,7 @@ function App() {
         const title = `New ${side.toLowerCase()} order`;
         setMessage(`${title}: ${orderId}`);
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          new Notification(title, { body: `${orderId} needs your attention.`, icon: "/business-connect-icon-192.png", tag: `order-${orderId}` });
+          void showSystemNotification(title, `${orderId} needs your attention.`, `order-${orderId}`);
         }
       }
     }

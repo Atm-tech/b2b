@@ -1,4 +1,4 @@
-const CACHE_NAME = "b-connect-shell-v6";
+const CACHE_NAME = "b-connect-shell-v7";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/apple-touch-icon.png", "/business-connect-icon-192.png", "/business-connect-icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -41,4 +41,12 @@ self.addEventListener("fetch", (event) => {
       })
     );
   }
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+    const existing = windows[0];
+    return existing ? existing.focus() : clients.openWindow("/");
+  }));
 });

@@ -138,6 +138,21 @@ function normalizedSearch(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "");
 }
 
+async function showChatSystemNotification(title: string, body: string, tag: string) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const options = { body, icon: "/business-connect-icon-192.png", tag };
+  try {
+    const registration = await navigator.serviceWorker?.ready;
+    if (registration) {
+      await registration.showNotification(title, options);
+      return;
+    }
+  } catch {
+    // Fall through to the browser notification API.
+  }
+  new Notification(title, options);
+}
+
 function messageAuditText(item: Record<string, unknown>) {
   const payload = (item.payload_json || {}) as Record<string, unknown>;
   const request = (payload.request || {}) as Record<string, unknown>;
@@ -344,7 +359,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
           const preview = String(incoming.last_message_preview || "New WhatsApp message");
           setChatAlert({ retailer, preview });
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            new Notification(`New WhatsApp message — ${retailer}`, { body: preview, icon: "/business-connect-icon-192.png", tag: `wa-chat-${incoming.id}` });
+            void showChatSystemNotification(`New WhatsApp message — ${retailer}`, preview, `wa-chat-${incoming.id}`);
           }
         }
       }
