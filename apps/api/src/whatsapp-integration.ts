@@ -1016,7 +1016,7 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
     }
     const quantity = Math.max(pricing.minimumQuantity, requestedQuantity);
     if (requestedQuantity < pricing.minimumQuantity) {
-      minimumAdjustments.push(`${pricing.name}: ${requestedQuantity} â†’ ${pricing.minimumQuantity}`);
+      minimumAdjustments.push(`${pricing.name}: ${requestedQuantity} to ${pricing.minimumQuantity}`);
     }
     minimumSummary.push(`${pricing.name}: MOQ ${pricing.minimumQuantity} | Cart qty ${quantity}`);
     lines.push({ productSku: sku, quantity, rate: pricing.rate, cdPercent: pricing.cdPercent, todPercent: pricing.todPercent, gstRate: pricing.gstRate, taxMode: pricing.taxMode });
@@ -1033,24 +1033,24 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
   }
   if (!lines.length) {
     await sendText(profile.phoneE164,
-      `Yeh catalogue items abhi available catalogue list mein nahi hain, isliye order create nahi hua. Wishlist sales team ko bhej di gayi hai:\n${unavailableItems.map((item) => `â€¢ ${item.name} | Qty ${item.quantity}`).join("\n")}`,
+      `Yeh catalogue items abhi available catalogue list mein nahi hain, isliye order create nahi hua. Wishlist sales team ko bhej di gayi hai:\n${unavailableItems.map((item) => `- ${item.name} | Qty ${item.quantity}`).join("\n")}`,
       "Wishlist", profile.counterpartyId);
     return "";
   }
   const draftId = await createDraft(profile, "Catalogue", messageId, lines);
   const loaded = await loadDraft(draftId);
   const adjustedNote = minimumAdjustments.length
-    ? `\n\nCart minimum quantity ke hisaab se update hua:\n${minimumAdjustments.map((item) => `â€¢ ${item}`).join("\n")}`
+    ? `\n\nCart minimum quantity ke hisaab se update hua:\n${minimumAdjustments.map((item) => `- ${item}`).join("\n")}`
     : "";
   await sendText(profile.phoneE164,
-    `Catalogue cart mil gaya.\n\n*Minimum order quantity (MOQ)*\n${minimumSummary.map((item) => `â€¢ ${item}`).join("\n")}${adjustedNote}\n\nNeeche preliminary proforma invoice hai. Salesperson stock aur final rate verify karke confirmation bhejenge.`,
+    `Catalogue cart mil gaya.\n\n*Minimum order quantity (MOQ)*\n${minimumSummary.map((item) => `- ${item}`).join("\n")}${adjustedNote}\n\nNeeche preliminary proforma invoice hai. Salesperson stock aur final rate verify karke confirmation bhejenge.`,
     "Draft", draftId);
   await sendText(profile.phoneE164,
     compactProforma(draftId, loaded.draft, loaded.lines).replace("Please confirm or request a change.", "Preliminary catalogue proforma — final confirmation sales review ke baad aayega."),
     "Draft", draftId);
   if (unavailableItems.length) {
     await sendText(profile.phoneE164,
-      `In items ka live product record available nahi tha, isliye unhe order se alag karke wishlist mein bhej diya hai:\n${unavailableItems.map((item) => `â€¢ ${item.name} | Qty ${item.quantity}`).join("\n")}\n\nBaaki available items ki proforma upar bhej di gayi hai.`,
+      `In items ka live product record available nahi tha, isliye unhe order se alag karke wishlist mein bhej diya hai:\n${unavailableItems.map((item) => `- ${item.name} | Qty ${item.quantity}`).join("\n")}\n\nBaaki available items ki proforma upar bhej di gayi hai.`,
       "Wishlist", draftId);
   }
   return draftId;
