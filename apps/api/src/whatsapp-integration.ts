@@ -3276,7 +3276,7 @@ export async function getWhatsAppCatalogFeed(token: string) {
           ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/images/${encodeURIComponent(product.sku)}?token=${encodeURIComponent(expected)}&v=${encodeURIComponent(product.catalogImageUpdatedAt || product.catalogImageKey)}`
           : `${publicWeb}/business-connect-icon-512.png`,
         product.brand || "Aapoorti",
-        [product.division, product.department, product.section, product.category, product.subCategory].filter(Boolean).join(" > ")
+        product.department || product.division || product.category || "General"
       ].map(csvCell).join(",")
     ];
   });
