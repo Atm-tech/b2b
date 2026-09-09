@@ -61,6 +61,7 @@ import { runAssistant } from "./assistant-service.js";
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
+  autoCloseInactiveWhatsAppLiveChats,
   clearWhatsAppOrderDrafts,
   clearWhatsAppTestActivity,
   configureWhatsAppCommerce,
@@ -1526,6 +1527,10 @@ app.post("/assistant/query", async (req, res) => wrap(res, async () => {
 app.listen(port, () => {
   console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"}); proof storage: ${r2Enabled ? "Cloudflare R2" : "local filesystem"}`);
   warmLocalSpeechModel();
+  void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));
+  setInterval(() => {
+    void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));
+  }, 60_000).unref();
 });
 
 async function storeProofFile(category: ProofCategory, file: Express.Multer.File) {

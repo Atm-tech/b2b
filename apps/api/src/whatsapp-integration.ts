@@ -1687,7 +1687,22 @@ export function verifyWhatsAppSignature(rawBody: Buffer, signatureHeader: string
   return isValidMetaSignature(rawBody, signatureHeader, text(process.env.WHATSAPP_APP_SECRET), process.env.NODE_ENV !== "production");
 }
 
+export async function autoCloseInactiveWhatsAppLiveChats() {
+  const closed = await executeDatabaseQuery<{ id: string }>(
+    `UPDATE whatsapp_service_tickets
+     SET status='Resolved',resolved_at=NOW(),closed_by='System — inactive for 15 minutes',
+         unread_staff_count=0,updated_at=NOW()
+     WHERE kind='Live Chat' AND status='Open'
+       AND COALESCE(last_message_at,updated_at,created_at) <= NOW() - INTERVAL '15 minutes'
+     RETURNING id`
+  );
+  return closed.rowCount || 0;
+}
+
 export async function handleWhatsAppWebhook(payload: JsonObject) {
+  // Close any expired human-chat session before routing a new retailer message.
+  // A new message after the 15-minute window therefore returns to the normal bot flow.
+  await autoCloseInactiveWhatsAppLiveChats();
   const entries = Array.isArray(payload.entry) ? payload.entry as JsonObject[] : [];
   for (const entry of entries) {
     const changes = Array.isArray(entry.changes) ? entry.changes as JsonObject[] : [];
