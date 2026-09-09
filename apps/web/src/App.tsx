@@ -152,6 +152,7 @@ function App() {
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
+  const orderNotificationBaseline = useRef<Set<string> | null>(null);
 
   const [userForm, setUserForm] = useState({ username: "", fullName: "", mobileNumber: "", roles: ["Purchaser"] as UserRole[], warehouseIds: [] as string[], password: "1234" });
   const [warehouseForm, setWarehouseForm] = useState({ id: "", name: "", city: "Bhopal", address: "", type: "Warehouse" as "Warehouse" | "Yard" });
@@ -541,6 +542,44 @@ function App() {
       setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Unable to restore session.") : "Unable to restore session.");
     }
   }
+
+  useEffect(() => {
+    if (!currentUser || !sessionToken) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 12_000);
+    return () => window.clearInterval(timer);
+  }, [currentUser, sessionToken]);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const current = new Set([
+      ...snapshot.salesOrders.map((order) => `Sales:${orderPublicId(order)}`),
+      ...snapshot.purchaseOrders.map((order) => `Purchase:${orderPublicId(order)}`)
+    ]);
+    const previous = orderNotificationBaseline.current;
+    if (previous) {
+      const incoming = Array.from(current).find((id) => !previous.has(id));
+      if (incoming) {
+        const [side, orderId] = incoming.split(":");
+        const title = `New ${side.toLowerCase()} order`;
+        setMessage(`${title}: ${orderId}`);
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification(title, { body: `${orderId} needs your attention.`, icon: "/business-connect-icon-192.png", tag: `order-${orderId}` });
+        }
+      }
+    }
+    orderNotificationBaseline.current = current;
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const operatingWarehouseId = snapshot.warehouses.some((warehouse) => warehouse.id === "C21") ? "C21" : snapshot.warehouses[0]?.id || "";
+    if (!operatingWarehouseId) return;
+    setPurchaseForm((current) => current.warehouseId === operatingWarehouseId ? current : { ...current, warehouseId: operatingWarehouseId });
+    setSalesForm((current) => current.warehouseId === operatingWarehouseId ? current : { ...current, warehouseId: operatingWarehouseId });
+    setReceiptForm((current) => current.warehouseId === operatingWarehouseId ? current : { ...current, warehouseId: operatingWarehouseId });
+  }, [snapshot]);
 
   async function doLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
