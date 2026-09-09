@@ -261,7 +261,7 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
       type: "list",
       header: { type: "text", text: compact(query ? `Did you mean: ${query}?` : "Aapoorti Catalogue", 60) },
       body: { text: [intro, "Kya aap inmein se koi product chahte hain? Select kijiye; phir aapka rate aur quantity options milenge."].filter(Boolean).join("\n\n") },
-      footer: { text: "Final stock & special rate salesperson verify karega." },
+      footer: { text: "MOQ aur displayed rate proforma mein confirm hoga." },
       action: {
         button: "View products",
         sections: [{
@@ -292,7 +292,7 @@ async function sendCatalog(profile: RetailerProfile) {
         type: "catalog_message",
         body: { text: `${greeting}\n\nAapoorti Wholesale catalogue kholiye, items select kijiye aur cart WhatsApp par bhej dijiye.` },
         action: { name: "catalog_message" },
-        footer: { text: "Special retailer rates are applied during sales review." }
+        footer: { text: "Special retailer rates proforma mein clearly shown honge." }
       }
     });
   } catch (error) {
@@ -340,7 +340,7 @@ async function sendMainMenu(profile: RetailerProfile) {
 
 async function sendOrderGuide(profile: RetailerProfile) {
   await sendButtons(profile.phoneE164,
-    "Aapoorti B Connect order demo:\n\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. MRP, aapka rate aur saving dekhein\n4. Quantity bhejein\n5. Aur item chahiye ho to Add More karein\n6. Total check karke Finalize karein\n7. Aapke salesperson stock aur rate approve karenge\n\nChaliye, demo shuru karein?",
+    "Aapoorti B Connect order demo:\n\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. MRP, aapka rate aur saving dekhein\n4. Quantity bhejein\n5. Aur item chahiye ho to Add More karein\n6. Total check karke Finalize karein\n7. Proforma check karke khud Confirm Order karein\n\nChaliye, demo shuru karein?",
     [
       { id: "wa-guide:start", title: "Start guided order" },
       { id: "wa-cart:checkout", title: "View my cart" }
@@ -483,8 +483,7 @@ async function createReorder(profile: RetailerProfile, previousDraftId: string, 
     });
   }
   if (!lines.length) throw new Error("Previous order has no reusable items.");
-  const draftId = await createDraft(profile, "Reorder", messageId, lines);
-  await sendText(profile.phoneE164, `Repeat order request ${draftId} bana di gayi hai. ${profile.salesmanName} current stock aur rate verify karega.`, "Reorder", draftId);
+  await createDraft(profile, "Reorder", messageId, lines);
 }
 
 async function sendAccountSummary(profile: RetailerProfile) {
@@ -908,7 +907,7 @@ async function sendCartCheckout(profile: RetailerProfile) {
     [profile.phoneE164]
   );
   await sendButtons(profile.phoneE164,
-    `Your cart\n\n${summary.body}\n\nEstimated total: Rs.${summary.total.toFixed(2)}\nFinal stock aur rate ${profile.salesmanName} approve karega. Submit karein?`,
+    `Your cart\n\n${summary.body}\n\nEstimated total: Rs.${summary.total.toFixed(2)}\nFinalize karein; aapko proforma invoice approval ke liye turant milega.`,
     [
       { id: "wa-cart:finalize", title: "Finalize" },
       { id: "wa-cart:add", title: "Add more" },
@@ -964,7 +963,7 @@ async function finalizeCart(profile: RetailerProfile, messageId: string) {
   }
 }
 
-async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "", notifyReceived = true) {
+async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "", sendRetailerProforma = true) {
   if (lines.length === 0) throw new Error("The order did not contain any products.");
   const draftId = id("WAD");
   await executeDatabaseQuery(
@@ -987,14 +986,7 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
         line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive", line.note || ""]
     );
   }
-  if (notifyReceived) await sendText(profile.phoneE164,
-    `✅ Order request ${draftId} received. ${profile.salesmanName} will verify stock and your special rate, then send the final summary for confirmation.`,
-    "Draft", draftId);
-  const template = text(process.env.WHATSAPP_SALESPERSON_ALERT_TEMPLATE);
-  if (notifyReceived && template) {
-    const user = (await getSnapshot()).users.find((item) => item.id === profile.salesmanId);
-    if (user?.mobileNumber) await sendTemplate(user.mobileNumber, template, [draftId, profile.retailerName], "Draft", draftId).catch(() => undefined);
-  }
+  if (sendRetailerProforma) await sendDraftForRetailerApproval(draftId);
   return draftId;
 }
 
@@ -1037,17 +1029,14 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
       "Wishlist", profile.counterpartyId);
     return "";
   }
-  const draftId = await createDraft(profile, "Catalogue", messageId, lines);
-  const loaded = await loadDraft(draftId);
+  const draftId = await createDraft(profile, "Catalogue", messageId, lines, "", false);
   const adjustedNote = minimumAdjustments.length
     ? `\n\nCart minimum quantity ke hisaab se update hua:\n${minimumAdjustments.map((item) => `- ${item}`).join("\n")}`
     : "";
   await sendText(profile.phoneE164,
-    `Catalogue cart mil gaya.\n\n*Minimum order quantity (MOQ)*\n${minimumSummary.map((item) => `- ${item}`).join("\n")}${adjustedNote}\n\nNeeche preliminary proforma invoice hai. Salesperson stock aur final rate verify karke confirmation bhejenge.`,
+    `Catalogue cart mil gaya.\n\n*Minimum order quantity (MOQ)*\n${minimumSummary.map((item) => `- ${item}`).join("\n")}${adjustedNote}\n\nNeeche proforma invoice hai. Aap ise approve ya change request kar sakte hain.`,
     "Draft", draftId);
-  await sendText(profile.phoneE164,
-    compactProforma(draftId, loaded.draft, loaded.lines).replace("Please confirm or request a change.", "Preliminary catalogue proforma — final confirmation sales review ke baad aayega."),
-    "Draft", draftId);
+  await sendDraftForRetailerApproval(draftId);
   if (unavailableItems.length) {
     await sendText(profile.phoneE164,
       `In items ka live product record available nahi tha, isliye unhe order se alag karke wishlist mein bhej diya hai:\n${unavailableItems.map((item) => `- ${item.name} | Qty ${item.quantity}`).join("\n")}\n\nBaaki available items ki proforma upar bhej di gayi hai.`,
@@ -1176,6 +1165,22 @@ function detailedProforma(draftId: string, draft: Record<string, unknown>, rows:
     return `*${index + 1}. ${text(line.product_name)}*\n${mrpDiscountLabel(line.mrp, line.rate)}\nQty ${numberValue(line.approved_quantity)} × Rate ₹${numberValue(line.rate).toFixed(2)}${rateAdjustment}\nGST ${amounts.gstRate}% ${amounts.taxMode}\nTaxable ₹${amounts.taxableAmount.toFixed(2)}${discountAmount} | GST ₹${amounts.gstAmount.toFixed(2)}\nLine total: ₹${amounts.totalAmount.toFixed(2)}`;
   }).join("\n\n");
   return `🧾 *AAPOORTI WHOLESALE — PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}\nSalesperson: ${text(draft.salesman_name)}\nWarehouse: ${text(draft.warehouse_id)}\n\n${details}\n\n${proformaFooter(draft, rows)}\n\nFinal tax invoice will be generated after order confirmation and processing.`;
+}
+
+async function sendDraftForRetailerApproval(draftId: string) {
+  const loaded = await loadDraft(draftId);
+  const summary = compactProforma(draftId, loaded.draft, loaded.lines);
+  const sent = await sendButtons(text(loaded.draft.phone_e164), summary,
+    [
+      { id: `wa-confirm:${draftId}`, title: "Confirm Order" },
+      { id: `wa-change:${draftId}`, title: "Request Change" },
+      { id: `wa-proforma:${draftId}`, title: "View Proforma" }
+    ], "Draft", draftId);
+  await executeDatabaseQuery(
+    `UPDATE whatsapp_order_drafts
+     SET status='Awaiting Retailer', confirmation_message_id=$2, reviewed_at=NOW()
+     WHERE id=$1`, [draftId, sent.messageId]
+  );
 }
 
 async function finalizeDraft(draftId: string) {
@@ -1446,7 +1451,7 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (buttonId.startsWith("wa-change:")) {
       await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Change Requested' WHERE id = $1 AND counterparty_id = $2`, [buttonId.slice("wa-change:".length), profile.counterpartyId]);
-      await sendText(from, "Required quantity/rate change type karke bhejein. Salesperson review karega.");
+      await sendText(from, "Required quantity ya rate change type karke bhejein. Sales team revised proforma wapas bhejegi; final approval aapka hoga.");
       return;
     }
     if (buttonId.startsWith("wa-offer:")) {
