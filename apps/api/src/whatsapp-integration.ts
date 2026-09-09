@@ -1196,9 +1196,24 @@ function proformaFooter(draft: Record<string, unknown>, rows: Record<string, unk
   return `Subtotal: ₹${totals.taxable.toFixed(2)}${discount}\nGST: ₹${totals.gst.toFixed(2)}\n*Grand total: ₹${totals.grand.toFixed(2)}*\nPayment: ${text(draft.payment_mode) || "Pending"} | Delivery: ${text(draft.delivery_mode) || "Pending"}`;
 }
 
+function proformaGstDistribution(rows: Record<string, unknown>[]) {
+  const buckets = new Map<number, { taxable: number; gst: number }>();
+  for (const line of rows) {
+    const amounts = lineAmounts(line);
+    const current = buckets.get(amounts.gstRate) || { taxable: 0, gst: 0 };
+    current.taxable += amounts.taxableAmount;
+    current.gst += amounts.gstAmount;
+    buckets.set(amounts.gstRate, current);
+  }
+  return Array.from(buckets.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([rate, amounts]) => `${rate}%: taxable INR ${amounts.taxable.toFixed(2)} | GST INR ${amounts.gst.toFixed(2)}`)
+    .join("\n");
+}
+
 function compactProforma(draftId: string, draft: Record<string, unknown>, rows: Record<string, unknown>[]) {
   const header = `🧾 *PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}`;
-  const footer = proformaFooter(draft, rows);
+  const footer = `${proformaFooter(draft, rows)}\nGST breakup\n${proformaGstDistribution(rows)}`;
   const lines: string[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const line = rows[index];
@@ -1225,7 +1240,7 @@ function detailedProforma(draftId: string, draft: Record<string, unknown>, rows:
     const discountAmount = discount > 0 ? ` | Discount ₹${discount.toFixed(2)}` : "";
     return `*${index + 1}. ${text(line.product_name)}*\n${mrpDiscountLabel(line.mrp, line.rate)}\nQty ${numberValue(line.approved_quantity)} × Rate ₹${numberValue(line.rate).toFixed(2)}${rateAdjustment}\nGST ${amounts.gstRate}% ${amounts.taxMode}\nTaxable ₹${amounts.taxableAmount.toFixed(2)}${discountAmount} | GST ₹${amounts.gstAmount.toFixed(2)}\nLine total: ₹${amounts.totalAmount.toFixed(2)}`;
   }).join("\n\n");
-  return `🧾 *AAPOORTI WHOLESALE — PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}\nSalesperson: ${text(draft.salesman_name)}\nWarehouse: ${text(draft.warehouse_id)}\n\n${details}\n\n${proformaFooter(draft, rows)}\n\nFinal tax invoice will be generated after order confirmation and processing.`;
+  return `🧾 *AAPOORTI WHOLESALE — PROFORMA INVOICE*\n*NOT A TAX INVOICE*\nNo: ${draftId}\nDate: ${formatProformaDate(draft.reviewed_at || draft.created_at)}\nRetailer: ${text(draft.retailer_name)}\nSalesperson: ${text(draft.salesman_name)}\nWarehouse: ${text(draft.warehouse_id)}\n\n${details}\n\n${proformaFooter(draft, rows)}\nGST breakup\n${proformaGstDistribution(rows)}\n\nFinal tax invoice will be generated after order confirmation and processing.`;
 }
 
 async function sendDraftForRetailerApproval(draftId: string) {
