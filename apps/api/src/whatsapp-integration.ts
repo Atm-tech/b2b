@@ -1002,6 +1002,7 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
   const rawItems = Array.isArray(order.product_items) ? order.product_items as JsonObject[] : [];
   const lines: DraftLineInput[] = [];
   const minimumAdjustments: string[] = [];
+  const minimumSummary: string[] = [];
   for (const item of rawItems) {
     const sku = text(item.product_retailer_id);
     const pricing = await productPricing(profile.counterpartyId, sku);
@@ -1010,14 +1011,20 @@ async function createDraftFromCatalogOrder(profile: RetailerProfile, messageId: 
     if (requestedQuantity < pricing.minimumQuantity) {
       minimumAdjustments.push(`${pricing.name}: ${requestedQuantity} â†’ ${pricing.minimumQuantity}`);
     }
+    minimumSummary.push(`${pricing.name}: MOQ ${pricing.minimumQuantity} | Cart qty ${quantity}`);
     lines.push({ productSku: sku, quantity, rate: pricing.rate, cdPercent: pricing.cdPercent, todPercent: pricing.todPercent, gstRate: pricing.gstRate, taxMode: pricing.taxMode });
   }
   const draftId = await createDraft(profile, "Catalogue", messageId, lines);
-  if (minimumAdjustments.length) {
-    await sendText(profile.phoneE164,
-      `WhatsApp catalogue cart quantity 1 se start hota hai. MOQ ke hisaab se aapka order update hua:\n${minimumAdjustments.map((item) => `â€¢ ${item}`).join("\n")}\n\nSales review ke baad final confirmation bheja jayega.`,
-      "Draft", draftId);
-  }
+  const loaded = await loadDraft(draftId);
+  const adjustedNote = minimumAdjustments.length
+    ? `\n\nCart minimum quantity ke hisaab se update hua:\n${minimumAdjustments.map((item) => `â€¢ ${item}`).join("\n")}`
+    : "";
+  await sendText(profile.phoneE164,
+    `Catalogue cart mil gaya.\n\n*Minimum order quantity (MOQ)*\n${minimumSummary.map((item) => `â€¢ ${item}`).join("\n")}${adjustedNote}\n\nNeeche preliminary proforma invoice hai. Salesperson stock aur final rate verify karke confirmation bhejenge.`,
+    "Draft", draftId);
+  await sendText(profile.phoneE164,
+    compactProforma(draftId, loaded.draft, loaded.lines).replace("Please confirm or request a change.", "Preliminary catalogue proforma — final confirmation sales review ke baad aayega."),
+    "Draft", draftId);
   return draftId;
 }
 
