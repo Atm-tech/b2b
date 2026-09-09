@@ -229,8 +229,9 @@ function quantityChoices(minimumQuantity: number) {
   return [minimumQuantity, minimumQuantity * 2, minimumQuantity * 5];
 }
 
-async function matchingProducts(query = "", limit = 10) {
+async function matchingProducts(query = "", limit = 10, department = "") {
   const snapshot = await getSnapshot();
+  const normalizedDepartment = department.trim().toLowerCase();
   const historicallyPricedSkus = new Set(
     snapshot.salesOrders.filter((order) => order.status !== "Cancelled" && order.rate > 0).map((order) => order.productSku)
   );
@@ -238,11 +239,14 @@ async function matchingProducts(query = "", limit = 10) {
     .filter((product) => {
       if (!product.whatsappCatalogEnabled) return false;
       if (productSaleRate(product) <= 0 && !historicallyPricedSkus.has(product.sku)) return false;
+      if (normalizedDepartment && product.department.trim().toLowerCase() !== normalizedDepartment) return false;
       return true;
     })
     .map((product) => ({
       product,
-      score: scoreWhatsAppProductQuery(query, [product.name, product.sku, product.brand, product.shortName, product.articleName, product.itemName, product.size, product.remarks])
+      score: query
+        ? scoreWhatsAppProductQuery(query, [product.name, product.sku, product.brand, product.shortName, product.articleName, product.itemName, product.size, product.remarks])
+        : 1
     }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name))
@@ -250,8 +254,8 @@ async function matchingProducts(query = "", limit = 10) {
     .map((item) => item.product);
 }
 
-async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "", intro = "") {
-  const products = await matchingProducts(query);
+async function sendProductPicker(phone: string, query = "", profile?: RetailerProfile, messageId = "", intro = "", department = "") {
+  const products = await matchingProducts(query, 10, department);
   if (!products.length) {
     if (query && profile) return offerWishlist(profile, query, messageId);
     return sendText(phone, `“${compact(query, 80)}” ka product nahi mila. Dusra naam type karein, jaise: Lux`);
@@ -260,8 +264,8 @@ async function sendProductPicker(phone: string, query = "", profile?: RetailerPr
     type: "interactive",
     interactive: {
       type: "list",
-      header: { type: "text", text: compact(query ? `Did you mean: ${query}?` : "Aapoorti Catalogue", 60) },
-      body: { text: [intro, "Kya aap inmein se koi product chahte hain? Select kijiye; phir aapka rate aur quantity options milenge."].filter(Boolean).join("\n\n") },
+      header: { type: "text", text: compact(query ? `Did you mean: ${query}?` : department || "Aapoorti Catalogue", 60) },
+      body: { text: [intro, `${department ? `${department} ke top products` : "Kya aap inmein se koi product chahte hain?"} Select kijiye; phir aapka rate aur quantity options milenge.`].filter(Boolean).join("\n\n") },
       footer: { text: "MOQ aur displayed rate proforma mein confirm hoga." },
       action: {
         button: "View products",
@@ -319,6 +323,8 @@ async function sendMainMenu(profile: RetailerProfile) {
             title: "Order & catalogue",
             rows: [
               { id: "wa-menu:catalogue", title: "Browse catalogue", description: "Products, MRP, rate aur MOQ dekhein" },
+              { id: "wa-menu:departments", title: "Shop by department", description: "Grocery, personal care aur more" },
+              { id: "wa-menu:offers", title: "Best offers", description: "Highest savings wale products" },
               { id: "wa-menu:order", title: "Start new order", description: "Product select karke order banayein" },
               { id: "wa-menu:reorder", title: "Repeat last order", description: "Pichhla completed order dobara mangayein" },
               { id: "wa-menu:wishlist", title: "Add to wishlist", description: "Unavailable product aur quantity batayein" }
@@ -337,6 +343,39 @@ async function sendMainMenu(profile: RetailerProfile) {
       }
     }
   }, "MainMenu", profile.counterpartyId);
+}
+
+async function sendDepartmentPicker(profile: RetailerProfile) {
+  const result = await executeDatabaseQuery<Record<string, unknown>>(
+    `SELECT department,COUNT(*)::int AS product_count
+     FROM products
+     WHERE whatsapp_catalog_enabled=TRUE AND COALESCE(department,'')<>''
+     GROUP BY department ORDER BY product_count DESC,department ASC LIMIT 10`
+  );
+  const rows = result.rows
+    .map((item) => ({ department: text(item.department), count: numberValue(item.product_count) }))
+    .filter((item) => item.department);
+  if (!rows.length) return sendText(profile.phoneE164, "Department list abhi available nahi hai. Product naam type karke search karein.");
+  return sendGraphMessage(profile.phoneE164, {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "SHOP BY DEPARTMENT" },
+      body: { text: "Apna department select karein. Product list, MRP, rate aur MOQ mil jayega." },
+      footer: { text: "Best offers Menu mein available hain." },
+      action: {
+        button: "Select department",
+        sections: [{
+          title: "Departments",
+          rows: rows.map((item) => ({
+            id: `wa-department:${encodeURIComponent(item.department)}`,
+            title: compact(item.department, 24),
+            description: `${item.count} catalogue products`
+          }))
+        }]
+      }
+    }
+  }, "DepartmentPicker", profile.counterpartyId);
 }
 
 async function sendFeaturedDeals(profile: RetailerProfile) {
@@ -1489,6 +1528,19 @@ async function handleInboundMessage(message: JsonObject) {
     const buttonReply = interactive?.button_reply as JsonObject | undefined;
     const listReply = interactive?.list_reply as JsonObject | undefined;
     const buttonId = text(buttonReply?.id || listReply?.id);
+    if (buttonId === "wa-menu:departments") {
+      await sendDepartmentPicker(profile);
+      return;
+    }
+    if (buttonId === "wa-menu:offers") {
+      await sendFeaturedDeals(profile);
+      return;
+    }
+    if (buttonId.startsWith("wa-department:")) {
+      const department = decodeURIComponent(buttonId.slice("wa-department:".length));
+      await sendProductPicker(from, "", profile, messageId, "Department select ho gaya.", department);
+      return;
+    }
     if (buttonId === "wa-menu:catalogue") {
       await sendCatalog(profile);
       return;
@@ -3206,7 +3258,7 @@ export async function getWhatsAppCatalogFeed(token: string) {
     if (order.status !== "Cancelled" && order.rate > 0 && !latestSaleRates.has(order.productSku)) latestSaleRates.set(order.productSku, order.rate);
   }
   const publicWeb = (process.env.PUBLIC_WEB_URL || "https://b2b-api-theta.vercel.app").replace(/\/$/, "");
-  const header = ["id", "title", "description", "availability", "condition", "price", "sale_price", "link", "image_link", "brand"];
+  const header = ["id", "title", "description", "availability", "condition", "price", "sale_price", "link", "image_link", "brand", "product_type"];
   const rows = snapshot.products.flatMap((product: ProductMaster) => {
     // A retailer catalogue must never expose an internal purchase rate. Products
     // without a customer-facing price stay out of Meta until their RSP/MRP is set.
@@ -3223,7 +3275,8 @@ export async function getWhatsAppCatalogFeed(token: string) {
         product.catalogImageKey
           ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/images/${encodeURIComponent(product.sku)}?token=${encodeURIComponent(expected)}&v=${encodeURIComponent(product.catalogImageUpdatedAt || product.catalogImageKey)}`
           : `${publicWeb}/business-connect-icon-512.png`,
-        product.brand || "Aapoorti"
+        product.brand || "Aapoorti",
+        [product.division, product.department, product.section, product.category, product.subCategory].filter(Boolean).join(" > ")
       ].map(csvCell).join(",")
     ];
   });
