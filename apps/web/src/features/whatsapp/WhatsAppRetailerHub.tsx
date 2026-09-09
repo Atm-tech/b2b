@@ -187,6 +187,7 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
       <span className={`status-pill ${draft.status === "Completed" ? "success" : "pending"}`}>{draft.status}</span>
     </div>
     <p className="helper-text">{draft.id} · {draft.phone_e164} · Assigned to {draft.salesman_name}{draft.sales_cart_id ? ` · SO ${draft.sales_cart_id}` : ""}</p>
+    {draft.status === "Needs Review" && /Stock review:/i.test(draft.note || "") ? <p className="helper-text"><strong>Stock confirmation required:</strong> edit the quantity/rate below and send confirmation, or deny the order. The retailer is waiting for {draft.salesman_name}.</p> : null}
     <div className="table-wrap"><table><thead><tr><th>Product</th><th>Requested</th><th>Approved</th><th>Rate</th><th>CD %</th><th>TOD %</th></tr></thead><tbody>
       {draft.lines.map((line, index) => <tr key={line.id}>
         <td><strong>{line.product_name}</strong><small>{line.product_sku}</small></td>

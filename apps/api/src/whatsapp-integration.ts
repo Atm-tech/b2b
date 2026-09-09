@@ -1292,6 +1292,31 @@ async function finalizeDraft(draftId: string) {
   try {
     const { draft, lines } = await loadDraft(draftId);
     const snapshot = await getSnapshot();
+    const stockBySku = new Map(snapshot.stockSummary
+      .filter((item) => item.warehouseId === text(draft.warehouse_id))
+      .map((item) => [item.productSku, item.availableQuantity]));
+    const shortages = lines.filter((line) => numberValue(line.approved_quantity) > (stockBySku.get(text(line.product_sku)) || 0));
+    if (shortages.length) {
+      for (const line of lines) {
+        await executeDatabaseQuery(
+          `UPDATE whatsapp_order_draft_lines SET stock_at_review=$3 WHERE id=$1 AND draft_id=$2`,
+          [text(line.id), draftId, stockBySku.get(text(line.product_sku)) || 0]
+        );
+      }
+      const shortageNames = shortages.map((line) => `${text(line.product_name)} (requested ${numberValue(line.approved_quantity)}, available ${stockBySku.get(text(line.product_sku)) || 0})`).join(", ");
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_order_drafts
+         SET status='Needs Review', reviewed_at=NOW(), confirmation_message_id=NULL,
+             note=$2
+         WHERE id=$1`,
+        [draftId, compact(`${text(draft.note)} | Stock review: ${shortageNames}`, 1000)]
+      );
+      await sendText(text(draft.phone_e164),
+        `Order mil gaya hai. ${text(draft.salesman_name)} se stock check aur final order confirmation pending hai. Confirmation isi WhatsApp par bheja jayega.`,
+        "Draft", draftId
+      );
+      return;
+    }
     const salesperson = snapshot.users.find((item) => item.id === numberValue(draft.salesman_id));
     if (!salesperson) throw new Error("Assigned salesperson is unavailable.");
     await createSalesCart({
@@ -2042,7 +2067,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT o.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_offers o JOIN counterparties c ON c.id = o.counterparty_id JOIN users u ON u.id = o.salesman_id ${isAdmin ? "" : "WHERE o.salesman_id = $1"} ORDER BY o.created_at DESC LIMIT 100`, params),
     executeDatabaseQuery<Record<string, unknown>>(
-      `SELECT d.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_order_drafts d JOIN counterparties c ON c.id = d.counterparty_id JOIN users u ON u.id = d.salesman_id ${isAdmin ? "WHERE NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review')" : "WHERE d.salesman_id = $1 AND NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review')"} ORDER BY d.created_at DESC LIMIT 150`, params),
+      `SELECT d.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_order_drafts d JOIN counterparties c ON c.id = d.counterparty_id JOIN users u ON u.id = d.salesman_id ${isAdmin ? "WHERE NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review' AND COALESCE(d.note,'') NOT ILIKE '%Stock review:%')" : "WHERE d.salesman_id = $1 AND NOT (d.source IN ('Catalogue','Retailer cart') AND d.status='Needs Review' AND COALESCE(d.note,'') NOT ILIKE '%Stock review:%')"} ORDER BY d.created_at DESC LIMIT 150`, params),
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT l.*, p.name AS product_name
        FROM whatsapp_order_draft_lines l
