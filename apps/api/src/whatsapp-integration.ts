@@ -965,6 +965,49 @@ async function finalizeCart(profile: RetailerProfile, messageId: string) {
 
 async function createDraft(profile: RetailerProfile, source: string, sourceMessageId: string, lines: DraftLineInput[], sourceOfferId = "", sendRetailerProforma = true) {
   if (lines.length === 0) throw new Error("The order did not contain any products.");
+  const isRetailerCartSource = source === "Catalogue" || source === "Retailer cart";
+  if (isRetailerCartSource) {
+    const openDraft = await executeDatabaseQuery<{ id: string }>(
+      `SELECT id FROM whatsapp_order_drafts
+       WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart') AND status='Awaiting Retailer'
+       ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
+    );
+    if (openDraft.rows[0]?.id) {
+      const draftId = openDraft.rows[0].id;
+      const existing = await loadDraft(draftId);
+      for (const line of lines) {
+        const current = existing.lines.find((candidate) => text(candidate.product_sku) === line.productSku);
+        if (current) {
+          const combinedQuantity = numberValue(current.approved_quantity) + line.quantity;
+          await executeDatabaseQuery(
+            `UPDATE whatsapp_order_draft_lines SET requested_quantity=$3,approved_quantity=$3 WHERE id=$1 AND draft_id=$2`,
+            [text(current.id), draftId, combinedQuantity]
+          );
+        } else {
+          await executeDatabaseQuery(
+            `INSERT INTO whatsapp_order_draft_lines (
+               id, draft_id, product_sku, requested_quantity, approved_quantity, rate,
+               cd_percent, tod_percent, gst_rate, tax_mode, note
+             ) VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10)`,
+            [id("WADL"), draftId, line.productSku, line.quantity, line.rate, line.cdPercent || 0,
+              line.todPercent || 0, line.gstRate === "NA" ? 0 : line.gstRate || 0,
+              line.taxMode === "Inclusive" ? "Inclusive" : "Exclusive", line.note || ""]
+          );
+        }
+      }
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_order_drafts
+         SET source_message_id=$2,note=CONCAT(note,CASE WHEN note='' THEN '' ELSE ' | ' END,$3::text),updated_at=NOW()
+         WHERE id=$1`,
+        [draftId, sourceMessageId || null, `${source} items added by retailer`]
+      );
+      if (sendRetailerProforma) {
+        await sendText(profile.phoneE164, "Items existing proforma mein add kar diye gaye hain. Revised proforma neeche hai.", "Draft", draftId);
+        await sendDraftForRetailerApproval(draftId);
+      }
+      return draftId;
+    }
+  }
   const draftId = id("WAD");
   await executeDatabaseQuery(
     `INSERT INTO whatsapp_order_drafts (
