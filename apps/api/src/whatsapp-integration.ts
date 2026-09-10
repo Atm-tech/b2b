@@ -2704,7 +2704,16 @@ export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
        VALUES
          ('WA-TEST-BISCUIT-5','WA TEST BISCUIT 100G','Grocery','Biscuits','Pack',0.10,5,50,18,20),
          ('WA-TEST-SOAP-12','WA TEST SOAP 100G','Personal Care','Bath Soap','Piece',0.10,12,120,27,30),
-         ('WA-TEST-DRINK-24','WA TEST DRINK 750ML','Beverages','Soft Drinks','Bottle',0.75,24,240,45,50)
+         ('WA-TEST-DRINK-24','WA TEST DRINK 750ML','Beverages','Soft Drinks','Bottle',0.75,24,240,45,50),
+         ('WA-TEST-TEA-10','WA TEST TEA 250G','Grocery','Tea','Pack',0.25,10,100,72,80),
+         ('WA-TEST-OIL-6','WA TEST REFINED OIL 1L','Grocery','Edible Oil','Bottle',1.00,6,60,126,140),
+         ('WA-TEST-NOODLES-12','WA TEST NOODLES 280G','Grocery','Instant Food','Pack',0.28,12,120,36,40),
+         ('WA-TEST-SHAMPOO-8','WA TEST SHAMPOO 180ML','Personal Care','Hair Care','Bottle',0.18,8,80,81,90),
+         ('WA-TEST-DETERGENT-6','WA TEST DETERGENT 1KG','Home Care','Laundry','Pack',1.00,6,60,108,120),
+         ('WA-TEST-CHOCOLATE-20','WA TEST CHOCOLATE 25G','Confectionery','Chocolate','Piece',0.03,20,200,9,10),
+         ('WA-TEST-ATTA-3','WA TEST ATTA 5KG','Grocery','Flour','Bag',5.00,3,30,360,400)
+     ), hidden_catalogue AS (
+       UPDATE products SET whatsapp_catalog_enabled=FALSE WHERE sku NOT LIKE 'WA-TEST-%' RETURNING sku
      ), products_upserted AS (
        INSERT INTO products (
          sku,name,division,department,section_name,category,sub_category,unit,
