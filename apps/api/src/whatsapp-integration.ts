@@ -1414,25 +1414,13 @@ async function sendDraftRemoveProductPicker(profile: RetailerProfile, draftId: s
 async function sendDraftEditOptions(profile: RetailerProfile, draftId: string) {
   const loaded = await loadDraft(draftId);
   if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
-  await sendGraphMessage(profile.phoneE164, {
-    type: "interactive",
-    interactive: {
-      type: "list",
-      header: { type: "text", text: "Edit proforma" },
-      body: { text: "Quantity change karein, ek product remove karein, ya poori temporary proforma clear karein." },
-      action: {
-        button: "Choose action",
-        sections: [{
-          title: "Cart actions",
-          rows: [
-            { id: `wa-edit:quantity:${encodeURIComponent(draftId)}`, title: "Change quantity", description: "Select item and enter required quantity" },
-            { id: `wa-edit:remove:${encodeURIComponent(draftId)}`, title: "Remove one product", description: "Keep remaining products in the proforma" },
-            { id: `wa-edit:clear:${encodeURIComponent(draftId)}`, title: "Clear complete cart", description: "Cancel this temporary proforma" }
-          ]
-        }]
-      }
-    }
-  }, "Draft", draftId);
+  await sendButtons(profile.phoneE164,
+    "Proforma mein kya change karna hai? Quantity update karein, ek product remove karein, ya poori temporary cart clear karein.",
+    [
+      { id: `wa-edit:quantity:${encodeURIComponent(draftId)}`, title: "Change quantity" },
+      { id: `wa-edit:remove:${encodeURIComponent(draftId)}`, title: "Remove product" },
+      { id: `wa-edit:clear:${encodeURIComponent(draftId)}`, title: "Clear cart" }
+    ], "Draft", draftId);
 }
 
 async function clearRetailerProforma(profile: RetailerProfile, draftId: string) {
