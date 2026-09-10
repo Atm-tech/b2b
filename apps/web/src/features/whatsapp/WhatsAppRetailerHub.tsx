@@ -584,6 +584,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const mappedRetailers = useMemo(() => dashboard?.retailers || [], [dashboard?.retailers]);
   const activeMappedRetailers = useMemo(() => mappedRetailers.filter((item) => item.active), [mappedRetailers]);
   const departments = useMemo(() => Array.from(new Set(snapshot.products.map((product) => product.department.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [snapshot.products]);
+  const wholesaleWarehouseId = useMemo(() => snapshot.warehouses.find((warehouse) => warehouse.id === "C21" || warehouse.name.trim().toLowerCase() === "wholesale warehouse")?.id || "", [snapshot.warehouses]);
+  const wholesaleAvailableProducts = useMemo(() => {
+    const availableSkus = new Set(snapshot.stockSummary
+      .filter((stock) => stock.warehouseId === wholesaleWarehouseId && stock.availableQuantity > 0)
+      .map((stock) => stock.productSku));
+    return snapshot.products.filter((product) => product.whatsappCatalogEnabled && availableSkus.has(product.sku));
+  }, [snapshot.products, snapshot.stockSummary, wholesaleWarehouseId]);
+  const offerDepartments = useMemo(() => Array.from(new Set(wholesaleAvailableProducts.map((product) => product.department.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [wholesaleAvailableProducts]);
   const filteredRuleRetailers = useMemo(() => {
     const query = normalizedSearch(ruleRetailerSearch);
     if (!query) return mappedRetailers;
@@ -605,11 +613,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   }, [ruleDepartment, ruleProductSearch, snapshot.products]);
   const filteredOfferProducts = useMemo(() => {
     const query = normalizedSearch(offerProductSearch);
-    return snapshot.products.filter((product) => (!offerDepartment || product.department === offerDepartment)
+    return wholesaleAvailableProducts.filter((product) => (!offerDepartment || product.department === offerDepartment)
       && (!query || [product.name, product.sku, product.brand, product.division, product.department, product.section, product.category, product.subCategory]
         .filter(Boolean)
         .some((value) => normalizedSearch(String(value)).includes(query))));
-  }, [offerDepartment, offerProductSearch, snapshot.products]);
+  }, [offerDepartment, offerProductSearch, wholesaleAvailableProducts]);
   const selectableOfferRetailerIds = filteredOfferRetailers.map((item) => item.counterpartyId);
   const allVisibleRetailersSelected = selectableOfferRetailerIds.length > 0
     && selectableOfferRetailerIds.every((counterpartyId) => offer.counterpartyIds.includes(counterpartyId));
@@ -725,9 +733,10 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label className="wide-field">Search retailers<input type="search" value={offerRetailerSearch} onChange={(event) => setOfferRetailerSearch(event.target.value)} placeholder="Name, number or salesperson" /></label>
       <label className="checkbox-line"><input type="checkbox" checked={allVisibleRetailersSelected} disabled={!selectableOfferRetailerIds.length} onChange={(event) => setOffer((current) => { const visibleIds = new Set(selectableOfferRetailerIds); return { ...current, counterpartyIds: event.target.checked ? Array.from(new Set([...current.counterpartyIds, ...selectableOfferRetailerIds])) : current.counterpartyIds.filter((id) => !visibleIds.has(id)) }; })} />Select all matching retailers ({filteredOfferRetailers.length})</label>
       <fieldset className="wa-retailer-picker wide-field"><legend>Retailers</legend><div className="wa-retailer-checklist">{filteredOfferRetailers.length ? filteredOfferRetailers.map((item) => <label key={item.counterpartyId}><input type="checkbox" checked={offer.counterpartyIds.includes(item.counterpartyId)} onChange={(event) => setOffer((current) => ({ ...current, counterpartyIds: event.target.checked ? Array.from(new Set([...current.counterpartyIds, item.counterpartyId])) : current.counterpartyIds.filter((id) => id !== item.counterpartyId) }))} /><span><strong>{item.retailerName}</strong><small>{item.phoneE164}</small></span></label>) : <p>No active retailers match this search.</p>}</div><span className="field-hint">{offer.counterpartyIds.length} retailer{offer.counterpartyIds.length === 1 ? "" : "s"} selected</span></fieldset>
-      <label>Department<select value={offerDepartment} onChange={(event) => setOfferDepartment(event.target.value)}><option value="">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
+      <label>Department<select value={offerDepartment} onChange={(event) => setOfferDepartment(event.target.value)}><option value="">All departments</option>{offerDepartments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
       <label>Search product<input type="search" value={offerProductSearch} onChange={(event) => setOfferProductSearch(event.target.value)} placeholder="Name, SKU, brand or category" /></label>
       <label className="wide-field">Product<select value={offer.productSku} onChange={(event) => setOffer((current) => ({ ...current, productSku: event.target.value }))}><option value="">Select product ({filteredOfferProducts.length})</option>{offer.productSku && !filteredOfferProducts.some((product) => product.sku === offer.productSku) ? <option value={offer.productSku}>{snapshot.products.find((product) => product.sku === offer.productSku)?.name || offer.productSku} · selected</option> : null}{filteredOfferProducts.map((product) => <option key={product.sku} value={product.sku}>{product.name} · {product.sku} · {product.department || "General"}</option>)}</select></label>
+      <p className="field-hint wide-field">Only products currently available at Wholesale Warehouse are shown for offers.</p>
       <label>Quantity<input type="number" step="any" value={offer.quantity} onChange={(event) => setOffer((current) => ({ ...current, quantity: event.target.value }))} /></label>
       <label>Rate<input type="number" step="any" value={offer.rate} onChange={(event) => setOffer((current) => ({ ...current, rate: event.target.value }))} /></label>
       <label>CD %<input type="number" step="any" value={offer.cdPercent} onChange={(event) => setOffer((current) => ({ ...current, cdPercent: event.target.value }))} /></label>

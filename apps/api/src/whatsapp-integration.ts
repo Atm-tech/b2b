@@ -3031,6 +3031,18 @@ export async function createWhatsAppOffer(input: {
 }, currentUser: StaffUser) {
   if (!input.counterpartyIds.length || !input.lines.length) throw new Error("Select retailers and at least one product.");
   if (new Date(input.expiresAt).getTime() <= Date.now()) throw new Error("Offer expiry must be in the future.");
+  const stockSnapshot = await getSnapshot();
+  const wholesaleWarehouseId = stockSnapshot.warehouses.find((warehouse) => warehouse.id === "C21" || warehouse.name.trim().toLowerCase() === "wholesale warehouse")?.id;
+  if (!wholesaleWarehouseId) throw new Error("Wholesale Warehouse is not configured.");
+  const wholesaleAvailableSkus = new Set(stockSnapshot.stockSummary
+    .filter((stock) => stock.warehouseId === wholesaleWarehouseId && stock.availableQuantity > 0)
+    .map((stock) => stock.productSku));
+  for (const line of input.lines) {
+    if (!wholesaleAvailableSkus.has(line.productSku)) {
+      const product = stockSnapshot.products.find((item) => item.sku === line.productSku);
+      throw new Error(`${product?.name || line.productSku} is not available at Wholesale Warehouse and cannot be offered.`);
+    }
+  }
   const results: Array<{ offerId: string; retailer: string; simulated: boolean }> = [];
   for (const counterpartyId of input.counterpartyIds) {
     const retailerResult = await executeDatabaseQuery<Record<string, unknown>>(
