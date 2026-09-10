@@ -2746,12 +2746,7 @@ export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
        ON CONFLICT (lot_id) DO NOTHING
        RETURNING product_sku
      )
-     SELECT p.sku,p.name,p.minimum_order_quantity AS moq,p.rsp,p.mrp,
-            COALESCE(SUM(l.quantity_available-l.quantity_reserved),0) AS available_c21
-     FROM products p
-     LEFT JOIN inventory_lots l ON l.product_sku=p.sku AND l.warehouse_id='C21' AND l.status='Available'
-     WHERE p.sku IN (SELECT sku FROM seed)
-     GROUP BY p.sku ORDER BY p.sku`,
+     SELECT sku,name,moq,rsp,mrp,stock AS available_c21 FROM seed ORDER BY sku`,
     [currentUser.username]
   );
   return { products: result.rows };
