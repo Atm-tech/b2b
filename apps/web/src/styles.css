@@ -2410,22 +2410,46 @@ body.so-viewport-locked .sales-catalog textarea {
   font-weight: 700;
 }
 
-.app-toast {
+.app-feedback {
   position: fixed;
-  top: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 120;
-  min-width: min(92vw, 320px);
-  max-width: min(92vw, 560px);
-  padding: 0.9rem 1rem;
-  border-radius: 16px;
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  pointer-events: none;
 }
 
-.app-toast.success {
-  background: rgba(12, 148, 136, 0.96);
+.app-feedback-card {
+  display: flex;
+  width: min(100%, 460px);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 18px 18px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 18px;
+  box-shadow: 0 24px 64px rgba(15, 36, 48, 0.3);
+  pointer-events: auto;
+  animation: app-feedback-in 180ms ease-out;
+}
+
+.app-feedback-card > div { display: grid; gap: 5px; }
+.app-feedback-card span { font-size: 0.72rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.82; }
+.app-feedback-card strong { line-height: 1.45; }
+.app-feedback-card button { width: 32px; min-width: 32px; min-height: 32px; margin: -3px -3px 0 0; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.18); color: currentColor; font-size: 1.3rem; line-height: 1; box-shadow: none; }
+.app-feedback-card.success {
+  background: linear-gradient(135deg, #087c74, #0fa69a);
   color: #fff;
+}
+
+.app-feedback-card.error { background: #fff; border-color: #fecaca; color: #9d2520; }
+.app-feedback-card.error span { color: #c33c35; }
+.app-feedback-card.error button { background: #fff0ef; }
+
+@keyframes app-feedback-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .notification-permission-overlay { position: fixed; z-index: 150; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(13, 41, 51, .34); backdrop-filter: blur(5px); }

@@ -462,6 +462,12 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  useEffect(() => {
+    if (!error) return;
+    const timeout = window.setTimeout(() => setError(""), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
+
   function closePurchaseEditor() {
     setPurchaseEditorDirty(false);
     setPurchaseUpdateOrderId("");
@@ -1480,8 +1486,7 @@ function App() {
         </div>
       </section> : null}
 
-      {message ? <div className="app-toast success">{message}</div> : null}
-      {error ? <p className="message error">{error}</p> : null}
+      {message || error ? <div className="app-feedback" role="presentation"><section className={`app-feedback-card ${error ? "error" : "success"}`} role={error ? "alert" : "status"} aria-live="assertive"><div><span>{error ? "Action needs attention" : "Done"}</span><strong>{error || message}</strong></div><button type="button" aria-label="Dismiss message" onClick={() => { setMessage(""); setError(""); }}>×</button></section></div> : null}
 
       <section className={effectiveSimpleMode ? "workspace-shell simple-workspace" : `workspace-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
         {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>
