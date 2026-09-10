@@ -773,8 +773,9 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-live-chat-shell {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  height: clamp(600px, calc(100dvh - 220px), 780px);
-  min-height: 600px;
+  /* Leave room for the fixed app dock: each pane then owns a usable scroll area. */
+  height: clamp(540px, calc(100dvh - 310px), 700px);
+  min-height: 540px;
   overflow: hidden;
   border: 1px solid rgba(18, 112, 105, 0.15);
   border-radius: 28px;
@@ -828,7 +829,7 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-chat-placeholder > span { width: 58px; color: #07877f; }
 .wa-chat-placeholder strong { margin-top: 12px; color: #18344f; font-size: 1.15rem; }
 .wa-chat-placeholder p { margin: 6px 0 0; }
-.wa-chat-order-form { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 18px; border-left: 1px solid #d5e5e2; background: #f7fbfa; }
+.wa-chat-order-form { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 18px 18px calc(30px + env(safe-area-inset-bottom, 0px)); border-left: 1px solid #d5e5e2; background: #f7fbfa; }
 .wa-chat-order-form label { display: grid; min-width: 0; gap: 6px; margin: 0; color: #29465f; font-size: 0.82rem; font-weight: 750; }
 .wa-chat-order-form input,
 .wa-chat-order-form select { min-height: 42px; }
