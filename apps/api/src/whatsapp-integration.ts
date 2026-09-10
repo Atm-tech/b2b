@@ -25,6 +25,10 @@ type RetailerProfile = {
   marketingOptIn: boolean;
   pausedAt?: string;
   tags: string[];
+  allowLaterCollection: boolean;
+  allowPartialCollection: boolean;
+  allowChequeCollection: boolean;
+  collectionTolerance: number;
   active: boolean;
 };
 type DraftLineInput = {
@@ -620,6 +624,10 @@ function mapRetailer(row: Record<string, unknown>): RetailerProfile {
     marketingOptIn: row.marketing_opt_in !== false,
     pausedAt: row.paused_at ? String(row.paused_at) : undefined,
     tags: Array.isArray(row.tags_json) ? row.tags_json.map(text).filter(Boolean) : [],
+    allowLaterCollection: Boolean(row.allow_later_collection),
+    allowPartialCollection: Boolean(row.allow_partial_collection),
+    allowChequeCollection: Boolean(row.allow_cheque_collection),
+    collectionTolerance: Math.max(0, numberValue(row.collection_tolerance)),
     active: Boolean(row.active)
   };
 }
@@ -2263,7 +2271,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const params = isAdmin ? [] : [currentUser.id];
   const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats, catalogProducts, tickets, orderEvents, campaigns, analytics] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
-      `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
+      `SELECT wr.*, c.name AS retailer_name, c.allow_later_collection, c.allow_partial_collection, c.allow_cheque_collection, c.collection_tolerance, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT id, name, mobile_number, city, contact_person
        FROM counterparties
@@ -3339,13 +3347,22 @@ export async function resolveWhatsAppWishlist(wishlistId: string, productSku: st
   return getWhatsAppDashboard(currentUser);
 }
 
-export async function updateWhatsAppRetailerPreferences(counterpartyId: string, input: { marketingOptIn: boolean; tags: string[] }, currentUser: StaffUser) {
+export async function updateWhatsAppRetailerPreferences(counterpartyId: string, input: { marketingOptIn: boolean; tags: string[]; allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean; collectionTolerance?: number }, currentUser: StaffUser) {
   if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can update retailer preferences.");
   const tags = Array.from(new Set(input.tags.map((tag) => compact(tag, 40)).filter(Boolean))).slice(0, 20);
   await executeDatabaseQuery(
     `UPDATE whatsapp_retailers SET marketing_opt_in=$2,paused_at=CASE WHEN $2 THEN NULL ELSE COALESCE(paused_at,NOW()) END,tags_json=$3::jsonb,updated_at=NOW() WHERE counterparty_id=$1`,
     [counterpartyId, input.marketingOptIn, JSON.stringify(tags)]
   );
+  if (input.allowLaterCollection !== undefined || input.allowPartialCollection !== undefined || input.allowChequeCollection !== undefined || input.collectionTolerance !== undefined) {
+    await executeDatabaseQuery(
+      `UPDATE counterparties
+       SET allow_later_collection=COALESCE($2,allow_later_collection), allow_partial_collection=COALESCE($3,allow_partial_collection),
+           allow_cheque_collection=COALESCE($4,allow_cheque_collection), collection_tolerance=COALESCE($5,collection_tolerance)
+       WHERE id=$1 AND type='Shop'`,
+      [counterpartyId, input.allowLaterCollection ?? null, input.allowPartialCollection ?? null, input.allowChequeCollection ?? null, input.collectionTolerance === undefined ? null : Math.max(0, input.collectionTolerance)]
+    );
+  }
   return getWhatsAppDashboard(currentUser);
 }
 

@@ -1322,6 +1322,23 @@ app.post("/whatsapp/retailers", async (req, res) => wrap(res, async () => {
   }, currentUser);
 }));
 
+app.post("/whatsapp/retailers/create", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  const name = requiredString(req.body?.name, "Retailer name");
+  const mobileNumber = requiredString(req.body?.phone, "WhatsApp number");
+  const created = await createCounterparty({
+    type: "Shop", name, gstNumber: optionalString(req.body?.gstNumber) || "N/A", bankName: "N/A", bankAccountNumber: "N/A", ifscCode: "N/A",
+    mobileNumber, address: optionalString(req.body?.address) || "WhatsApp onboarding", city: optionalString(req.body?.city) || "", contactPerson: optionalString(req.body?.contactPerson) || name,
+    allowLaterCollection: Boolean(req.body?.allowLaterCollection), allowPartialCollection: Boolean(req.body?.allowPartialCollection), allowChequeCollection: Boolean(req.body?.allowChequeCollection), collectionTolerance: optionalNumber(req.body?.collectionTolerance)
+  }, currentUser);
+  const retailer = created.counterparties.find((item) => item.type === "Shop" && item.name === name && item.mobileNumber === mobileNumber);
+  if (!retailer) throw new Error("Retailer was created but could not be mapped.");
+  return saveWhatsAppRetailer({
+    counterpartyId: retailer.id, phone: mobileNumber, salesmanId: requiredNumber(req.body?.salesmanId, "Salesperson"), defaultWarehouseId: requiredString(req.body?.defaultWarehouseId, "Warehouse"),
+    billingType: "B2C", paymentMode: requiredString(req.body?.paymentMode || "NEFT", "Payment mode") as PaymentMode, deliveryMode: "Delivery", optedIn: Boolean(req.body?.optedIn), active: true
+  }, currentUser);
+}));
+
 app.delete("/whatsapp/retailers/:id", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return removeWhatsAppRetailer(req.params.id, currentUser);
@@ -1376,7 +1393,11 @@ app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, a
   const currentUser = await requireWhatsAppAdmin(req);
   return updateWhatsAppRetailerPreferences(req.params.id, {
     marketingOptIn: req.body?.marketingOptIn !== false,
-    tags: Array.isArray(req.body?.tags) ? req.body.tags.map((item: unknown) => String(item ?? "")) : []
+    tags: Array.isArray(req.body?.tags) ? req.body.tags.map((item: unknown) => String(item ?? "")) : [],
+    allowLaterCollection: req.body?.allowLaterCollection === undefined ? undefined : Boolean(req.body.allowLaterCollection),
+    allowPartialCollection: req.body?.allowPartialCollection === undefined ? undefined : Boolean(req.body.allowPartialCollection),
+    allowChequeCollection: req.body?.allowChequeCollection === undefined ? undefined : Boolean(req.body.allowChequeCollection),
+    collectionTolerance: req.body?.collectionTolerance === undefined ? undefined : optionalNumber(req.body.collectionTolerance)
   }, currentUser);
 }));
 
