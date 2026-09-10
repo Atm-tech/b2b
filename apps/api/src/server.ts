@@ -477,7 +477,7 @@ app.post("/products/bulk-upload", csvUpload.single("csv"), async (req, res) => w
 }));
 
 app.post("/counterparties", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
+  const currentUser = await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
   return createCounterparty(
     {
       type: requiredString(req.body?.type, "Type") as CounterpartyType,
@@ -492,14 +492,18 @@ app.post("/counterparties", async (req, res) => wrap(res, async () => {
       contactPerson: requiredString(req.body?.contactPerson, "Contact person"),
       latitude: optionalNumber(req.body?.latitude),
       longitude: optionalNumber(req.body?.longitude),
-      locationLabel: optionalString(req.body?.locationLabel)
+      locationLabel: optionalString(req.body?.locationLabel),
+      allowLaterCollection: Boolean(req.body?.allowLaterCollection),
+      allowPartialCollection: Boolean(req.body?.allowPartialCollection),
+      allowChequeCollection: Boolean(req.body?.allowChequeCollection),
+      collectionTolerance: optionalNumber(req.body?.collectionTolerance)
     },
     currentUser
   );
 }));
 
 app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
-  await requireRole(req, ["Accounts", "Purchaser", "Sales"]);
+  await requireRole(req, ["Admin", "Accounts", "Purchaser", "Sales"]);
   return updateCounterparty(req.params.id, {
     name: requiredString(req.body?.name, "Name"),
     gstNumber: requiredString(req.body?.gstNumber, "GST number"),
@@ -509,7 +513,11 @@ app.patch("/counterparties/:id", async (req, res) => wrap(res, async () => {
     mobileNumber: requiredString(req.body?.mobileNumber, "Mobile number"),
     address: requiredString(req.body?.address, "Address"),
     city: requiredString(req.body?.city, "City"),
-    contactPerson: requiredString(req.body?.contactPerson, "Contact person")
+    contactPerson: requiredString(req.body?.contactPerson, "Contact person"),
+    allowLaterCollection: Boolean(req.body?.allowLaterCollection),
+    allowPartialCollection: Boolean(req.body?.allowPartialCollection),
+    allowChequeCollection: Boolean(req.body?.allowChequeCollection),
+    collectionTolerance: optionalNumber(req.body?.collectionTolerance)
   });
 }));
 
@@ -702,7 +710,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
     });
     const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
     const status = requiredString(req.body?.status, "Status") as any;
-    const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts");
+    const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts" || role === "Warehouse Manager");
     if (!canEditSalesOrders && !currentUser.roles.includes("Admin")) {
       throw new Error("You are not allowed to perform this action.");
     }
@@ -719,7 +727,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
   }
   const status = requiredString(req.body?.status, "Status") as any;
   const deliveryMode = requiredString(req.body?.deliveryMode, "Delivery mode") as "Self Collection" | "Delivery";
-  const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts");
+  const canEditSalesOrders = currentUser.roles.some((role) => role === "Sales" || role === "Accounts" || role === "Warehouse Manager");
   const canRunWarehouseDispatchFlow =
     currentUser.roles.includes("Warehouse Manager") &&
     (
@@ -749,7 +757,7 @@ app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async
 }));
 
 app.post("/payments", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent"]);
+  const currentUser = await requireRole(req, ["Accounts", "Purchaser", "Sales", "Collection Agent", "Delivery"]);
   const referenceNumber = currentUser.roles.includes("Accounts")
     ? requiredString(req.body?.referenceNumber, "Reference number")
     : optionalString(req.body?.referenceNumber) || "";
@@ -1098,7 +1106,7 @@ app.post("/delivery-dockets", async (req, res) => wrap(res, async () => {
 }));
 
 app.post("/delivery-consignments", async (req, res) => wrap(res, async () => {
-  const currentUser = await requireRole(req, ["Delivery Manager"]);
+  const currentUser = await requireRole(req, ["Warehouse Manager", "Delivery Manager"]);
   return createDeliveryConsignment({
     docketIds: requiredStringArray(req.body?.docketIds, "Dockets"),
     warehouseId: requiredString(req.body?.warehouseId, "Warehouse"),

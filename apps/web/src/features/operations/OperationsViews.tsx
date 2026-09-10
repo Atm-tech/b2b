@@ -1245,7 +1245,7 @@ export function WarehouseOperationsViewV2({
       dockets: openDockets.filter((docket) => docket.warehouseId === warehouse.id)
     })).filter((item) => item.dockets.length > 0);
 
-    return <Panel title="Dockets and Consignment" eyebrow="Bundle dockets before delivery tagging">
+    return <Panel title="Create DCO" eyebrow="Select one or many ready bills / dockets, then hand over to delivery">
       <div className="stack-list warehouse-order-list">
         {openDocketsByWarehouse.length === 0 ? <div className="empty-card">No ready dockets from any warehouse.</div> : openDocketsByWarehouse.map(({ warehouse, dockets }) => {
           const suggestionBuckets = suggestedGroupsByWarehouse.get(warehouse.id) || [];
@@ -1290,7 +1290,7 @@ export function WarehouseOperationsViewV2({
         <div className="payment-card-actions wide-field">
           <span className="small-label">{selectedDockets.length} docket(s) - {selectedDocketWeight.toFixed(2)} kg total consignment weight</span>
           {hasMixedWarehouses ? <span className="small-label">Select dockets from only one warehouse.</span> : null}
-          <button className="primary-button" type="submit" disabled={submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0}>{submittingConsignment ? "Creating..." : "Create consignment"}</button>
+          <button className="primary-button" type="submit" disabled={submittingConsignment || hasMixedWarehouses || selectedDockets.length === 0}>{submittingConsignment ? "Creating DCO..." : "Create DCO"}</button>
         </div>
       </form>
       <div className="stack-list payment-update-list top-gap">{bundleReadyConsignments.length === 0 ? <div className="empty-card">No bundled consignments yet.</div> : bundleReadyConsignments.map((item) => <article className="list-card payment-update-card" key={item.id}><div className="payment-update-head"><div><strong>{item.id}</strong><p>{item.docketIds.join(", ")}</p></div><span className="status-pill status-pending">{deliveryConsignmentStatusLabel(item.status)}</span></div><div className="payment-meta-grid"><div><span className="small-label">Weight</span><strong>{item.totalWeightKg.toFixed(2)} kg</strong></div><div><span className="small-label">Dockets</span><strong>{item.docketIds.length}</strong></div><div><span className="small-label">Warehouse</span><strong>{warehouseById.get(item.warehouseId)?.name || item.warehouseId}</strong></div></div></article>)}</div>
@@ -1707,7 +1707,8 @@ export function DeliveryJobsView({
   initialTab = "current",
   showInternalTabs = true,
   onUploadProof,
-  onUpdateTask
+  onUpdateTask,
+  onCreatePayment
 }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
@@ -1729,12 +1730,14 @@ export function DeliveryJobsView({
     cashProofName?: string;
     lastActionAt?: string;
   }) => Promise<void>;
+  onCreatePayment: (body: { side: "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; referenceNumber: string; proofName?: string; verificationStatus: "Submitted"; verificationNote?: string }) => Promise<void | boolean>;
 }) {
   const myTasks = snapshot.deliveryTasks.filter((item) => isUserAssignedToDelivery(item.assignedTo, currentUser));
   const [drafts, setDrafts] = useState<Record<string, { routeHint: string; weightProofName: string; cashProofName: string; cashHandoverMarked: boolean; status: DeliveryTask["status"]; routeStops: DeliveryTask["routeStops"] }>>({});
   const [currentPosition, setCurrentPosition] = useState<{ latitude: number; longitude: number } | null>(null);
   const [deliveryTab, setDeliveryTab] = useState<"current" | "new">(initialTab);
   const [startedStops, setStartedStops] = useState<Record<string, boolean>>({});
+  const [collectionDrafts, setCollectionDrafts] = useState<Record<string, { mode: PaymentMode; amount: string; reference: string; proofName: string; denominations: Record<string, string> }>>({});
   const supplierById = new Map(snapshot.counterparties.filter((item) => item.type === "Supplier").map((item) => [item.id, item]));
   const customerById = new Map(snapshot.counterparties.filter((item) => item.type === "Shop").map((item) => [item.id, item]));
   const warehouseById = new Map(snapshot.warehouses.map((item) => [item.id, item]));
@@ -1821,6 +1824,16 @@ export function DeliveryJobsView({
       status: task.status,
       routeStops: task.routeStops || []
     };
+  }
+
+  function collectionDraft(taskId: string, orderId: string, expectedAmount: number) {
+    const key = `${taskId}:${orderId}`;
+    return collectionDrafts[key] || { mode: "UPI" as PaymentMode, amount: expectedAmount.toFixed(2), reference: "", proofName: "", denominations: { "500": "", "200": "", "100": "", "50": "", "20": "", "10": "", coins: "" } };
+  }
+
+  function updateCollectionDraft(taskId: string, orderId: string, updates: Partial<ReturnType<typeof collectionDraft>>) {
+    const key = `${taskId}:${orderId}`;
+    setCollectionDrafts((current) => ({ ...current, [key]: { ...collectionDraft(taskId, orderId, 0), ...current[key], ...updates } }));
   }
 
   function updateStopDraft(taskId: string, task: DeliveryTask, orderId: string, updates: Partial<DeliveryTask["routeStops"][number]>) {
@@ -2039,7 +2052,7 @@ export function DeliveryJobsView({
             <button className="primary-button" type="button" disabled={itemChecks.length > 0 && checkedItems.some((value) => !value)} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { checked: true })}>Checked</button>
           </div>
         </article> : null}
-        {!allPicked && nextStop && nextStop.checked && nextStop.paymentRequired && nextStop.paymentMode === "Cash" && !nextStop.paid ? <article className="list-card top-gap">
+        {!allPicked && task.side !== "Sales" && nextStop && nextStop.checked && nextStop.paymentRequired && nextStop.paymentMode === "Cash" && !nextStop.paid ? <article className="list-card top-gap">
           <strong>Cash payment</strong>
           <p>{liveStopLabel(nextStop)} | {nextStop.orderId}</p>
           <div className="payment-meta-grid">
@@ -2080,15 +2093,56 @@ export function DeliveryJobsView({
             }}>Mark paid</button>
           </div>
         </article> : null}
-        {!allPicked && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
-          <strong>{task.side === "Sales" ? "Complete handover" : "Complete pickup"}</strong>
+        {!allPicked && task.side === "Sales" && nextStop && nextStop.checked && !nextStop.delivered ? <article className="list-card top-gap">
+          <strong>Delivery proof</strong>
+          <p>Mark goods delivered first. Collection opens automatically after delivery.</p>
+          <div className="form-grid top-gap">
+            <label className="wide-field">Delivery photo<input type="file" accept="image/*" onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const uploaded = await onUploadProof(file);
+              if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) updateStopDraft(task.id, task, nextStop.orderId, { deliveryProofName: String((uploaded as { fileName: string }).fileName) });
+            }} /></label>
+          </div>
+          <div className="payment-card-actions top-gap"><button className="primary-button" type="button" disabled={!nextStop.deliveryProofName} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { delivered: true })}>Delivered - open collection</button></div>
+        </article> : null}
+        {!allPicked && task.side === "Sales" && nextStop && nextStop.delivered && nextStop.collectionStatus !== "Collected" && nextStop.collectionStatus !== "Later" ? (() => {
+          const customer = customerById.get(nextStop.supplierId || "");
+          const expectedAmount = Math.max(0, nextStop.amountToPay || 0);
+          const draftCollection = collectionDraft(task.id, nextStop.orderId, expectedAmount);
+          const cashTotal = Object.entries(draftCollection.denominations).reduce((sum, [denomination, count]) => sum + (Number(denomination === "coins" ? 1 : denomination) * Number(count || 0)), 0);
+          const amount = draftCollection.mode === "Cash" ? cashTotal : Number(draftCollection.amount || 0);
+          const tolerance = customer?.collectionTolerance || 0;
+          const canFinish = amount > 0 && (customer?.allowPartialCollection || Math.abs(amount - expectedAmount) <= tolerance) && (draftCollection.mode !== "UPI" || Boolean(draftCollection.proofName));
+          return <article className="list-card top-gap">
+            <strong>Collection - {nextStop.supplierName}</strong>
+            <p>Due {expectedAmount.toFixed(2)}. Select collection now or, only for allowed retailers, collection later.</p>
+            <div className="payment-card-actions top-gap">
+              {customer?.allowLaterCollection ? <button className="ghost-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { collectionStatus: "Later", picked: true })}>Collect later</button> : null}
+              <span className="small-label">{customer?.allowPartialCollection ? "Partial collection allowed" : `Full collection required (tolerance ${tolerance.toFixed(2)})`}</span>
+            </div>
+            <div className="form-grid top-gap">
+              <label>Mode<select value={draftCollection.mode} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { mode: e.target.value as PaymentMode })}><option>UPI</option><option>Cash</option>{customer?.allowChequeCollection ? <option>Cheque</option> : null}</select></label>
+              {draftCollection.mode !== "Cash" ? <label>Amount<input type="number" min="0" step="0.01" value={draftCollection.amount} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { amount: e.target.value })} /></label> : <div><span className="small-label">Cash total</span><strong>{cashTotal.toFixed(2)}</strong></div>}
+              {draftCollection.mode === "UPI" ? <label>UPI screenshot<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) updateCollectionDraft(task.id, nextStop.orderId, { proofName: String((uploaded as { fileName: string }).fileName) }); }} /></label> : null}
+              {draftCollection.mode !== "Cash" ? <label>Reference / cheque no.<input value={draftCollection.reference} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { reference: e.target.value })} /></label> : null}
+              {draftCollection.mode === "Cash" ? <div className="wide-field form-grid">{["500", "200", "100", "50", "20", "10", "coins"].map((denomination) => <label key={denomination}>{denomination === "coins" ? "Coins value" : `Rs ${denomination} notes`}<input type="number" min="0" value={draftCollection.denominations[denomination] || ""} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { denominations: { ...draftCollection.denominations, [denomination]: e.target.value } })} /></label>)}</div> : null}
+            </div>
+            <div className="payment-card-actions top-gap"><button className="primary-button" type="button" disabled={!canFinish} onClick={async () => {
+              await onCreatePayment({ side: "Sales", linkedOrderId: nextStop.orderId, amount, mode: draftCollection.mode, referenceNumber: draftCollection.reference || `${draftCollection.mode}-${nextStop.orderId}`, proofName: draftCollection.proofName || undefined, verificationStatus: "Submitted", verificationNote: `Collected by delivery agent from ${nextStop.supplierName}.` });
+              updateStopDraft(task.id, task, nextStop.orderId, { collectionStatus: "Collected", collectionMode: draftCollection.mode, collectionAmount: amount, collectionReference: draftCollection.reference, collectionProofName: draftCollection.proofName, cashDenominations: Object.fromEntries(Object.entries(draftCollection.denominations).map(([key, value]) => [key, Number(value || 0)])), paid: true, picked: true });
+            }}>Save collection and next delivery</button></div>
+          </article>;
+        })() : null}
+        {!allPicked && task.side !== "Sales" && nextStop && nextStop.checked && (!nextStop.paymentRequired || nextStop.paymentMode !== "Cash" || nextStop.paid) ? <article className="list-card top-gap">
+          <strong>Complete pickup</strong>
           <p>{liveStopLabel(nextStop)} | {nextStop.orderId}</p>
           <div className="payment-meta-grid">
             <div><span className="small-label">Items</span><strong>{nextStop.productSummary}</strong></div>
             <div><span className="small-label">Payment</span><strong>{nextStop.paymentRequired ? (nextStop.paymentMode === "Cash" ? "Cash paid" : nextStop.paymentReference || "Reference payment") : "No payment"}</strong></div>
           </div>
           <div className="payment-card-actions top-gap">
-            <button className="primary-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>{task.side === "Sales" ? "Goods handed over" : "Next"}</button>
+            <button className="primary-button" type="button" onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { picked: true })}>Next</button>
           </div>
         </article> : null}
         {allPicked ? <article className="list-card top-gap">

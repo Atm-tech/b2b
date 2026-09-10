@@ -128,6 +128,11 @@ export type Counterparty = {
   latitude?: number;
   longitude?: number;
   locationLabel?: string;
+  /** Collection controls are assigned by admin per retailer. */
+  allowLaterCollection?: boolean;
+  allowPartialCollection?: boolean;
+  allowChequeCollection?: boolean;
+  collectionTolerance?: number;
   createdBy: string;
   createdAt: string;
 };
@@ -514,6 +519,14 @@ export type DeliveryRouteStop = {
   checked: boolean;
   paid: boolean;
   picked: boolean;
+  delivered?: boolean;
+  deliveryProofName?: string;
+  collectionStatus?: "Pending" | "Later" | "Collected";
+  collectionMode?: PaymentMode;
+  collectionAmount?: number;
+  collectionReference?: string;
+  collectionProofName?: string;
+  cashDenominations?: Record<string, number>;
 };
 
 export type DeliveryTask = {

@@ -275,6 +275,10 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS ifsc_code TEXT NOT NULL DEFAULT '';
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS channel_scope TEXT NOT NULL DEFAULT 'All';
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_later_collection BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_partial_collection BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_cheque_collection BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS collection_tolerance DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS tags_json JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -688,6 +692,10 @@ async function mapCounterparties(client?: DbClient): Promise<Counterparty[]> {
     latitude: row.latitude === null || row.latitude === undefined ? undefined : numberValue(row.latitude),
     longitude: row.longitude === null || row.longitude === undefined ? undefined : numberValue(row.longitude),
     locationLabel: row.location_label ? stringValue(row.location_label) : undefined,
+    allowLaterCollection: Boolean(row.allow_later_collection),
+    allowPartialCollection: Boolean(row.allow_partial_collection),
+    allowChequeCollection: Boolean(row.allow_cheque_collection),
+    collectionTolerance: Math.max(0, numberValue(row.collection_tolerance)),
     createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)
   }));
@@ -2057,9 +2065,9 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
   validateCounterpartyIdentity(name, gstNumber, bankName, bankAccountNumber, ifscCode);
   await ensureCounterpartyUnique(payload.type, name, gstNumber, bankAccountNumber);
   await query(
-    `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, delivery_address, delivery_city, contact_person, latitude, longitude, location_label, created_by, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), deliveryPayload.deliveryAddress?.trim() || payload.address.trim(), deliveryPayload.deliveryCity?.trim() || payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, currentUser.username, now()]
+    `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, delivery_address, delivery_city, contact_person, latitude, longitude, location_label, allow_later_collection, allow_partial_collection, allow_cheque_collection, collection_tolerance, created_by, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), deliveryPayload.deliveryAddress?.trim() || payload.address.trim(), deliveryPayload.deliveryCity?.trim() || payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), Math.max(0, Number(payload.collectionTolerance || 0)), currentUser.username, now()]
   );
   return getSnapshot();
 }
@@ -3629,7 +3637,10 @@ export async function createDeliveryConsignment(payload: {
       const routeStops: DeliveryTask["routeStops"] = linkedOrderIds.map((orderId) => {
         const item = grouped.get(orderId)!;
         const pendingAmount = pendingByOrderId.get(orderId) || 0;
-        const paymentRequired = pendingAmount > 0 && item.paymentMode === "Cash" && item.cashTiming === "At Delivery";
+        // The delivery person is also the collection agent. Every unpaid retail
+        // stop enters collection after proof of delivery; the retailer's
+        // privilege flags decide whether Later / Partial / Cheque are offered.
+        const paymentRequired = pendingAmount > 0;
         return {
           orderId,
           supplierId: item.shopId,
@@ -3647,7 +3658,9 @@ export async function createDeliveryConsignment(payload: {
           reached: false,
           checked: false,
           paid: pendingAmount <= 0,
-          picked: false
+          picked: false,
+          delivered: false,
+          collectionStatus: pendingAmount <= 0 ? "Collected" : "Pending"
         };
       });
       await query(
@@ -3836,6 +3849,10 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   deliveryAddress?: string;
   deliveryCity?: string;
   contactPerson: string;
+  allowLaterCollection?: boolean;
+  allowPartialCollection?: boolean;
+  allowChequeCollection?: boolean;
+  collectionTolerance?: number;
 }) {
   await ready;
   const existing = await one<Record<string, unknown>>("SELECT * FROM counterparties WHERE id = $1", [counterpartyId]);
@@ -3849,9 +3866,10 @@ export async function updateCounterparty(counterpartyId: string, payload: {
   await ensureCounterpartyUnique(stringValue(existing.type) as CounterpartyType, name, gstNumber, bankAccountNumber, counterpartyId);
     await query(
       `UPDATE counterparties
-       SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, delivery_address = $9, delivery_city = $10, contact_person = $11
-       WHERE id = $12`,
-      [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.deliveryAddress?.trim() || "", payload.deliveryCity?.trim() || "", payload.contactPerson.trim(), counterpartyId]
+       SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, delivery_address = $9, delivery_city = $10, contact_person = $11,
+           allow_later_collection = $12, allow_partial_collection = $13, allow_cheque_collection = $14, collection_tolerance = $15
+       WHERE id = $16`,
+      [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.deliveryAddress?.trim() || "", payload.deliveryCity?.trim() || "", payload.contactPerson.trim(), Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), Math.max(0, Number(payload.collectionTolerance || 0)), counterpartyId]
     );
   return getSnapshot();
 }
