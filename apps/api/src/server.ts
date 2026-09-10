@@ -751,6 +751,23 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
   return updated;
 }));
 
+// The WhatsApp control owner can onboard the operational team without needing
+// access to the wider Admin > Users workspace.  These accounts remain normal
+// B CONNECT users and appear in the same audited user directory.
+app.post("/whatsapp/staff-users", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  const roles = Array.isArray(req.body?.roles) ? req.body.roles.map((item: unknown) => String(item) as UserRole) : [];
+  return createUser({
+    username: requiredString(req.body?.username, "Username"),
+    fullName: requiredString(req.body?.fullName, "Full name"),
+    mobileNumber: requiredString(req.body?.mobileNumber, "WhatsApp number"),
+    role: roles[0] || (requiredString(req.body?.role, "Role") as UserRole),
+    roles,
+    warehouseIds: Array.isArray(req.body?.warehouseIds) ? req.body.warehouseIds.map((item: unknown) => String(item)) : [],
+    password: optionalString(req.body?.password)
+  });
+}));
+
 app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async () => {
   await requireRole(_req, ["Admin"]);
   return clearSalesOperationalData();

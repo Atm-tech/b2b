@@ -1635,8 +1635,9 @@ function App() {
             onSubmit={(body) => post("/sales-returns", body, "Sales return saved.")}
           /> : null}
           {activeView === "WhatsApp" ? (hasWhatsAppPilotAccess
-            ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} dedicatedWorkspace={isWhatsAppWorkspaceUser} />
+            ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} onSnapshot={setSnapshot} dedicatedWorkspace={isWhatsAppWorkspaceUser} workspace="operations" />
             : <WhatsAppComingSoon />) : null}
+          {activeView === "Marketing" ? <WhatsAppRetailerHub snapshot={snapshot} currentUser={currentUser} sessionToken={sessionToken} onMessage={setMessage} onError={setError} onSnapshot={setSnapshot} workspace="marketing" /> : null}
           {activeView === "Payments" ? (
             isAdminUser ? (
               <Panel title="Payment Details" eyebrow="Admin view"><DataTable headers={["Payment","Side","Order","Mode","Reference","Status"]} rows={snapshot.payments.map((p) => [p.id, p.side, p.linkedOrderId, p.mode, p.referenceNumber || "-", p.verificationStatus])} /></Panel>

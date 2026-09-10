@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
-import type { AppSnapshot, AppUser, PaymentMode } from "@aapoorti-b2b/domain";
+import type { AppSnapshot, AppUser, PaymentMode, UserRole } from "@aapoorti-b2b/domain";
 import { api, formatDateTimeIst } from "../../app/shared";
 import { SidebarVectorIcon } from "../../components/navigation";
 import { DataTable, Panel, TwoCol } from "../../components/ui";
 
-type WhatsAppAdminSection = "Home" | "Orders" | "Retailers" | "Catalogue" | "Offers" | "Broadcast" | "Chat" | "Service" | "Insights";
+type WhatsAppAdminSection = "Home" | "Team" | "Orders" | "Retailers" | "Catalogue" | "Offers" | "Broadcast" | "Chat" | "Service" | "Insights";
+type WhatsAppWorkspace = "operations" | "marketing";
 
-const whatsappAdminSections: Array<{ key: WhatsAppAdminSection; label: string; view: "Overview" | "SalesOrders" | "Parties" | "Products" | "WhatsApp" }> = [
+const operationsSections: Array<{ key: WhatsAppAdminSection; label: string; view: "Overview" | "SalesOrders" | "Parties" | "Products" | "WhatsApp" }> = [
   { key: "Home", label: "Home", view: "Overview" },
+  { key: "Team", label: "Team", view: "Parties" },
   { key: "Orders", label: "Orders", view: "SalesOrders" },
   { key: "Retailers", label: "Retailers", view: "Parties" },
   { key: "Catalogue", label: "Catalogue", view: "Products" },
+  { key: "Chat", label: "Chats", view: "WhatsApp" },
+  { key: "Service", label: "Service", view: "WhatsApp" }
+];
+
+const marketingSections: Array<{ key: WhatsAppAdminSection; label: string; view: "Overview" | "SalesOrders" | "Parties" | "Products" | "WhatsApp" }> = [
   { key: "Offers", label: "Offers", view: "WhatsApp" },
   { key: "Broadcast", label: "Broadcast", view: "WhatsApp" },
-  { key: "Chat", label: "Chats", view: "WhatsApp" },
-  { key: "Service", label: "Service", view: "WhatsApp" },
   { key: "Insights", label: "Insights", view: "Overview" }
 ];
 
@@ -274,13 +279,15 @@ function RegistrationReviewCard({ registration, salespeople, snapshot, busy, onA
   </article>;
 }
 
-export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMessage, onError, dedicatedWorkspace = false }: {
+export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMessage, onError, onSnapshot, dedicatedWorkspace = false, workspace = "operations" }: {
   snapshot: AppSnapshot;
   currentUser: AppUser;
   sessionToken: string;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
+  onSnapshot: (snapshot: AppSnapshot) => void;
   dedicatedWorkspace?: boolean;
+  workspace?: WhatsAppWorkspace;
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [busy, setBusy] = useState(false);
@@ -339,7 +346,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [wishlistProducts, setWishlistProducts] = useState<Record<string, string>>({});
   const [retailerTagDrafts, setRetailerTagDrafts] = useState<Record<string, string>>({});
   const [broadcastReport, setBroadcastReport] = useState("");
-  const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>("Home");
+  const [staffForm, setStaffForm] = useState(() => ({ username: "", fullName: "", mobileNumber: "", role: "Sales" as UserRole, warehouseId: pilotWarehouseId(snapshot), password: "1234" }));
+  const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>(workspace === "marketing" ? "Offers" : "Home");
+  const isMarketingWorkspace = workspace === "marketing";
+  const workspaceSections = isMarketingWorkspace ? marketingSections : operationsSections;
+
+  useEffect(() => {
+    setActiveSection(isMarketingWorkspace ? "Offers" : "Home");
+  }, [isMarketingWorkspace]);
 
   const headers = { authorization: `Bearer ${sessionToken}` };
   async function refresh() {
@@ -543,6 +557,29 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
 
+  async function createWhatsAppStaff(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); onError("");
+    try {
+      const { data } = await api.post<AppSnapshot>("/whatsapp/staff-users", {
+        username: staffForm.username,
+        fullName: staffForm.fullName,
+        mobileNumber: staffForm.mobileNumber,
+        role: staffForm.role,
+        roles: [staffForm.role],
+        warehouseIds: staffForm.warehouseId ? [staffForm.warehouseId] : [],
+        password: staffForm.password
+      }, { headers });
+      onSnapshot(data);
+      setStaffForm({ username: "", fullName: "", mobileNumber: "", role: "Sales", warehouseId: pilotWarehouseId(data), password: "1234" });
+      onMessage("Operational WhatsApp user created.");
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendBroadcast(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!window.confirm(`Send this WhatsApp message to ${broadcastRetailerIds.length} selected retailer${broadcastRetailerIds.length === 1 ? "" : "s"}?`)) return;
@@ -645,6 +682,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
   const pendingWishlists = (dashboard?.wishlists || []).filter((item) => item.status === "Pending");
   const pendingRegistrations = (dashboard?.registrations || []).filter((item) => item.status === "Pending");
+  const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
+  const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
   const openTickets = (dashboard?.serviceTickets || []).filter((item) => item.status === "Open" && item.kind !== "Live Chat");
   const openServiceTickets = openTickets;
   const filteredChats = liveChat.tickets.filter((ticket) => !chatSearch.trim()
@@ -662,9 +701,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     ? liveChat.unreadTotal
     : (dashboard?.serviceTickets || []).filter((item) => item.kind === "Live Chat" && item.status === "Open")
       .reduce((total, item) => total + Number(item.unread_staff_count || 0), 0);
-  const availableSections = whatsappAdmin || dedicatedWorkspace
-    ? whatsappAdminSections
-    : whatsappAdminSections.filter((section) => section.key === "Home" || section.key === "Orders" || section.key === "Chat" || section.key === "Service");
+  const availableSections = isMarketingWorkspace
+    ? (whatsappAdmin ? workspaceSections : [])
+    : (whatsappAdmin || dedicatedWorkspace
+      ? workspaceSections
+      : workspaceSections.filter((section) => section.key === "Home" || section.key === "Orders" || section.key === "Chat" || section.key === "Service"));
   const visibleCatalogProducts = useMemo(() => {
     const query = catalogSearch.trim().toLowerCase().replace(/\s+/g, "");
     const products = dashboard?.catalogProducts || [];
@@ -672,11 +713,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     return products.filter((product) => [product.name, product.sku, product.brand, product.size]
       .some((value) => value.toLowerCase().replace(/\s+/g, "").includes(query)));
   }, [catalogSearch, dashboard?.catalogProducts]);
-  return <div className={`wa-admin-workspace${dedicatedWorkspace ? " is-dedicated" : ""}`}>
+  return <div className={`wa-admin-workspace${dedicatedWorkspace ? " is-dedicated" : ""}${isMarketingWorkspace ? " is-marketing" : ""}`}>
     {!desktopAlertsEnabled && typeof Notification !== "undefined" ? <button className="ghost-button wa-alert-enable" type="button" onClick={() => void enableDesktopAlerts()}>Enable chat alerts</button> : null}
     {chatAlert ? <button className="wa-chat-alert" type="button" onClick={() => { setActiveSection("Chat"); setChatAlert(null); }}><strong>New retailer message — {chatAlert.retailer}</strong><span>{chatAlert.preview}</span><em>Open chat</em></button> : null}
     <header className="wa-admin-head">
-      <div><span className="eyebrow">Retailer commerce</span><h1>{activeSection === "Home" ? "Good to see you" : activeSection}</h1><p>{activeSection === "Home" ? "Everything requiring your attention, in one place." : "WhatsApp Wholesale control centre"}</p></div>
+      <div><span className="eyebrow">{isMarketingWorkspace ? "Retailer marketing" : "Retailer commerce"}</span><h1>{activeSection === "Home" ? "Good to see you" : activeSection}</h1><p>{activeSection === "Home" ? "Everything requiring your attention, in one place." : isMarketingWorkspace ? "Campaigns, offers and performance insights" : "WhatsApp operational control centre"}</p></div>
       <button className="wa-sync-button" type="button" disabled={busy} onClick={() => void refresh()} aria-label="Refresh WhatsApp data"><span aria-hidden="true">↻</span> Refresh</button>
     </header>
 
@@ -704,6 +745,17 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       </section>
     </> : null}
 
+    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
+      <p className="helper-text wide-field">Create the B CONNECT user and record the WhatsApp number from one control point. User will receive only the modules assigned by role.</p>
+      <label>Name<input required value={staffForm.fullName} onChange={(event) => setStaffForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Staff full name" /></label>
+      <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
+      <label>WhatsApp number<input required value={staffForm.mobileNumber} onChange={(event) => setStaffForm((current) => ({ ...current, mobileNumber: event.target.value }))} placeholder="919876543210" /></label>
+      <label>Operational role<select value={staffForm.role} onChange={(event) => setStaffForm((current) => ({ ...current, role: event.target.value as UserRole }))}>{operationalRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+      <label>Warehouse<select value={staffForm.warehouseId} onChange={(event) => setStaffForm((current) => ({ ...current, warehouseId: event.target.value }))}><option value="">No warehouse scope</option>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
+      <label>Temporary password<input required value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} /></label>
+      <button className="primary-button wide-field" disabled={busy}>Create operational user</button>
+    </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /> : null}
+
     {whatsappAdmin && activeSection === "Retailers" ? <>
     <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
       {pendingRegistrations.length ? pendingRegistrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
@@ -723,7 +775,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     <Panel title="Audience & collection privileges" eyebrow="Marketing, tags and retailer collection controls"><div className="wa-preference-grid">{mappedRetailers.map((item) => <article key={item.counterpartyId}><div><strong>{item.retailerName}</strong><small>{item.phoneE164} · {item.salesmanName}</small></div><label>Tags<input value={retailerTagDrafts[item.counterpartyId] ?? item.tags.join(", ")} onChange={(event) => setRetailerTagDrafts((current) => ({ ...current, [item.counterpartyId]: event.target.value }))} placeholder="route-a, premium, kirana" /></label><label className="checkbox-line"><input type="checkbox" checked={item.marketingOptIn} onChange={(event) => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: event.target.checked, tags: (retailerTagDrafts[item.counterpartyId] ?? item.tags.join(",")).split(",").map((tag) => tag.trim()).filter(Boolean) }, "Retailer messaging preference updated.")} />Marketing active</label><label className="checkbox-line"><input type="checkbox" checked={item.allowLaterCollection} disabled={busy} onChange={(event) => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: item.marketingOptIn, tags: item.tags, allowLaterCollection: event.target.checked }, "Collection privilege updated.")} />Allow collect later</label><label className="checkbox-line"><input type="checkbox" checked={item.allowPartialCollection} disabled={busy} onChange={(event) => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: item.marketingOptIn, tags: item.tags, allowPartialCollection: event.target.checked }, "Collection privilege updated.")} />Allow partial collection</label><label className="checkbox-line"><input type="checkbox" checked={item.allowChequeCollection} disabled={busy} onChange={(event) => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: item.marketingOptIn, tags: item.tags, allowChequeCollection: event.target.checked }, "Collection privilege updated.")} />Allow cheque collection</label><label>Collection tolerance<input type="number" min="0" step="0.01" defaultValue={item.collectionTolerance || 0} disabled={busy} onBlur={(event) => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: item.marketingOptIn, tags: item.tags, collectionTolerance: Number(event.target.value || 0) }, "Collection tolerance updated.")} /></label><button className="ghost-button" type="button" disabled={busy} onClick={() => void submit(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}/preferences`, { marketingOptIn: item.marketingOptIn, tags: (retailerTagDrafts[item.counterpartyId] ?? item.tags.join(",")).split(",").map((tag) => tag.trim()).filter(Boolean) }, "Retailer tags saved.")}>Save tags</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => { if (!window.confirm(`${item.retailerName} ka WhatsApp mapping remove karein? Pending cart/proforma clean hoga aur same number self-register kar sakega.`)) return; setBusy(true); onError(""); void api.delete<Dashboard>(`/whatsapp/retailers/${encodeURIComponent(item.counterpartyId)}`, { headers }).then(({ data }) => { setDashboard(data); onMessage("Retailer mapping removed. This number can now self-register."); }).catch((error) => onError(errorMessage(error))).finally(() => setBusy(false)); }}>Remove mapping</button></article>)}</div></Panel>
     </> : null}
 
-    {whatsappAdmin && activeSection === "Offers" ? <TwoCol left={<Panel title="Private price rule" eyebrow="Retailer-specific rate, CD and TOD"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/price-rules", { ...rule, specialRate: Number(rule.specialRate), cdPercent: Number(rule.cdPercent), todPercent: Number(rule.todPercent), minimumQuantity: Number(rule.minimumQuantity), validUntil: new Date(rule.validUntil).toISOString() }, "Private rate saved."); }}>
+    {isMarketingWorkspace && whatsappAdmin && activeSection === "Offers" ? <TwoCol left={<Panel title="Private price rule" eyebrow="Retailer-specific rate, CD and TOD"><form className="form-grid" onSubmit={(event) => { event.preventDefault(); void submit("/whatsapp/price-rules", { ...rule, specialRate: Number(rule.specialRate), cdPercent: Number(rule.cdPercent), todPercent: Number(rule.todPercent), minimumQuantity: Number(rule.minimumQuantity), validUntil: new Date(rule.validUntil).toISOString() }, "Private rate saved."); }}>
       <label>Search retailer<input type="search" value={ruleRetailerSearch} onChange={(event) => setRuleRetailerSearch(event.target.value)} placeholder="Name, number or salesperson" /></label>
       <label>Retailer<select value={rule.counterpartyId} onChange={(event) => setRule((current) => ({ ...current, counterpartyId: event.target.value }))}><option value="">Select mapped retailer ({filteredRuleRetailers.length})</option>{rule.counterpartyId && !filteredRuleRetailers.some((item) => item.counterpartyId === rule.counterpartyId) ? <option value={rule.counterpartyId}>{mappedRetailers.find((item) => item.counterpartyId === rule.counterpartyId)?.retailerName || "Selected retailer"}</option> : null}{filteredRuleRetailers.map((item) => <option key={item.counterpartyId} value={item.counterpartyId}>{item.retailerName} · {item.phoneE164}</option>)}</select></label>
       <label>Department<select value={ruleDepartment} onChange={(event) => setRuleDepartment(event.target.value)}><option value="">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
@@ -753,7 +805,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <button className="primary-button" disabled={busy}>Send offer</button>
     </form></Panel>} /> : null}
 
-    {whatsappAdmin && activeSection === "Broadcast" ? <TwoCol left={<Panel title="Broadcast announcement" eyebrow="Festival, feature and service updates"><form className="form-grid" onSubmit={sendBroadcast}>
+    {isMarketingWorkspace && whatsappAdmin && activeSection === "Broadcast" ? <TwoCol left={<Panel title="Broadcast announcement" eyebrow="Festival, feature and service updates"><form className="form-grid" onSubmit={sendBroadcast}>
       <p className="wa-auto-welcome-note wide-field"><strong>First welcome is automatic.</strong><span>Retailer ki first mapping ya registration approval ke baad Hinglish welcome aur ordering guide automatically bheja jayega.</span></p>
       <label className="wide-field">Campaign title<input value={broadcastTitle} onChange={(event) => setBroadcastTitle(event.target.value)} placeholder="Diwali offer, route update, new feature" /></label>
       <label className="wide-field">Approved Meta template name (outside 24-hour window)<input value={broadcastTemplate} onChange={(event) => setBroadcastTemplate(event.target.value.trim().toLowerCase())} placeholder="Leave blank for an active-chat text message" /></label>
@@ -896,7 +948,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       {openTickets.length ? <div className="wa-ticket-list">{openTickets.map((ticket) => { const ticketId = String(ticket.id || ""); return <article className="panel wa-service-ticket" key={ticketId}><div className="section-heading"><div><span className="eyebrow">{String(ticket.kind || "Support")} · {formatDateTimeIst(String(ticket.updated_at || ticket.created_at || ""))}</span><h3>{String(ticket.retailer_name || "Retailer")}</h3></div><span className="status-pill pending">{String(ticket.priority || "Normal")}</span></div><p className="helper-text">{ticketId} · {String(ticket.phone_e164 || "")} · {String(ticket.salesman_name || "")}{ticket.linked_order_id ? ` · ${String(ticket.linked_order_id)}` : ""}</p><pre className="wa-ticket-thread">{String(ticket.details || "No details yet")}</pre>{ticket.media_id ? <p className="field-hint">WhatsApp proof attached ({String(ticket.media_type || "media")})</p> : null}<form className="wa-ticket-reply" onSubmit={(event) => { event.preventDefault(); void submit(`/whatsapp/service-tickets/${encodeURIComponent(ticketId)}/reply`, { message: ticketReplies[ticketId], close: false }, "Reply sent to retailer."); }}><input value={ticketReplies[ticketId] || ""} onChange={(event) => setTicketReplies((current) => ({ ...current, [ticketId]: event.target.value }))} placeholder="Reply from the app; retailer receives it on WhatsApp" /><button className="primary-button" disabled={busy || !ticketReplies[ticketId]?.trim()}>Send reply</button><button className="ghost-button" type="button" disabled={busy || !ticketReplies[ticketId]?.trim()} onClick={() => void submit(`/whatsapp/service-tickets/${encodeURIComponent(ticketId)}/reply`, { message: ticketReplies[ticketId], close: true }, "Reply sent and ticket resolved.")}>Send & resolve</button></form></article>; })}</div> : <div className="wa-empty-state"><span><SidebarVectorIcon view="WhatsApp" /></span><strong>Support inbox is clear</strong><p>Live chat, return, damage and voice-order requests will appear here.</p></div>}
     </section> : null}
 
-    {whatsappAdmin && activeSection === "Insights" ? <section className="stacked-sections">
+    {isMarketingWorkspace && whatsappAdmin && activeSection === "Insights" ? <section className="stacked-sections">
       <div className="wa-insight-grid">{[
         ["Conversations", dashboard?.analytics.conversations || 0], ["Inbound", dashboard?.analytics.inbound || 0], ["Outbound", dashboard?.analytics.outbound || 0], ["Delivered", dashboard?.analytics.delivered || 0], ["Read", dashboard?.analytics.read || 0], ["Failed", dashboard?.analytics.failed || 0], ["Completed orders", dashboard?.analytics.completedOrders || 0]
       ].map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{value}</strong><small>Last 30 days</small></article>)}</div>
