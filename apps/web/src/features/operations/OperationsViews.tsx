@@ -362,6 +362,8 @@ export function WarehouseOperationsViewV2({
   const [inboundDateOpen, setInboundDateOpen] = useState(false);
   const [inboundCustomFromDraft, setInboundCustomFromDraft] = useState(indiaDateKey());
   const [inboundCustomToDraft, setInboundCustomToDraft] = useState(indiaDateKey());
+  const [warehouseCommand, setWarehouseCommand] = useState("");
+  const [commandOrderId, setCommandOrderId] = useState("");
   const inboundDeliveryUsers = snapshot.users.filter(isInboundDeliveryUser);
   const outboundDeliveryUsers = snapshot.users.filter(isOutboundDeliveryUser);
   const defaultInboundDeliveryUsername = inboundDeliveryUsers[0]?.username || "in";
@@ -538,7 +540,7 @@ export function WarehouseOperationsViewV2({
         || Number(rightReceived) - Number(leftReceived)
         || new Date(left.task.createdAt).getTime() - new Date(right.task.createdAt).getTime();
     });
-  const directReceiveGroups = pendingReceiveGroups
+  const baseDirectReceiveGroups = pendingReceiveGroups
     .filter((group) => !groupNeedsPickupTask(group))
     .sort((left, right) => {
       const leftReceived = left.lines.some((line) => line.quantityReceived > 0);
@@ -580,9 +582,14 @@ export function WarehouseOperationsViewV2({
   const selfCollectionOutboundGroups = dispatchQueueGroups
     .filter((group) => group.lines[0].deliveryMode === "Self Collection")
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
-  const directOutboundGroups = dispatchQueueGroups
+  const baseDirectOutboundGroups = dispatchQueueGroups
     .filter((group) => group.lines[0].deliveryMode !== "Self Collection" && group.lines.every((line) => !docketBySalesOrderId.has(line.id)))
     .sort((left, right) => Math.min(...left.lines.map((line) => new Date(line.createdAt).getTime())) - Math.min(...right.lines.map((line) => new Date(line.createdAt).getTime())));
+  const directReceiveGroups = commandOrderId ? baseDirectReceiveGroups.filter((group) => group.id === commandOrderId) : baseDirectReceiveGroups;
+  const directOutboundGroups = commandOrderId ? baseDirectOutboundGroups.filter((group) => group.id === commandOrderId) : baseDirectOutboundGroups;
+  const commandCandidates = (activeTab === "in" ? baseDirectReceiveGroups : baseDirectOutboundGroups)
+    .filter((group) => warehouseCommand.trim().length >= 4 && group.id.toLowerCase().includes(warehouseCommand.trim().toLowerCase()))
+    .slice(0, 12);
   const completedDirectOutboundGroups = completedSalesGroups
     .filter((group) => salesGroupMatchesDate(group))
     .sort((left, right) => Math.max(...right.lines.map((line) => new Date(line.createdAt).getTime())) - Math.max(...left.lines.map((line) => new Date(line.createdAt).getTime())));
@@ -1300,6 +1307,38 @@ export function WarehouseOperationsViewV2({
 
   return (
     <section className="dashboard-grid warehouse-ops">
+      {canManageWarehouseChecks ? <Panel title="Warehouse command" eyebrow="Type IN or OUT, then the last 4 digits of PO / SO">
+        <form className="form-grid" onSubmit={(event) => {
+          event.preventDefault();
+          const command = warehouseCommand.trim().toLowerCase();
+          if (command === "in") {
+            setActiveTab("in"); setInboundStep("dealer"); setCommandOrderId(""); setWarehouseCommand(""); return;
+          }
+          if (command === "out") {
+            setActiveTab("out"); setOutboundStep("check"); setCommandOrderId(""); setWarehouseCommand(""); return;
+          }
+          if (command.length < 4) return;
+          if (commandCandidates.length === 1) {
+            const group = commandCandidates[0];
+            setCommandOrderId(group.id);
+            if (activeTab === "in") setExpandedReceive((current) => ({ ...current, [group.id]: true }));
+            else setExpandedSend((current) => ({ ...current, [group.id]: true }));
+            setWarehouseCommand("");
+          }
+        }}>
+          <label className="wide-field">Command / last 4 digits<input autoComplete="off" value={warehouseCommand} onChange={(event) => setWarehouseCommand(event.target.value)} placeholder="IN → 4825, or OUT → 4825" /></label>
+          <div className="payment-card-actions wide-field"><button className="primary-button" type="submit">Open</button>{commandOrderId ? <button className="ghost-button" type="button" onClick={() => setCommandOrderId("")}>Show all {activeTab === "in" ? "POs" : "SOs"}</button> : null}</div>
+        </form>
+        {warehouseCommand.trim().length >= 4 && commandCandidates.length !== 1 ? <div className="stack-list top-gap">{commandCandidates.length === 0 ? <p className="helper-text">No active {activeTab === "in" ? "PO" : "SO"} matches these digits.</p> : commandCandidates.map((group) => {
+          const first = group.lines[0];
+          return <button className="list-card warehouse-step-card" type="button" key={group.id} onClick={() => {
+            setCommandOrderId(group.id);
+            if (activeTab === "in") setExpandedReceive((current) => ({ ...current, [group.id]: true }));
+            else setExpandedSend((current) => ({ ...current, [group.id]: true }));
+            setWarehouseCommand("");
+          }}><strong>{group.id}</strong><p>{activeTab === "in" ? `${(first as PurchaseOrder).supplierName} · ${group.lines.length} product(s)` : `${(first as SalesOrder).shopName} · ${group.lines.length} product(s)`}</p></button>;
+        })}</div> : null}
+      </Panel> : null}
       {screen === "full" ? <Panel title={canManageWarehouseChecks ? "Warehouse" : "Delivery Manager"} eyebrow="Home / In / Out">
         <div className="segmented-tabs">
           <button className={activeTab === "home" ? "tab-button active" : "tab-button"} type="button" onClick={() => setActiveTab("home")}><LabelWithBadge label="Home" count={inboundTotalPendingCount + outboundTotalPendingCount} /></button>
