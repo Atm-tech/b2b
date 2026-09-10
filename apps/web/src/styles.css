@@ -773,6 +773,7 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-live-chat-shell {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   /* Leave room for the fixed app dock: each pane then owns a usable scroll area. */
   height: clamp(540px, calc(100dvh - 310px), 700px);
   min-height: 540px;
@@ -802,7 +803,7 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-chat-thread-meta { display: grid; justify-items: end; gap: 8px; color: #78908e; font-size: 0.7rem; }
 .wa-chat-thread-meta time { max-width: 72px; text-align: right; }
 .wa-chat-thread-meta b { display: grid; min-width: 22px; height: 22px; padding: 0 5px; place-items: center; border-radius: 20px; background: #07877f; color: #fff; }
-.wa-chat-conversation { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: #eef5f3; }
+.wa-chat-conversation { display: flex; min-width: 0; min-height: 0; height: 100%; flex-direction: column; overflow: hidden; background: #eef5f3; }
 .wa-chat-conversation-head { background: #fff; }
 .wa-chat-conversation-head > div:first-child { display: flex; align-items: center; gap: 11px; }
 .wa-chat-conversation-head strong,
