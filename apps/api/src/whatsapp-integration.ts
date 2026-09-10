@@ -2446,7 +2446,9 @@ export async function updateWhatsAppLiveChat(ticketId: string, input: { status?:
     await executeDatabaseQuery(
       `UPDATE whatsapp_service_tickets
        SET status=$2::text,resolved_at=CASE WHEN $2::text='Resolved' THEN NOW() ELSE NULL END,
-           closed_by=CASE WHEN $2::text='Resolved' THEN $3::text ELSE NULL END,updated_at=NOW()
+           closed_by=CASE WHEN $2::text='Resolved' THEN $3::text ELSE NULL END,
+           last_message_at=CASE WHEN $2::text='Open' THEN NOW() ELSE last_message_at END,
+           updated_at=NOW()
        WHERE id=$1`, [ticketId, status, currentUser.fullName]
     );
     if (status === "Resolved" && text(ticket.phone_e164)) {
