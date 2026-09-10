@@ -1387,6 +1387,65 @@ async function sendDraftChangeProductPicker(profile: RetailerProfile, draftId: s
   }, "Draft", draftId);
 }
 
+async function sendDraftRemoveProductPicker(profile: RetailerProfile, draftId: string) {
+  const loaded = await loadDraft(draftId);
+  if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
+  await sendGraphMessage(profile.phoneE164, {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "Remove product" },
+      body: { text: "Proforma se hatane wala product select karein. Baaki items ki updated proforma turant bhej di jayegi." },
+      action: {
+        button: "Select product",
+        sections: [{
+          title: "Invoice products",
+          rows: loaded.lines.slice(0, 10).map((line) => ({
+            id: `wa-remove-product:${encodeURIComponent(draftId)}:${encodeURIComponent(text(line.product_sku))}`,
+            title: compact(text(line.product_name), 24),
+            description: compact(`Qty ${numberValue(line.approved_quantity)} | Rate Rs.${numberValue(line.rate).toFixed(2)}`, 72)
+          }))
+        }]
+      }
+    }
+  }, "Draft", draftId);
+}
+
+async function sendDraftEditOptions(profile: RetailerProfile, draftId: string) {
+  const loaded = await loadDraft(draftId);
+  if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
+  await sendGraphMessage(profile.phoneE164, {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "Edit proforma" },
+      body: { text: "Quantity change karein, ek product remove karein, ya poori temporary proforma clear karein." },
+      action: {
+        button: "Choose action",
+        sections: [{
+          title: "Cart actions",
+          rows: [
+            { id: `wa-edit:quantity:${encodeURIComponent(draftId)}`, title: "Change quantity", description: "Select item and enter required quantity" },
+            { id: `wa-edit:remove:${encodeURIComponent(draftId)}`, title: "Remove one product", description: "Keep remaining products in the proforma" },
+            { id: `wa-edit:clear:${encodeURIComponent(draftId)}`, title: "Clear complete cart", description: "Cancel this temporary proforma" }
+          ]
+        }]
+      }
+    }
+  }, "Draft", draftId);
+}
+
+async function clearRetailerProforma(profile: RetailerProfile, draftId: string) {
+  const loaded = await loadDraft(draftId);
+  if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
+  if (["Processing", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be cleared.");
+  await executeDatabaseQuery(`DELETE FROM whatsapp_order_events WHERE draft_id=$1`, [draftId]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1`, [draftId]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_order_drafts WHERE id=$1`, [draftId]);
+  await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164=$1`, [profile.phoneE164]);
+  await sendText(profile.phoneE164, "Temporary proforma clear ho gayi. Naya order shuru karne ke liye product ka naam type karein, ya catalogue kholiye.", "Draft", draftId);
+}
+
 async function finalizeDraft(draftId: string) {
   const claimed = await executeDatabaseQuery(
     `UPDATE whatsapp_order_drafts SET status = 'Processing', retailer_confirmed_at = NOW()
@@ -1703,8 +1762,23 @@ async function handleInboundMessage(message: JsonObject) {
     }
     if (buttonId.startsWith("wa-change:")) {
       const draftId = buttonId.slice("wa-change:".length);
-      await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Change Requested' WHERE id = $1 AND counterparty_id = $2`, [draftId, profile.counterpartyId]);
-      await sendDraftChangeProductPicker(profile, draftId);
+      await sendDraftEditOptions(profile, draftId);
+      return;
+    }
+    if (buttonId.startsWith("wa-edit:")) {
+      const match = buttonId.match(/^wa-edit:(quantity|remove|clear):(.+)$/);
+      if (!match) throw new Error("Invalid proforma edit action.");
+      const action = match[1];
+      const draftId = decodeURIComponent(match[2]);
+      const loaded = await loadDraft(draftId);
+      if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
+      if (action === "clear") {
+        await clearRetailerProforma(profile, draftId);
+        return;
+      }
+      await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Change Requested', confirmation_message_id=NULL WHERE id = $1 AND counterparty_id = $2`, [draftId, profile.counterpartyId]);
+      if (action === "quantity") await sendDraftChangeProductPicker(profile, draftId);
+      else await sendDraftRemoveProductPicker(profile, draftId);
       return;
     }
     if (buttonId.startsWith("wa-change-product:")) {
@@ -1723,6 +1797,30 @@ async function handleInboundMessage(message: JsonObject) {
         [profile.phoneE164, profile.counterpartyId, productSku, `AwaitingDraftChangeQuantity:${draftId}`, messageId]
       );
       await sendText(from, `${pricing.name}\nCurrent quantity: ${numberValue(line.approved_quantity)}\nMinimum order quantity: ${pricing.minimumQuantity}\n\nRequired quantity type karein. Rate change available nahi hai.`, "Draft", draftId);
+      return;
+    }
+    if (buttonId.startsWith("wa-remove-product:")) {
+      const match = buttonId.match(/^wa-remove-product:([^:]+):(.+)$/);
+      if (!match) throw new Error("Invalid product removal selection.");
+      const draftId = decodeURIComponent(match[1]);
+      const productSku = decodeURIComponent(match[2]);
+      const loaded = await loadDraft(draftId);
+      const line = loaded.lines.find((candidate) => text(candidate.product_sku) === productSku);
+      if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || !line) throw new Error("That product is not part of this proforma.");
+      if (["Processing", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be edited.");
+      if (loaded.lines.length === 1) {
+        await clearRetailerProforma(profile, draftId);
+        return;
+      }
+      await executeDatabaseQuery(`DELETE FROM whatsapp_order_draft_lines WHERE draft_id=$1 AND product_sku=$2`, [draftId, productSku]);
+      await executeDatabaseQuery(
+        `UPDATE whatsapp_order_drafts
+         SET status='Change Requested', note=CONCAT(note,CASE WHEN note='' THEN '' ELSE ' | ' END,$2::text),confirmation_message_id=NULL
+         WHERE id=$1`,
+        [draftId, `Retailer removed: ${text(line.product_name)}`]
+      );
+      await sendText(from, `${text(line.product_name)} proforma se remove ho gaya. Updated proforma neeche bhej di gayi hai.`, "Draft", draftId);
+      await sendDraftForRetailerApproval(draftId);
       return;
     }
     if (buttonId.startsWith("wa-offer:")) {
