@@ -738,6 +738,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const pendingWishlists = (dashboard?.wishlists || []).filter((item) => item.status === "Pending");
   const pendingRegistrations = (dashboard?.registrations || []).filter((item) => item.status === "Pending");
   const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
+  const deliveryOperationalRoles: UserRole[] = ["Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
   const openTickets = (dashboard?.serviceTickets || []).filter((item) => item.status === "Open" && item.kind !== "Live Chat");
   const openServiceTickets = openTickets;
@@ -805,8 +806,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Name<input required value={staffForm.fullName} onChange={(event) => setStaffForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Staff full name" /></label>
       <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
       <label>WhatsApp number<input required value={staffForm.mobileNumber} onChange={(event) => setStaffForm((current) => ({ ...current, mobileNumber: event.target.value }))} placeholder="919876543210" /></label>
-      <label>Operational role<select value={staffForm.role} onChange={(event) => setStaffForm((current) => ({ ...current, role: event.target.value as UserRole }))}>{operationalRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
-      <label className="checkbox-line"><input type="checkbox" checked={staffForm.alsoCollection} onChange={(event) => setStaffForm((current) => ({ ...current, alsoCollection: event.target.checked }))} />Delivery + Collection same person</label>
+      <label>Operational role<select value={staffForm.role} onChange={(event) => { const role = event.target.value as UserRole; setStaffForm((current) => ({ ...current, role, alsoCollection: deliveryOperationalRoles.includes(role) ? current.alsoCollection : false })); }}>{operationalRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+      {deliveryOperationalRoles.includes(staffForm.role) ? <label className="checkbox-line"><input type="checkbox" checked={staffForm.alsoCollection} onChange={(event) => setStaffForm((current) => ({ ...current, alsoCollection: event.target.checked }))} />Delivery + Collection same person</label> : null}
       <label>Warehouse<select value={staffForm.warehouseId} onChange={(event) => setStaffForm((current) => ({ ...current, warehouseId: event.target.value }))}><option value="">No warehouse scope</option>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
       <label>Temporary password<input required value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} /></label>
       <button className="primary-button wide-field" disabled={busy}>Create operational user</button>
