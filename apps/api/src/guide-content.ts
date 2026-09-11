@@ -227,10 +227,10 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Maal ki receipt check karo",
-        "screen": "Receipts",
+        "screen": "WhatsApp: IN / RECEIVE",
         "speech": "“Maal ki receipt check karo — saath mein practice karein.”",
         "narration": "रसीद जांच में पहले खरीद ऑर्डर और वेयरहाउस मिलाएं। सौ में से छियानवे यूनिट मिले तो छियानवे दर्ज करें। नुकसान, वजन और अंतर भी नोट करें।",
-        "body": "Purchase order aur warehouse match karo. Ordered aur actual received quantity gino; damage, weight aur variance bhi note karo. Sirf jitna maal mila utna enter karo.",
+        "body": "Apne registered WhatsApp se IN type karo. PO ke last digits verify karo, weight photo bhejo, phir RECEIVE <PO last6> <SKU> <qty> <gross weight kg> type karo. Sirf jitna maal mila utna record hota hai.",
         "example": "PO: 100 units · actual received: 96 units",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -259,10 +259,10 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Packing ke baad Ready",
-        "screen": "Delivery / Dockets",
+        "screen": "WhatsApp: OUT / READY / DCO",
         "speech": "“Packing ke baad Ready — saath mein practice karein.”",
         "narration": "सेल्स ऑर्डर के मुताबिक सही माल पैक करें। मात्रा और वेयरहाउस मिलाएं। पैकिंग पूरी होने पर डॉकिट रेडी करें। अभी डिलीवर्ड नहीं करना है।",
-        "body": "Sales order ke items, quantity aur warehouse match karke packing karo. Docket ready hone par assigned dispatch flow mein aage badhao.",
+        "body": "WhatsApp par OUT se order dekho. Packing/weight photo bhejo, READY <SO last6> type karke docket banao. Multiple ready orders ke liye DCO <SO last6,SO last6> type karo.",
         "example": "Docket: Pending Packing → packing checked",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -641,10 +641,10 @@ export const trainingGuides: TrainingGuide[] = [
     "steps": [
       {
         "title": "Assigned task kholo",
-        "screen": "Current Delivery / New Assignment",
+        "screen": "WhatsApp: READ",
         "speech": "“Assigned task kholo — saath mein practice karein.”",
         "narration": "अपना असाइन किया हुआ काम खोलें। खरीद पिकअप है या ग्राहक डिलीवरी, सही ऑर्डर और पता देखें।",
-        "body": "Apna assigned task padho. Purchase pickup ya sales delivery ka order, address aur person verify karo.",
+        "body": "Apne registered WhatsApp par READ type karo. Assigned DCO, task ke last 6 digits aur retailer stop number wahi reply mein milte hain.",
         "example": "Task aapko assigned hai",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -657,7 +657,7 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Pickup par maal gino",
-        "screen": "Current Delivery",
+        "screen": "WhatsApp: DELIVERED",
         "speech": "“Pickup par maal gino — saath mein practice karein.”",
         "narration": "पिकअप पर माल गिनें। दस की जगह नौ मिले तो नौ और कमी का नोट लिखें। बिना मिले दस दर्ज न करें।",
         "body": "Pickup par product aur quantity match karo. Kam ya damaged maal ho to note/proof ke saath manager ko batao.",
@@ -676,7 +676,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "Current Delivery",
         "speech": "“Handover aur proof — saath mein practice karein.”",
         "narration": "सही व्यक्ति को सामान सौंपें और प्रूफ रखें। सिर्फ चल पड़ने से डिलीवरी पूरी नहीं होती।",
-        "body": "Sahi recipient ko maal do; proof aur actual status record karo. Sirf nikalne se Delivered nahi hota.",
+        "body": "Retailer ko maal dene ke baad clear photo bhejo, phir DELIVERED <task last6> <stop no> type karo. Delivery ke baad system collection instruction bhejta hai.",
         "example": "Maal recipient tak nahi pahuncha",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -689,10 +689,10 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Cash ka sahi record",
-        "screen": "Current Delivery / Payment",
+        "screen": "WhatsApp: COLLECT",
         "speech": "“Cash ka sahi record — saath mein practice karein.”",
         "narration": "पेमेंट का काम मिला है तो जितना पैसा सच में लिया या दिया उतना लिखें। हजार बाकी था और छह सौ मिला तो छह सौ दर्ज करें।",
-        "body": "Collect Payment ya Deliver Payment assigned ho to actual money movement record karo. Proof/reference attach karo.",
+        "body": "Payment proof photo bhejo, phir COLLECT <task last6> <stop no> <amount> CASH|UPI|CHEQUE|LATER type karo. Later, partial aur cheque retailer privilege par depend karte hain.",
         "example": "₹1000 due · ₹600 actually received",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
