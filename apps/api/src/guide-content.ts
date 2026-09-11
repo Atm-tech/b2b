@@ -641,10 +641,10 @@ export const trainingGuides: TrainingGuide[] = [
     "steps": [
       {
         "title": "Assigned task kholo",
-        "screen": "WhatsApp: READ",
+        "screen": "WhatsApp: LIST",
         "speech": "“Assigned task kholo — saath mein practice karein.”",
         "narration": "अपना असाइन किया हुआ काम खोलें। खरीद पिकअप है या ग्राहक डिलीवरी, सही ऑर्डर और पता देखें।",
-        "body": "Apne registered WhatsApp par READ type karo. Assigned DCO, task ke last 6 digits aur retailer stop number wahi reply mein milte hain.",
+        "body": "Apne registered WhatsApp par LIST type karo. DCO select karo, phir retailer select karke address, contact aur bill amount dekho.",
         "example": "Task aapko assigned hai",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -657,7 +657,7 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Pickup par maal gino",
-        "screen": "WhatsApp: DELIVERED",
+        "screen": "WhatsApp: Done + photo",
         "speech": "“Pickup par maal gino — saath mein practice karein.”",
         "narration": "पिकअप पर माल गिनें। दस की जगह नौ मिले तो नौ और कमी का नोट लिखें। बिना मिले दस दर्ज न करें।",
         "body": "Pickup par product aur quantity match karo. Kam ya damaged maal ho to note/proof ke saath manager ko batao.",
@@ -676,7 +676,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "Current Delivery",
         "speech": "“Handover aur proof — saath mein practice karein.”",
         "narration": "सही व्यक्ति को सामान सौंपें और प्रूफ रखें। सिर्फ चल पड़ने से डिलीवरी पूरी नहीं होती।",
-        "body": "Retailer ko maal dene ke baad clear photo bhejo, phir DELIVERED <task last6> <stop no> type karo. Delivery ke baad system collection instruction bhejta hai.",
+        "body": "Retailer ko maal dene ke baad Done dabao aur parcel handover ki clear photo bhejo. Delivery ke baad collection buttons automatically aayenge.",
         "example": "Maal recipient tak nahi pahuncha",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -689,10 +689,10 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Cash ka sahi record",
-        "screen": "WhatsApp: COLLECT",
+        "screen": "WhatsApp: Collection buttons",
         "speech": "“Cash ka sahi record — saath mein practice karein.”",
         "narration": "पेमेंट का काम मिला है तो जितना पैसा सच में लिया या दिया उतना लिखें। हजार बाकी था और छह सौ मिला तो छह सौ दर्ज करें।",
-        "body": "Payment proof photo bhejo, phir COLLECT <task last6> <stop no> <amount> CASH|UPI|CHEQUE|LATER type karo. Later, partial aur cheque retailer privilege par depend karte hain.",
+        "body": "Collect now/Later aur Full/Partial buttons retailer privilege ke hisaab se aate hain. Cash mein denomination gino. UPI/cheque proof photo bhejo: system amount aur cheque payee read karke bill se milata hai. Mismatch par WhatsApp Admin alert hota hai.",
         "example": "₹1000 due · ₹600 actually received",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
