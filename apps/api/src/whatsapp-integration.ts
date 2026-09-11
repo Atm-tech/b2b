@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { prepareTrainingBroadcast, trainingBroadcastMessage, trainingLinkReply, trainingUrl } from "./training-links.js";
 import type { AppUser, DeliveryRouteStop, DeliveryTask, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aapoorti-b2b/domain";
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
-import { createDeliveryConsignment, createPayment, createReceiptCheck, createSalesCart, createSalesDockets, executeDatabaseQuery, getSnapshot, updateDeliveryTask } from "./db.js";
+import { createDeliveryConsignment, createPayment, createReceiptCheck, createSalesCart, createSalesDockets, executeDatabaseQuery, getSnapshot, updateDeliveryTask, updateSalesOrderGroup } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
 import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
@@ -1669,6 +1669,33 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const interactive = message.interactive as JsonObject | undefined;
   const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
   const action = text(reply?.id);
+  if (action.startsWith("wa-so:order:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
+    await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nPacked weight photo bhejein. Qty/product change ho to Change select karein.`, [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }, { id: `wa-so:change:${encodeURIComponent(cartId)}`, title: "Change" }], "WarehouseSO", cartId);
+    return true;
+  }
+  if (action.startsWith("wa-so:packed:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
+    if (!proof) { await sendText(from, "Pehle packed maal ke saath weight photo bhejein, phir Packed dabayein."); return true; }
+    await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
+    await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO ${shortId(cartId)} type karke ready SO bundle banayein.`, "WarehouseSO", cartId);
+    return true;
+  }
+  if (action.startsWith("wa-so:change:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
+    return true;
+  }
+  if (action.startsWith("wa-so:line:")) {
+    const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText);
+    await sendText(from, `*${sku}* quantity change ke liye type karein:\nCHANGE ${shortId(cartId)} ${sku} <new qty>\nProduct remove karne ke liye new qty 0 type karein.`, "WarehouseSO", cartId);
+    return true;
+  }
   if (action.startsWith("wa-in:po:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-in:po:".length)); const snapshot = await getSnapshot();
@@ -1813,6 +1840,27 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
 
   if (normalized === "HELP" || normalized === "MENU" || normalized === "START") {
     await sendStaffHelp(from, user);
+    return true;
+  }
+  if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
+    const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
+    for (const order of snapshot.salesOrders.filter((item) => ["Booked", "Ready for Dispatch"].includes(item.status) && item.deliveryMode === "Delivery")) {
+      const key = order.cartId || order.id;
+      if (!suffix || matchSuffix(key, suffix) || matchSuffix(order.id, suffix)) carts.set(key, [...(carts.get(key) || []), order]);
+    }
+    const rows = [...carts.entries()].slice(0, 10);
+    if (!rows.length) await sendText(from, "Koi dispatch-ready SO nahi mila. SO <last 4 digits> try karein.");
+    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Sales order select karein. Weight photo, Packed ya Change next aayega." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready sales orders", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
+    return true;
+  }
+  if (warehouseUser && normalized.startsWith("CHANGE ")) {
+    const parts = command.trim().split(/\s+/); const cartId = snapshot.salesOrders.find((item) => matchSuffix(item.cartId || item.id, parts[1] || ""))?.cartId || ""; const sku = parts[2]; const quantity = numberValue(parts[3]);
+    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    if (!cartId || !sku || parts.length < 4 || quantity < 0 || !lines.some((item) => item.productSku.toUpperCase() === sku.toUpperCase())) { await sendText(from, "Format: CHANGE <SO last6> <SKU> <new qty>. SO aur product select karke dobara try karein."); return true; }
+    const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku.toUpperCase() === sku.toUpperCase() ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
+    if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
+    const first = lines[0]; await updateSalesOrderGroup(cartId, { paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: `${first.note || ""} | Warehouse packing change by ${user.fullName}`.trim(), status: "Booked", lines: nextLines }, user);
+    await sendText(from, `SO ${shortId(cartId)} update ho gaya. Weight photo bhejein aur SO ${shortId(cartId)} type karke Packed dabayein.`, "WarehouseSO", cartId);
     return true;
   }
   if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT "))) {

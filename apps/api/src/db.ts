@@ -2258,7 +2258,8 @@ async function assertPurchaseCartEditable(orderId: string, currentUser: CurrentU
   if (linesResult.rows.length === 0) throw new Error("Purchase order not found.");
   const publicOrderId = stringValue(linesResult.rows[0].cart_id) || stringValue(linesResult.rows[0].id);
   const isAdmin = currentUserHasRole(currentUser, "Admin");
-  if (!isAdmin) {
+  const isWarehouseManager = currentUserHasRole(currentUser, "Warehouse Manager");
+  if (!isAdmin && !isWarehouseManager) {
     const purchaserId = numberValue(linesResult.rows[0].purchaser_id);
     if (currentUser.id !== purchaserId) {
       throw new Error("Only the purchaser or admin can edit this purchase cart.");
