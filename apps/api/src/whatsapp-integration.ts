@@ -1607,6 +1607,11 @@ function shortId(value: string) {
   return value.slice(-6);
 }
 
+function deliveryTaskAllowed(task: { assignedTo: string } | undefined, user: StaffUser) {
+  if (!task) return false;
+  return staffHasRole(user, ["Admin"]) || text(task.assignedTo).toLowerCase() === user.username.toLowerCase();
+}
+
 async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, toleranceKg: number) {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
   if (!accessToken || !apiKey || !mediaId) return null;
@@ -1858,14 +1863,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     receiptSessions.delete(from); await sendText(from, "Inward session complete. Stock received entries record ho gayi hain. IN type karke pending PO check kar sakte hain.", "WarehouseIN"); return true;
   }
   if (action.startsWith("wa-delivery:task:")) {
-    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && item.assignedTo.toLowerCase() === user.username.toLowerCase());
+    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && deliveryTaskAllowed(item, user));
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
     const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")));
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / pending collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection ${stop.collectionStatus === "Later" ? "later" : "pending"} - Rs.${stop.amountToPay.toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:stop:")) {
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
-    if (!task || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId);
     if (stop.delivered && stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")) {
       const privileged = party as { allowLaterCollection?: boolean } | undefined;
@@ -1874,29 +1879,29 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${stop.amountToPay.toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
   }
-  if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
+  if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Delivery task unavailable hai. LIST type karein."); return true; } deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
   if (action.startsWith("wa-collect:now:")) {
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex]; const party = snapshot.counterparties.find((item) => item.id === stop?.supplierId) as { allowPartialCollection?: boolean } | undefined;
-    if (!task || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     const choices = party?.allowPartialCollection ? [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Full" }, { id: `wa-collect:partial:${taskId}:${stopIndex}`, title: "Partial" }] : [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Collect full" }];
     await sendButtons(from, `Collection due: Rs.${stop.amountToPay.toFixed(2)}. Amount choice select karein.`, choices, "Collection", taskId); return true;
   }
   if (action.startsWith("wa-collect:later:")) {
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
-    if (!task || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     const stops = task.routeStops.map((item, index) => index === stopIndex ? { ...item, collectionStatus: "Later" as const, paid: false } : item);
     await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: task.status });
     await sendText(from, `${stop.supplierName} ke liye Collect Later recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id); return true;
   }
   if (action.startsWith("wa-collect:full:") || action.startsWith("wa-collect:partial:")) {
     const [, , kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; const party = snapshot.counterparties.find((item) => item.id === stop?.supplierId) as { allowChequeCollection?: boolean } | undefined;
-    if (!task || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
     const modes = [{ id: `wa-mop:cash:${kind}:${taskId}:${indexText}`, title: "Cash" }, { id: `wa-mop:upi:${kind}:${taskId}:${indexText}`, title: "UPI" }]; if (party?.allowChequeCollection) modes.push({ id: `wa-mop:cheque:${kind}:${taskId}:${indexText}`, title: "Cheque" });
     await sendButtons(from, `${kind === "partial" ? "Partial" : "Full"} collection selected. Payment mode select karein.`, modes, "Collection", taskId); return true;
   }
   if (action.startsWith("wa-mop:")) {
     const [, mode, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)];
-    if (!task || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
     if (mode === "cash") {
       cashCollectionPending.set(from, { taskId, stopIndex: Number(indexText), kind: kind === "partial" ? "partial" : "full", step: 0, counts: [] });
       await sendText(from, `Cash collection due: Rs.${stop.amountToPay.toFixed(2)}. ₹500 ke notes kitne hain? Sirf number bhejein (0 bhi chalega).`, "Collection", taskId);
@@ -1912,7 +1917,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-cash:confirm:")) {
     const [, , , taskId, indexText, amountText] = action.split(":"); const amount = numberValue(amountText);
     const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
-    if (!task || !stop || amount <= 0) { await sendText(from, "Cash collection unavailable hai. LIST se retailer dobara select karein."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop || amount <= 0) { await sendText(from, "Cash collection unavailable hai. LIST se retailer dobara select karein."); return true; }
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
     const tolerance = numberValue(party?.collectionTolerance);
     if (amount + tolerance < stop.amountToPay && !party?.allowPartialCollection && !await collectionExceptionApproved(task.id)) { await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, amount, "Cash confirmation below required amount"); await sendText(from, "Full collection required hai. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin."); return true; }
@@ -1925,7 +1930,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-proof:confirm:")) {
     const [, , , modeText, kind, taskId, indexText, amountText] = action.split(":"); const amount = numberValue(amountText); const mode = modeText === "cheque" ? "Cheque" : "UPI";
     const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
-    if (!task || !stop || amount <= 0) { await sendText(from, "Collection unavailable hai. LIST se retailer dobara select karein."); return true; }
+    if (!task || !deliveryTaskAllowed(task, user) || !stop || amount <= 0) { await sendText(from, "Collection unavailable hai. LIST se retailer dobara select karein."); return true; }
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
     const tolerance = numberValue(party?.collectionTolerance);
     const exceptionApproved = await collectionExceptionApproved(task.id);
