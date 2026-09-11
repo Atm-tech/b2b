@@ -1458,8 +1458,23 @@ app.get("/whatsapp/collection-alerts", async (req, res) => wrap(res, async () =>
   const result = await executeDatabaseQuery<Record<string, unknown>>(`SELECT id,entity_id,note,created_at
     FROM note_records
     WHERE entity_type='Delivery' AND note LIKE 'Collection approval alert%'
+      AND NOT EXISTS (SELECT 1 FROM note_records decision WHERE decision.entity_type='Delivery' AND decision.entity_id=note_records.entity_id AND decision.note LIKE 'Collection exception % by WhatsApp Admin.%')
     ORDER BY created_at DESC LIMIT 100`);
   return { rows: result.rows };
+}));
+
+app.post("/whatsapp/collection-alerts/:taskId/decision", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  const decision = String(req.body?.decision || "").toLowerCase();
+  if (!["approved", "rejected"].includes(decision)) throw new Error("Decision must be approved or rejected.");
+  await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at)
+    VALUES ($1,'Delivery',$2,$3,$4,'Operational',NOW())`, [
+    `COLDEC-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    req.params.taskId,
+    `Collection exception ${decision} by WhatsApp Admin.`,
+    currentUser.fullName
+  ]);
+  return { ok: true };
 }));
 
 app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, async () => {
