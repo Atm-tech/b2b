@@ -1612,9 +1612,13 @@ function deliveryTaskAllowed(task: { assignedTo: string } | undefined, user: Sta
   return staffHasRole(user, ["Admin"]) || text(task.assignedTo).toLowerCase() === user.username.toLowerCase();
 }
 
+function whatsappVisionEnabled() {
+  return text(process.env.WHATSAPP_VISION_ENABLED).toLowerCase() === "true";
+}
+
 async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, toleranceKg: number) {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
-  if (!accessToken || !apiKey || !mediaId) return null;
+  if (!whatsappVisionEnabled() || !accessToken || !apiKey || !mediaId) return null;
   try {
     const meta = await fetch(`${graphBase}/${encodeURIComponent(mediaId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
     if (!meta.ok) return null;
@@ -1644,7 +1648,7 @@ async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, tole
 
 async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque") {
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
-  if (!accessToken || !apiKey || !mediaId) return null;
+  if (!whatsappVisionEnabled() || !accessToken || !apiKey || !mediaId) return null;
   try {
     const meta = await fetch(`${graphBase}/${encodeURIComponent(mediaId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
     if (!meta.ok) return null;
@@ -1821,7 +1825,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
     if (!proof || packingPhotoProofs.get(from) !== cartId) { await sendText(from, "Isi SO ke packed maal ke saath fresh weight photo bhejein, phir Packed dabayein."); return true; }
     const weightResult = packingWeightResults.get(from);
-    if (text(process.env.OPENAI_API_KEY) && (!weightResult || weightResult.cartId !== cartId)) { await sendText(from, "Weight scale photo read/verify nahi hua. SO dobara select karke clear weighing-scale photo bhejein."); return true; }
+    if (whatsappVisionEnabled() && text(process.env.OPENAI_API_KEY) && (!weightResult || weightResult.cartId !== cartId)) { await sendText(from, "Weight scale photo read/verify nahi hua. SO dobara select karke clear weighing-scale photo bhejein."); return true; }
     if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
     packingWeightResults.delete(from); packingPhotoProofs.delete(from);
