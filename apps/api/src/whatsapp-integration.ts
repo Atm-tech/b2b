@@ -1623,7 +1623,7 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
   const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
   const lines = ["*B CONNECT staff WhatsApp commands*"];
-  if (warehouse) lines.push("Warehouse: IN, OUT, READY <SO last 4>, DCO <SO last4,SO last4>");
+  if (warehouse) lines.push("Warehouse: IN, OUT, READY <SO last 4>, DCO <SO last4,SO last4>, HANDOVER <DCO last6,DCO last6>");
   if (delivery) lines.push("Delivery: LIST (DCO/retailer select), SUM, LIST COLLECTION, SETTLE. Buttons se delivery aur collection complete karein.");
   lines.push("Weight/delivery/payment photo maange jaane par bhejein; phir screen par aane wala button select karein.");
   await sendText(phone, lines.join("\n"), "StaffCommandHelp");
@@ -1670,7 +1670,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
   const action = text(reply?.id);
   if (action.startsWith("wa-delivery:task:")) {
-    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.assignedTo.toLowerCase() === user.username.toLowerCase());
+    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && item.assignedTo.toLowerCase() === user.username.toLowerCase());
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
     const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")));
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / pending collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection ${stop.collectionStatus === "Later" ? "later" : "pending"} - Rs.${stop.amountToPay.toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
@@ -1860,11 +1860,19 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!agent) { await sendText(from, "Delivery+Collection agent registered nahi hai. WhatsApp Admin se user add karein."); return true; }
     await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: agent.username }, user);
     const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)) && item.assignedTo === agent.username);
-    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created. ${agent.fullName} ko handover/WhatsApp task mil gaya.`, "DCO", consignment?.id);
+    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created and ready. Physical handover ke baad type karein: HANDOVER ${shortId(consignment?.id || "")}.`, "DCO", consignment?.id);
+    return true;
+  }
+  if (warehouseUser && normalized.startsWith("HANDOVER ")) {
+    const suffixes = normalized.slice(9).split(",").map((item) => item.trim()).filter(Boolean);
+    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.status === "Planned" && suffixes.some((suffix) => matchSuffix(task.consignmentId || task.id, suffix)));
+    if (!tasks.length) { await sendText(from, "Ready-to-handover DCO nahi mila. DCO command ke reply mein mila last 6 digit check karein."); return true; }
+    for (const task of tasks) await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: task.routeStops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: "Handed Over" });
+    await sendText(from, `${tasks.length} DCO handover recorded. Delivery+Collection agent ko WhatsApp task mil gaya.`, "DCO");
     return true;
   }
   if (deliveryUser && normalized === "LIST") {
-    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.routeStops.some((stop) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || ""))));
+    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.status !== "Planned" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.routeStops.some((stop) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || ""))));
     if (!tasks.length) await sendText(from, "Aapke paas koi active DCO delivery nahi hai.");
     else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Apna DCO select karein. Phir retailer list khulegi." }, action: { button: "View DCO", sections: [{ title: "Assigned DCO", rows: tasks.slice(0, 10).map((task) => ({ id: `wa-delivery:task:${encodeURIComponent(task.id)}`, title: `DCO ${shortId(task.consignmentId || task.id)}`, description: compact(task.routeStops.filter((stop) => !stop.delivered).map((stop) => stop.supplierName).join(", "), 72) })) }] } } }, "Delivery");
     return true;
