@@ -1433,6 +1433,13 @@ app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, a
   }, currentUser);
 }));
 
+app.get("/whatsapp/settlements", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  const result = await executeDatabaseQuery<Record<string, unknown>>(`SELECT p.created_by, p.mode, COALESCE(SUM(p.amount),0) AS amount, COUNT(*)::int AS entries
+    FROM payments p WHERE p.side='Sales' AND p.reference_number LIKE 'WA-%' GROUP BY p.created_by,p.mode ORDER BY p.created_by,p.mode`);
+  return { rows: result.rows };
+}));
+
 app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return approveWhatsAppRegistration(req.params.id, {

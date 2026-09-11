@@ -303,6 +303,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   workspace?: WhatsAppWorkspace;
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [settlementRows, setSettlementRows] = useState<Array<Record<string, unknown>>>([]);
   const [busy, setBusy] = useState(false);
   const shops = useMemo(() => {
     const normalShops = snapshot.counterparties.filter((item) => item.type === "Shop");
@@ -376,6 +377,13 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     } catch (error) {
       onError(errorMessage(error));
     }
+  }
+
+  async function loadSettlements() {
+    setBusy(true); onError("");
+    try { const { data } = await api.get<{ rows: Array<Record<string, unknown>> }>("/whatsapp/settlements", { headers }); setSettlementRows(data.rows); }
+    catch (error) { onError(errorMessage(error)); }
+    finally { setBusy(false); }
   }
   useEffect(() => { void refresh(); }, [sessionToken]);
 
@@ -778,7 +786,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       </section>
     </> : null}
 
-    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <><Panel title="Training material" eyebrow="Interactive guide + downloadable PDFs"><p className="helper-text">Har role ki script yahin milegi. Warehouse aur Delivery guides mein WhatsApp commands bhi hain.</p><div className="payment-card-actions">{teamTraining.map(([label, file]) => <a className="ghost-button" key={file} href={`${trainingPdfBase}/training-pdfs/${file}`} target="_blank" rel="noreferrer">Download {label} PDF</a>)}</div></Panel><TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
+    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <><Panel title="Training material" eyebrow="Interactive guide + downloadable PDFs"><p className="helper-text">Har role ki script yahin milegi. Warehouse aur Delivery guides mein WhatsApp commands bhi hain.</p><div className="payment-card-actions">{teamTraining.map(([label, file]) => <a className="ghost-button" key={file} href={`${trainingPdfBase}/training-pdfs/${file}`} target="_blank" rel="noreferrer">Download {label} PDF</a>)}</div></Panel><Panel title="Delivery collection settlement" eyebrow="WhatsApp Admin reconciliation"><button className="ghost-button" type="button" disabled={busy} onClick={() => void loadSettlements()}>Load settlement ledger</button>{settlementRows.length ? <DataTable headers={["Agent", "MOP", "Amount", "Entries"]} rows={settlementRows.map((row) => [String(row.created_by || ""), String(row.mode || ""), `₹${Number(row.amount || 0).toFixed(2)}`, String(row.entries || 0)])} /> : <p className="helper-text">Load to view all WhatsApp collection totals by agent and payment mode.</p>}</Panel><TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
       <p className="helper-text wide-field">Create the B CONNECT user and record the WhatsApp number from one control point. User will receive only the modules assigned by role.</p>
       <label>Name<input required value={staffForm.fullName} onChange={(event) => setStaffForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Staff full name" /></label>
       <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
