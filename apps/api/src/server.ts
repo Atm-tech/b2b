@@ -3,6 +3,7 @@ import compression from "compression";
 import express from "express";
 import { createGuideRouter } from "./guide-routes.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import multer from "multer";
@@ -103,8 +104,11 @@ import {
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 8080);
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.resolve(process.cwd(), "uploads"));
-const trainingPdfDir = path.resolve(process.cwd(), "output", "pdf");
+// Resolve from this source/dist file rather than cwd: Render starts workspace
+// scripts from a different directory than local development.
+const trainingPdfDir = path.resolve(serverDir, "../../..", "output", "pdf");
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");

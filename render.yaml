@@ -12,6 +12,7 @@ services:
       paths:
         - apps/api/**
         - packages/domain/**
+        - output/pdf/**
         - postgres/**
         - package.json
         - package-lock.json
