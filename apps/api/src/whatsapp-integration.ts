@@ -1677,6 +1677,11 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const packing = packingPhotoPending.get(from);
     if (packing && messageType === "image") {
       packingPhotoPending.delete(from);
+      if (packing.expectedKg <= 0) {
+        packingWeightResults.set(from, { cartId: packing.cartId, withinTolerance: true, weightKg: 0, expectedKg: 0 });
+        await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Product default weight configured nahi hai, isliye automatic comparison possible nahi hai. Warehouse scale se manually verify karke Packed/Change select karein.`, "WarehouseWeight", packing.cartId);
+        return true;
+      }
       const reading = await readWhatsAppWeightPhoto(text(media), packing.expectedKg, packing.toleranceKg);
       if (!reading) await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Automatic reading unavailable; expected packed weight ${packing.expectedKg.toFixed(3)} kg. Weight scale ko manually verify karke Packed/Change select karein.`, "WarehouseWeight", packing.cartId);
       else if (!reading.visible) await sendText(from, `Weight scale photo mein clearly read nahi hua. Expected ${packing.expectedKg.toFixed(3)} kg. Clear scale photo bhejein, phir SO ${shortId(packing.cartId)} select karke Packed/Change karein.`, "WarehouseWeight", packing.cartId);
