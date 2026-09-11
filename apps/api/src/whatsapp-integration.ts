@@ -1608,6 +1608,12 @@ async function alertWhatsAppAdminForCollection(taskId: string, retailer: string,
   await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Delivery',$2,$3,'System','Operational',NOW())`, [id("COLALERT"), taskId, body]);
 }
 
+async function notifyDeliveryAllDone(phone: string, user: StaffUser) {
+  const snapshot = await getSnapshot();
+  const active = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.status !== "Delivered");
+  if (active.length === 0) await sendText(phone, "*Delivery all done.* Aaj ke sab assigned DCO delivery stops complete ho gaye hain. SUM type karke collection total check karein.", "DeliveryComplete");
+}
+
 async function sendStaffHelp(phone: string, user: StaffUser) {
   const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
@@ -1634,6 +1640,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
         await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: allDelivered ? "Delivered" : "Handed Over" });
         const buttons = party?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${pending.stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }];
         await sendButtons(from, `${stop.supplierName} delivery photo saved. Collection amount: Rs.${stop.amountToPay.toFixed(2)}`, buttons, "Delivery", task.id);
+        if (allDelivered) await notifyDeliveryAllDone(from, user);
         return true;
       }
     }
