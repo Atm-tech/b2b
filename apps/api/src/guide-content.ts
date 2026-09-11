@@ -262,7 +262,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "WhatsApp: SO / DCO / HANDOVER",
         "speech": "“Packing ke baad Ready — saath mein practice karein.”",
         "narration": "सेल्स ऑर्डर के मुताबिक सही माल पैक करें। मात्रा और वेयरहाउस मिलाएं। पैकिंग पूरी होने पर डॉकिट रेडी करें। अभी डिलीवर्ड नहीं करना है।",
-        "body": "WhatsApp par SO type karo aur sales order select karo. Packing scale photo bhejo; system expected weight se compare karega. Match ho to Packed dabao. Change par product select karke nayi quantity (0 se remove) bhejo. DCO type karke multiple packed SO add karo, agent select karo, phir physical handover ke baad HANDOVER <DCO last6> type karo.",
+        "body": "WhatsApp par SO type karo aur sales order select karo. Packing scale photo bhejo, phir scale par dikh raha actual kg type karo; system expected weight aur tolerance se compare karega. Match ho to Packed dabao. Change par product select karke nayi quantity (0 se remove) bhejo. DCO type karke multiple packed SO add karo, agent select karo, phir physical handover ke baad HANDOVER <DCO last6> type karo.",
         "example": "Docket: Pending Packing → packing checked",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
