@@ -1,6 +1,7 @@
 import cors from "cors";
 import compression from "compression";
 import express from "express";
+import { createGuideRouter } from "./guide-routes.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +9,7 @@ import multer from "multer";
 import type { CounterpartyType, DeliveryTask, NoteRecord, PaymentMethodSetting, PaymentMode, ProductMaster, UserRole, Warehouse } from "@aapoorti-b2b/domain";
 import {
   authenticate,
+  executeDatabaseQuery,
   clearGoodsWarrants,
   bulkCreateProducts,
   clearSalesOperationalData,
@@ -306,6 +308,8 @@ app.get("/goods-warrants/logo", (_req, res) => {
   }
   res.sendFile(goodsWarrantLogoPath);
 });
+
+app.use("/guides", createGuideRouter({ isAdmin: isWhatsAppAdminUser, query: executeDatabaseQuery, getUserByToken: getUserBySessionToken }));
 
 app.post("/auth/login", async (req, res) => {
   const user = await authenticate(requiredString(req.body?.username, "Username"), requiredString(req.body?.password, "Password"));

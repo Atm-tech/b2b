@@ -58,6 +58,7 @@ const ProductAdminView = lazy(() => import("./features/admin/AdminAndSupportView
 const ReturnsWorkspace = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.ReturnsWorkspace })));
 const StandaloneExcelMaker = lazy(() => import("./features/admin/AdminAndSupportViews").then((module) => ({ default: module.StandaloneExcelMaker })));
 const WhatsAppRetailerHub = lazy(() => import("./features/whatsapp/WhatsAppRetailerHub").then((module) => ({ default: module.WhatsAppRetailerHub })));
+const GuideShareEntry = lazy(() => import("./features/guides/GuidePortal").then((module) => ({ default: module.GuideShareEntry })));
 
 function WhatsAppComingSoon() {
   return <Panel title="WhatsApp Business" eyebrow="Retailer ordering">
@@ -1473,6 +1474,7 @@ function App() {
                 <div><span className="small-label">Mobile</span><strong>{currentUser.mobileNumber || "Pending"}</strong></div>
               </div>
               <div className="profile-action-list">
+                <Suspense fallback={null}><GuideShareEntry /></Suspense>
                 {!forceSimpleMode ? <button className="ghost-button" type="button" onClick={() => { const nextMode = !effectiveSimpleMode; const nextView = getVisibleViewsForMode(currentUser, nextMode)[0]; setSimpleMode(nextMode); if (nextView) navigateToView(nextView); setProfileOpen(false); }}>{effectiveSimpleMode ? "Show Advanced" : "Show Simple"}</button> : null}
                 {isAdminUser ? <button className="ghost-button" type="button" aria-current={activeView === "VoiceTrainer" ? "page" : undefined} onClick={() => { navigateToView("VoiceTrainer"); setProfileOpen(false); }}>Voice Training</button> : null}
                 <button className="ghost-button" type="button" onClick={() => void doLogout()}>Logout</button>

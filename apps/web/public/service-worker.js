@@ -1,4 +1,4 @@
-const CACHE_NAME = "b-connect-shell-v7";
+const CACHE_NAME = "b-connect-shell-v8";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/apple-touch-icon.png", "/business-connect-icon-192.png", "/business-connect-icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -17,6 +17,8 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  // Guide HTML and role-protected API responses must not enter the app-shell cache.
+  if (/^\/guides?(?:\/|$)/.test(url.pathname)) return;
 
   if (event.request.mode === "navigate") {
     event.respondWith(

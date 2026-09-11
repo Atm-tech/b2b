@@ -5,7 +5,16 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
   "devCommand": "npm run dev",
+  "rewrites": [
+    { "source": "/guide", "destination": "/index.html" },
+    { "source": "/guide/:path*", "destination": "/index.html" }
+  ],
   "headers": [
+    { "source": "/guide/:path*", "headers": [
+      { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" },
+      { "key": "Referrer-Policy", "value": "no-referrer" },
+      { "key": "Cache-Control", "value": "private, no-store" }
+    ] },
     {
       "source": "/assets/(.*)",
       "headers": [
