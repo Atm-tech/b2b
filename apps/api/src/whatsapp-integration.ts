@@ -1765,7 +1765,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
           return true;
         }
         paymentProofPending.set(from, paymentPending);
-        await sendText(from, `${paymentPending.mode} proof saved, lekin amount clearly read nahi hua. Amount type karein: AMOUNT ${shortId(task.id)} ${paymentPending.stopIndex + 1} <amount>.`, "Collection", task.id);
+        await sendText(from, `${paymentPending.mode} proof saved. Ab received amount sirf number mein type karein, example: 1250.`, "Collection", task.id);
         return true;
       }
     }
@@ -1991,6 +1991,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!task || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     if (amount > stop.amountToPay) { await sendText(from, `Bill Rs.${stop.amountToPay.toFixed(2)} hai. Isse zyada amount confirm nahi kar sakte.`); return true; }
     await sendButtons(from, `${pending.mode} ${pending.kind} collection: Rs.${amount.toFixed(2)}. Confirm karein.`, [{ id: `wa-proof:confirm:${pending.mode.toLowerCase()}:${pending.kind}:${task.id}:${pending.stopIndex}:${amount}`, title: `Confirm Rs.${amount.toFixed(2)}` }], "Collection", task.id);
+    return true;
+  }
+  const pendingProofAmount = paymentProofPending.get(from);
+  if (deliveryUser && pendingProofAmount && /^\d+(?:\.\d{1,2})?$/.test(command.replace(/,/g, ""))) {
+    const amount = numberValue(command.replace(/,/g, "")); const task = snapshot.deliveryTasks.find((item) => item.id === pendingProofAmount.taskId); const stop = task?.routeStops[pendingProofAmount.stopIndex];
+    if (!task || !deliveryTaskAllowed(task, user) || !stop || amount <= 0) { await sendText(from, "Payment task unavailable hai. LIST type karke retailer dobara select karein."); return true; }
+    if (amount > stop.amountToPay) { await sendText(from, `Bill Rs.${stop.amountToPay.toFixed(2)} hai. Isse zyada amount confirm nahi kar sakte.`); return true; }
+    await sendButtons(from, `${pendingProofAmount.mode} ${pendingProofAmount.kind} collection: Rs.${amount.toFixed(2)}. Confirm karein.`, [{ id: `wa-proof:confirm:${pendingProofAmount.mode.toLowerCase()}:${pendingProofAmount.kind}:${task.id}:${pendingProofAmount.stopIndex}:${amount}`, title: `Confirm Rs.${amount.toFixed(2)}` }], "Collection", task.id);
     return true;
   }
 
