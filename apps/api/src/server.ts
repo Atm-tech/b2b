@@ -1453,6 +1453,15 @@ app.get("/whatsapp/settlements", async (req, res) => wrap(res, async () => {
   return { rows: result.rows };
 }));
 
+app.get("/whatsapp/collection-alerts", async (req, res) => wrap(res, async () => {
+  await requireWhatsAppAdmin(req);
+  const result = await executeDatabaseQuery<Record<string, unknown>>(`SELECT id,entity_id,note,created_at
+    FROM note_records
+    WHERE entity_type='Delivery' AND note LIKE 'Collection approval alert%'
+    ORDER BY created_at DESC LIMIT 100`);
+  return { rows: result.rows };
+}));
+
 app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return approveWhatsAppRegistration(req.params.id, {

@@ -304,6 +304,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 }) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [settlementRows, setSettlementRows] = useState<Array<Record<string, unknown>>>([]);
+  const [collectionAlerts, setCollectionAlerts] = useState<Array<Record<string, unknown>>>([]);
   const [busy, setBusy] = useState(false);
   const shops = useMemo(() => {
     const normalShops = snapshot.counterparties.filter((item) => item.type === "Shop");
@@ -382,6 +383,12 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   async function loadSettlements() {
     setBusy(true); onError("");
     try { const { data } = await api.get<{ rows: Array<Record<string, unknown>> }>("/whatsapp/settlements", { headers }); setSettlementRows(data.rows); }
+    catch (error) { onError(errorMessage(error)); }
+    finally { setBusy(false); }
+  }
+  async function loadCollectionAlerts() {
+    setBusy(true); onError("");
+    try { const { data } = await api.get<{ rows: Array<Record<string, unknown>> }>("/whatsapp/collection-alerts", { headers }); setCollectionAlerts(data.rows); }
     catch (error) { onError(errorMessage(error)); }
     finally { setBusy(false); }
   }
@@ -786,7 +793,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       </section>
     </> : null}
 
-    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <><Panel title="Training material" eyebrow="Interactive guide + downloadable PDFs"><p className="helper-text">Har role ki script yahin milegi. Warehouse aur Delivery guides mein WhatsApp commands bhi hain.</p><div className="payment-card-actions">{teamTraining.map(([label, file]) => <a className="ghost-button" key={file} href={`${trainingPdfBase}/training-pdfs/${file}`} target="_blank" rel="noreferrer">Download {label} PDF</a>)}</div></Panel><Panel title="Delivery collection settlement" eyebrow="WhatsApp Admin reconciliation"><button className="ghost-button" type="button" disabled={busy} onClick={() => void loadSettlements()}>Load pending settlement</button>{settlementRows.length ? <DataTable headers={["Agent", "MOP", "Since last settlement", "Entries"]} rows={settlementRows.map((row) => [String(row.created_by || ""), String(row.mode || ""), `₹${Number(row.amount || 0).toFixed(2)}`, String(row.entries || 0)])} /> : <p className="helper-text">Shows only collections received after each agent’s last settlement.</p>}</Panel><TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
+    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <><Panel title="Training material" eyebrow="Interactive guide + downloadable PDFs"><p className="helper-text">Har role ki script yahin milegi. Warehouse aur Delivery guides mein WhatsApp commands bhi hain.</p><div className="payment-card-actions">{teamTraining.map(([label, file]) => <a className="ghost-button" key={file} href={`${trainingPdfBase}/training-pdfs/${file}`} target="_blank" rel="noreferrer">Download {label} PDF</a>)}</div></Panel><Panel title="Delivery collection settlement" eyebrow="WhatsApp Admin reconciliation"><button className="ghost-button" type="button" disabled={busy} onClick={() => void loadSettlements()}>Load pending settlement</button>{settlementRows.length ? <DataTable headers={["Agent", "MOP", "Since last settlement", "Entries"]} rows={settlementRows.map((row) => [String(row.created_by || ""), String(row.mode || ""), `₹${Number(row.amount || 0).toFixed(2)}`, String(row.entries || 0)])} /> : <p className="helper-text">Shows only collections received after each agent’s last settlement.</p>}</Panel><Panel title="Collection approval alerts" eyebrow="Action required"><button className="ghost-button" type="button" disabled={busy} onClick={() => void loadCollectionAlerts()}>Load collection alerts</button>{collectionAlerts.length ? <DataTable headers={["Raised", "Alert"]} rows={collectionAlerts.map((row) => [String(row.created_at || "").slice(0, 16).replace("T", " "), String(row.note || "")])} /> : <p className="helper-text">Short or unauthorised collections appear here for WhatsApp Admin review.</p>}</Panel><TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
       <p className="helper-text wide-field">Create the B CONNECT user and record the WhatsApp number from one control point. User will receive only the modules assigned by role.</p>
       <label>Name<input required value={staffForm.fullName} onChange={(event) => setStaffForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Staff full name" /></label>
       <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
