@@ -1868,6 +1868,11 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.status === "Planned" && suffixes.some((suffix) => matchSuffix(task.consignmentId || task.id, suffix)));
     if (!tasks.length) { await sendText(from, "Ready-to-handover DCO nahi mila. DCO command ke reply mein mila last 6 digit check karein."); return true; }
     for (const task of tasks) await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: task.routeStops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: "Handed Over" });
+    const assignees = Array.from(new Set(tasks.map((task) => task.assignedTo.toLowerCase())));
+    for (const assignee of assignees) {
+      const agent = snapshot.users.find((item) => item.username.toLowerCase() === assignee || item.fullName.toLowerCase() === assignee);
+      if (agent?.mobileNumber) await sendText(agent.mobileNumber, `*New DCO handed over.* ${tasks.filter((task) => task.assignedTo.toLowerCase() === assignee).map((task) => shortId(task.consignmentId || task.id)).join(", ")}\nLIST type karke DCO aur retailer select karein.`, "DCOHandover");
+    }
     await sendText(from, `${tasks.length} DCO handover recorded. Delivery+Collection agent ko WhatsApp task mil gaya.`, "DCO");
     return true;
   }
