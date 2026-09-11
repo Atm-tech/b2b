@@ -1754,6 +1754,21 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     return true;
   }
+  if (deliveryUser && normalized.startsWith("CASH ")) {
+    const parts = normalized.split(" ");
+    const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, parts[1] || ""));
+    const stopIndex = Number(parts[2]) - 1;
+    const stop = task?.routeStops[stopIndex];
+    if (!task || !stop) { await sendText(from, "Cash task nahi mila. LIST se delivery select karein."); return true; }
+    const counts = Object.fromEntries([500, 200, 100, 50, 20, 10].map((note) => [note, numberValue((parts.find((item) => item.startsWith(`${note}X`)) || "").split("X")[1])])) as Record<string, number>;
+    const coins = numberValue((parts.find((item) => item.startsWith("COINSX")) || "").split("X")[1]);
+    const total = Object.entries(counts).reduce((sum, [note, count]) => sum + Number(note) * Math.max(0, count), 0) + Math.max(0, coins);
+    const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
+    const tolerance = numberValue(party?.collectionTolerance); const short = stop.amountToPay - total;
+    if (short > tolerance && !party?.allowPartialCollection) { await sendText(from, `Cash total Rs.${total.toFixed(2)} hai, bill Rs.${stop.amountToPay.toFixed(2)} hai. Difference Rs.${short.toFixed(2)}. Contact WhatsApp Admin.`); return true; }
+    await sendText(from, `Cash counted: Rs.${total.toFixed(2)}. Bill: Rs.${stop.amountToPay.toFixed(2)}.${short > tolerance ? ` Pending: Rs.${short.toFixed(2)}.` : " Tally OK."}\nAb proof photo bhejkar COLLECT ${shortId(task.id)} ${stopIndex + 1} ${total.toFixed(2)} CASH type karein.`, "CashCount", task.id);
+    return true;
+  }
   if (deliveryUser && normalized.startsWith("DELIVERED ")) {
     const [, taskSuffix, stopText] = normalized.split(" "); const stopIndex = Number(stopText) - 1;
     const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, taskSuffix));
