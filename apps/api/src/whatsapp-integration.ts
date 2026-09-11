@@ -1593,6 +1593,7 @@ const cashCollectionPending = new Map<string, { taskId: string; stopIndex: numbe
 const paymentProofPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; mode: "UPI" | "Cheque" }>();
 const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingWeightResults = new Map<string, { cartId: string; withinTolerance: boolean; weightKg: number; expectedKg: number }>();
+const dcoBuildSessions = new Map<string, string[]>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
 function staffHasRole(user: StaffUser, roles: string[]) {
@@ -1710,6 +1711,40 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const interactive = message.interactive as JsonObject | undefined;
   const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
   const action = text(reply?.id);
+  if (action === "wa-dco:list") {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const snapshot = await getSnapshot(); const carts = new Map<string, typeof snapshot.salesOrders>();
+    for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); if (order) { const key = order.cartId || order.id; carts.set(key, [...(carts.get(key) || []), order]); } }
+    const chosen = dcoBuildSessions.get(from) || []; const rows = [...carts.entries()].filter(([key]) => !chosen.includes(key)).slice(0, 10);
+    if (!rows.length) { await sendText(from, chosen.length ? "Aur packed SO available nahi hai. Create DCO dabayein." : "Koi packed SO available nahi hai."); return true; }
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ke liye packed SO select karein. Selected: ${chosen.length}` }, action: { button: "Packed SO", sections: [{ title: "Ready for DCO", rows: rows.map(([cartId, lines]) => ({ id: `wa-dco:add:${encodeURIComponent(cartId)}`, title: `SO ${shortId(cartId)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "DCOBuild");
+    return true;
+  }
+  if (action.startsWith("wa-dco:add:")) {
+    const cartId = decodeURIComponent(action.slice("wa-dco:add:".length)); const chosen = Array.from(new Set([...(dcoBuildSessions.get(from) || []), cartId])); dcoBuildSessions.set(from, chosen);
+    await sendButtons(from, `SO ${shortId(cartId)} added. Total selected: ${chosen.length}.`, [{ id: "wa-dco:list", title: "Add another" }, { id: "wa-dco:create", title: "Create DCO" }], "DCOBuild");
+    return true;
+  }
+  if (action === "wa-dco:create") {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot();
+    if (!chosen.length) { await sendText(from, "Pehle packed SO select karein. DCO type karein."); return true; }
+    const agents = snapshot.users.filter((item) => item.active && staffHasRole(item, ["Delivery", "Out Delivery", "Collection Agent"]));
+    if (!agents.length) { await sendText(from, "Delivery+Collection agent registered nahi hai. WhatsApp Admin se user add karein."); return true; }
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `${chosen.length} SO selected. Delivery + Collection agent select karein.` }, action: { button: "Select agent", sections: [{ title: "Delivery agents", rows: agents.slice(0, 10).map((agent) => ({ id: `wa-dco:agent:${encodeURIComponent(agent.username)}`, title: compact(agent.fullName, 24), description: compact(agent.mobileNumber || agent.username, 72) })) }] } } }, "DCOBuild");
+    return true;
+  }
+  if (action.startsWith("wa-dco:agent:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const username = decodeURIComponent(action.slice("wa-dco:agent:".length)); const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot();
+    const dockets = snapshot.deliveryDockets.filter((docket) => docket.status === "Ready" && chosen.includes(snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.cartId || snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.id || ""));
+    if (!dockets.length) { await sendText(from, "Selected SO ab ready nahi hain. DCO type karke dobara select karein."); return true; }
+    const warehouseId = dockets[0].warehouseId; if (dockets.some((item) => item.warehouseId !== warehouseId)) { await sendText(from, "Ek DCO mein sirf ek warehouse ke SO select karein."); return true; }
+    await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: username }, user); dcoBuildSessions.delete(from);
+    const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.length === dockets.length && item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)));
+    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created for ${username}. Physical handover ke baad HANDOVER ${shortId(consignment?.id || "")} type karein.`, "DCO", consignment?.id);
+    return true;
+  }
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
@@ -1974,6 +2009,15 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: agent.username }, user);
     const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)) && item.assignedTo === agent.username);
     await sendText(from, `DCO ${shortId(consignment?.id || "created")} created and ready. Physical handover ke baad type karein: HANDOVER ${shortId(consignment?.id || "")}.`, "DCO", consignment?.id);
+    return true;
+  }
+  if (warehouseUser && normalized === "DCO") {
+    dcoBuildSessions.set(from, []);
+    const carts = new Map<string, typeof snapshot.salesOrders>();
+    for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); if (order) { const key = order.cartId || order.id; carts.set(key, [...(carts.get(key) || []), order]); } }
+    const rows = [...carts.entries()].slice(0, 10);
+    if (!rows.length) await sendText(from, "Koi packed SO available nahi hai.");
+    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "DCO ke liye packed SO select karein." }, action: { button: "Packed SO", sections: [{ title: "Ready for DCO", rows: rows.map(([cartId, lines]) => ({ id: `wa-dco:add:${encodeURIComponent(cartId)}`, title: `SO ${shortId(cartId)}`, description: compact(`${lines[0].shopName} - ${lines.length} product(s)`, 72) })) }] } } }, "DCOBuild");
     return true;
   }
   if (warehouseUser && normalized.startsWith("HANDOVER ")) {
