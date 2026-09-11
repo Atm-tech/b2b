@@ -1955,6 +1955,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       return true;
     }
   }
+  if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT ") || normalized.startsWith("READY "))) {
+    await sendText(from, "Warehouse outbound ka verified flow SO se chalta hai. SO type karke order select karein, weight photo bhejein, phir Packed/Change select karein.", "WarehouseSO");
+    return true;
+  }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
     const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
     for (const order of snapshot.salesOrders.filter((item) => item.status === "Booked" && item.deliveryMode === "Delivery")) {
