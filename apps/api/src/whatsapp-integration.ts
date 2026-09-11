@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { prepareTrainingBroadcast, trainingBroadcastMessage, trainingLinkReply, trainingUrl } from "./training-links.js";
-import type { AppUser, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aapoorti-b2b/domain";
+import type { AppUser, DeliveryRouteStop, DeliveryTask, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aapoorti-b2b/domain";
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
-import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
+import { createDeliveryConsignment, createPayment, createReceiptCheck, createSalesCart, createSalesDockets, executeDatabaseQuery, getSnapshot, updateDeliveryTask } from "./db.js";
 import { runAssistant } from "./assistant-service.js";
 import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
@@ -1544,6 +1544,154 @@ async function acceptOffer(offerId: string, profile: RetailerProfile, inboundMes
   return draftId;
 }
 
+const staffProofs = new Map<string, string>();
+
+function staffHasRole(user: StaffUser, roles: string[]) {
+  return user.roles.some((role) => roles.includes(role)) || roles.includes(user.role);
+}
+
+function shortId(value: string) {
+  return value.slice(-6);
+}
+
+async function sendStaffHelp(phone: string, user: StaffUser) {
+  const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
+  const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
+  const lines = ["*B CONNECT staff WhatsApp commands*"];
+  if (warehouse) lines.push("Warehouse: IN, OUT, READY <SO last 4>, DCO <SO last4,SO last4>");
+  if (delivery) lines.push("Delivery: READ, DELIVERED <task last4> <stop no>, COLLECT <task last4> <stop no> <amount> CASH|UPI|CHEQUE|LATER");
+  lines.push("Weight/delivery/payment photo pehle bhejein; phir command type karein.");
+  await sendText(phone, lines.join("\n"), "StaffCommandHelp");
+}
+
+async function handleStaffWhatsAppMessage(message: JsonObject, from: string, user: StaffUser): Promise<boolean> {
+  const messageType = text(message.type);
+  if (["image", "document"].includes(messageType)) {
+    const media = (message[messageType] as JsonObject | undefined)?.id || (message[messageType] as JsonObject | undefined)?.media_id;
+    staffProofs.set(from, `WhatsApp ${messageType} ${text(media) || new Date().toISOString()}`);
+    await sendText(from, "Proof saved. Ab apna command type karein.", "StaffProof");
+    return true;
+  }
+  if (messageType !== "text") return false;
+  const command = text((message.text as JsonObject | undefined)?.body).trim();
+  const normalized = command.toUpperCase().replace(/\s+/g, " ");
+  const warehouseUser = staffHasRole(user, ["Admin", "Warehouse Manager"]);
+  const deliveryUser = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
+  const snapshot = await getSnapshot();
+  const matchSuffix = (value: string, suffix: string) => value.toUpperCase().endsWith(suffix.toUpperCase());
+
+  if (normalized === "HELP" || normalized === "MENU" || normalized === "START") {
+    await sendStaffHelp(from, user);
+    return true;
+  }
+  if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT "))) {
+    const suffix = normalized.slice(3).trim();
+    const carts = new Map<string, typeof snapshot.salesOrders>();
+    for (const order of snapshot.salesOrders.filter((item) => ["Booked", "Ready for Dispatch"].includes(item.status) && item.deliveryMode === "Delivery")) {
+      const key = order.cartId || order.id;
+      if (!suffix || matchSuffix(key, suffix) || matchSuffix(order.id, suffix)) carts.set(key, [...(carts.get(key) || []), order]);
+    }
+    const rows = [...carts.entries()].slice(0, 10);
+    if (!rows.length) await sendText(from, "Koi dispatch-ready sales order nahi mila. OUT <last 4 digits> type karein.");
+    else await sendText(from, ["*OUT - sales orders*", ...rows.map(([key, lines]) => `${shortId(key)} | ${lines[0].shopName} | ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`), "Ready karne ke liye: READY <last 6>"].join("\n"));
+    return true;
+  }
+  if (warehouseUser && normalized.startsWith("READY ")) {
+    const suffix = normalized.slice(6).trim();
+    const order = snapshot.salesOrders.find((item) => ["Booked", "Ready for Dispatch"].includes(item.status) && matchSuffix(item.cartId || item.id, suffix));
+    if (!order) { await sendText(from, "Sales order nahi mila. OUT type karke last digits check karein."); return true; }
+    if (!staffProofs.get(from)) { await sendText(from, "Pehle packed weight/photo bhejein, phir READY command dobara type karein."); return true; }
+    await createSalesDockets({ linkedOrderIds: [order.cartId || order.id] }, user);
+    staffProofs.delete(from);
+    await sendText(from, `Order ${shortId(order.cartId || order.id)} dispatch-ready hai. DCO ${shortId(order.cartId || order.id)} type karke bundle banayein.`, "SalesDocket", order.cartId || order.id);
+    return true;
+  }
+  if (warehouseUser && (normalized === "IN" || normalized.startsWith("IN "))) {
+    const suffix = normalized.slice(2).trim();
+    const carts = new Map<string, typeof snapshot.purchaseOrders>();
+    for (const order of snapshot.purchaseOrders.filter((item) => !["Received", "Closed", "Cancelled"].includes(item.status))) {
+      const key = order.cartId || order.id;
+      if (!suffix || matchSuffix(key, suffix) || matchSuffix(order.id, suffix)) carts.set(key, [...(carts.get(key) || []), order]);
+    }
+    const rows = [...carts.entries()].slice(0, 10);
+    if (!rows.length) await sendText(from, "Active PO nahi mila. IN <last 4 digits> try karein.");
+    else await sendText(from, ["*IN - active purchase orders*", ...rows.map(([key, lines]) => `${shortId(key)} | ${lines[0].supplierName} | ${lines.map((line) => `${line.productSku} ${line.quantityReceived}/${line.quantityOrdered}`).join(", ")}`), "Receive: RECEIVE <PO last6> <SKU> <qty> <gross weight kg>"].join("\n"));
+    return true;
+  }
+  if (warehouseUser && normalized.startsWith("RECEIVE ")) {
+    const parts = command.trim().split(/\s+/);
+    if (parts.length < 5) { await sendText(from, "Format: RECEIVE <PO last6> <SKU> <qty> <gross weight kg>"); return true; }
+    const [,, ...rest] = parts;
+    const suffix = parts[1]; const sku = parts[2]; const qty = numberValue(parts[3]); const weight = numberValue(parts[4]);
+    const order = snapshot.purchaseOrders.find((item) => matchSuffix(item.cartId || item.id, suffix) && item.productSku.toUpperCase() === sku.toUpperCase());
+    if (!order || qty <= 0 || weight <= 0) { await sendText(from, "PO/SKU/quantity/weight check karein. IN command se active PO dekhein."); return true; }
+    const proof = staffProofs.get(from);
+    if (!proof) { await sendText(from, "Pehle weight photo bhejein, phir RECEIVE command type karein."); return true; }
+    await createReceiptCheck({ purchaseOrderId: order.id, warehouseId: order.warehouseId, receivedQuantity: qty, actualWeightKg: weight, weighingProofName: proof, note: `WhatsApp IN by ${user.fullName}`, confirmPartial: qty < (order.quantityOrdered - order.quantityReceived) }, user);
+    staffProofs.delete(from);
+    await sendText(from, `${order.productSku}: ${qty} received and stock recorded at warehouse.`, "Receipt", order.id);
+    return true;
+  }
+  if (warehouseUser && normalized.startsWith("DCO ")) {
+    const suffixes = normalized.slice(4).split(",").map((item) => item.trim()).filter(Boolean);
+    const dockets = snapshot.deliveryDockets.filter((docket) => docket.status === "Ready" && suffixes.some((suffix) => {
+      const sales = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId);
+      return matchSuffix(sales?.cartId || sales?.id || "", suffix);
+    }));
+    if (!dockets.length) { await sendText(from, "Ready dockets nahi mile. Pehle OUT aur READY complete karein."); return true; }
+    const warehouseId = dockets[0].warehouseId;
+    if (dockets.some((docket) => docket.warehouseId !== warehouseId)) { await sendText(from, "Ek DCO mein sirf ek warehouse ke bills select karein."); return true; }
+    const agent = snapshot.users.find((item) => item.active && staffHasRole(item, ["Delivery", "Out Delivery", "Collection Agent"]));
+    if (!agent) { await sendText(from, "Delivery+Collection agent registered nahi hai. WhatsApp Admin se user add karein."); return true; }
+    await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: agent.username }, user);
+    const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)) && item.assignedTo === agent.username);
+    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created. ${agent.fullName} ko handover/WhatsApp task mil gaya.`, "DCO", consignment?.id);
+    return true;
+  }
+  if (deliveryUser && normalized === "READ") {
+    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.status !== "Delivered");
+    if (!tasks.length) await sendText(from, "Aapke paas koi active DCO delivery nahi hai.");
+    else await sendText(from, ["*Assigned DCO deliveries*", ...tasks.slice(0, 10).map((task) => `${shortId(task.id)} | ${task.routeStops.map((stop, index) => `${index + 1}. ${stop.supplierName}${stop.delivered ? " ✓" : ""}`).join(" | ")}`), "Delivered: DELIVERED <task last6> <stop no>"].join("\n"));
+    return true;
+  }
+  if (deliveryUser && normalized.startsWith("DELIVERED ")) {
+    const [, taskSuffix, stopText] = normalized.split(" "); const stopIndex = Number(stopText) - 1;
+    const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, taskSuffix));
+    if (!task || !task.routeStops[stopIndex]) { await sendText(from, "Task/stop nahi mila. READ type karke list dekhein."); return true; }
+    const proof = staffProofs.get(from); if (!proof) { await sendText(from, "Pehle delivery photo bhejein, phir DELIVERED command type karein."); return true; }
+    const stops: DeliveryRouteStop[] = task.routeStops.map((stop, index) => index === stopIndex ? { ...stop, delivered: true, deliveryProofName: proof } : stop);
+    const allDone = stops.every((stop) => stop.delivered);
+    await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: allDone ? "Delivered" : "Handed Over" });
+    staffProofs.delete(from);
+    const stop = stops[stopIndex];
+    await sendText(from, stop.paymentRequired ? `${stop.supplierName} delivered. Collection: COLLECT ${shortId(task.id)} ${stopIndex + 1} <amount> CASH|UPI|CHEQUE|LATER` : `${stop.supplierName} delivered. READ for next stop.`, "Delivery", task.id);
+    return true;
+  }
+  if (deliveryUser && normalized.startsWith("COLLECT ")) {
+    const parts = normalized.split(" ");
+    if (parts.length < 6) { await sendText(from, "Format: COLLECT <task last6> <stop no> <amount> CASH|UPI|CHEQUE|LATER"); return true; }
+    const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, parts[1]));
+    const stopIndex = Number(parts[2]) - 1; const amount = numberValue(parts[3]);
+    const mode = ({ CASH: "Cash", UPI: "UPI", CHEQUE: "Cheque", LATER: "LATER" } as const)[parts[4] as "CASH" | "UPI" | "CHEQUE" | "LATER"];
+    if (!mode || !task || !task.routeStops[stopIndex] || !task.routeStops[stopIndex].delivered || (mode !== "LATER" && amount <= 0)) { await sendText(from, "Collection details check karein; stop pehle DELIVERED hona chahiye."); return true; }
+    const stop = task.routeStops[stopIndex];
+    const party = snapshot.counterparties.find((item) => item.id === stop.supplierId);
+    const privilege = party as typeof party & { allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean; collectionTolerance?: number } | undefined;
+    if (mode === "LATER" && !privilege?.allowLaterCollection) { await sendText(from, "Is retailer ke liye later collection allowed nahi hai."); return true; }
+    if (mode === "Cheque" && !privilege?.allowChequeCollection) { await sendText(from, "Is retailer ke liye cheque collection allowed nahi hai."); return true; }
+    const tolerance = numberValue(privilege?.collectionTolerance); if (mode !== "LATER" && amount + tolerance < stop.amountToPay && !privilege?.allowPartialCollection) { await sendText(from, `Full collection required: ₹${stop.amountToPay.toFixed(2)}. Short collection WhatsApp Admin approval par jayegi.`); return true; }
+    const proof = staffProofs.get(from);
+    if (mode !== "LATER" && !proof) { await sendText(from, "Pehle UPI/cash/cheque proof photo bhejein, phir COLLECT command type karein."); return true; }
+    if (mode !== "LATER") await createPayment({ side: "Sales", linkedOrderId: stop.orderId, amount, mode, referenceNumber: `WA-${task.id}-${stopIndex + 1}-${Date.now()}`, proofName: proof, verificationStatus: "Submitted", verificationNote: `WhatsApp collection by ${user.fullName}` }, user);
+    const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === stopIndex ? { ...item, paid: mode !== "LATER" && amount + tolerance >= item.amountToPay, collectionStatus: mode === "LATER" ? "Later" : "Collected", collectionMode: mode === "LATER" ? undefined : mode, collectionAmount: mode === "LATER" ? undefined : amount, collectionProofName: proof } : item);
+    await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: proof, status: task.status });
+    staffProofs.delete(from); await sendText(from, mode === "LATER" ? "Later collection recorded. READ for pending deliveries." : `₹${amount.toFixed(2)} ${mode} collection recorded. READ for pending deliveries.`, "Collection", task.id);
+    return true;
+  }
+  if (warehouseUser || deliveryUser) { await sendStaffHelp(from, user); return true; }
+  return false;
+}
+
 async function handleInboundMessage(message: JsonObject) {
   const from = normalizeWhatsAppPhone(text(message.from));
   const messageId = text(message.id);
@@ -1561,6 +1709,12 @@ async function handleInboundMessage(message: JsonObject) {
     await sendText(from, trainingLinkReply(guideCommand, user?.roles?.length ? user.roles : user ? [user.role] : [], user ? isWhatsAppAdminUser(user) : false)!, "TrainingGuide");
     return;
   }
+  const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
+    FROM users WHERE active=TRUE AND regexp_replace(COALESCE(mobile_number,''),'[^0-9]','','g') IN ($1,$2,$3)`,
+    [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
+  // Staff numbers take command precedence. A shared/ambiguous number stays out of
+  // the command path so permissions can never be accidentally combined.
+  if (staff.rows.length === 1 && await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
   const profile = await getRetailerByPhone(from);
   if (!profile) {
     try {
