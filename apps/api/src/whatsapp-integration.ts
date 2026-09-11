@@ -1635,6 +1635,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${stop.amountToPay.toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
+  if (action === "wa-settlement:list") { await sendText(from, "LIST COLLECTION type karein."); return true; }
+  if (action === "wa-settlement:confirm") {
+    const totals = await executeDatabaseQuery<Record<string, unknown>>(`SELECT COALESCE(SUM(amount),0) AS amount FROM payments WHERE side='Sales' AND created_by=$1 AND reference_number LIKE 'WA-%'`, [user.fullName]);
+    await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Delivery',$2,$3,$4,'Operational',NOW())`, [id("SETTLE"), String(user.id), `WhatsApp settlement: Rs.${numberValue(totals.rows[0]?.amount).toFixed(2)}`, user.fullName]);
+    await sendText(from, "Settlement recorded. Agla SUM sirf is settlement ke baad ki collection dikhayega.", "CollectionSettlement", String(user.id)); return true;
+  }
   if (messageType !== "text") return false;
   const command = text((message.text as JsonObject | undefined)?.body).trim();
   const normalized = command.toUpperCase().replace(/\s+/g, " ");
@@ -1711,10 +1717,22 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendText(from, `DCO ${shortId(consignment?.id || "created")} created. ${agent.fullName} ko handover/WhatsApp task mil gaya.`, "DCO", consignment?.id);
     return true;
   }
-  if (deliveryUser && normalized === "READ") {
+  if (deliveryUser && normalized === "LIST") {
     const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.status !== "Delivered");
     if (!tasks.length) await sendText(from, "Aapke paas koi active DCO delivery nahi hai.");
-    else await sendText(from, ["*Assigned DCO deliveries*", ...tasks.slice(0, 10).map((task) => `${shortId(task.id)} | ${task.routeStops.map((stop, index) => `${index + 1}. ${stop.supplierName}${stop.delivered ? " ✓" : ""}`).join(" | ")}`), "Delivered: DELIVERED <task last6> <stop no>"].join("\n"));
+    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Apna DCO select karein. Phir retailer list khulegi." }, action: { button: "View DCO", sections: [{ title: "Assigned DCO", rows: tasks.slice(0, 10).map((task) => ({ id: `wa-delivery:task:${encodeURIComponent(task.id)}`, title: `DCO ${shortId(task.consignmentId || task.id)}`, description: compact(task.routeStops.filter((stop) => !stop.delivered).map((stop) => stop.supplierName).join(", "), 72) })) }] } } }, "Delivery");
+    return true;
+  }
+  if (deliveryUser && (normalized === "SUM" || normalized === "LIST COLLECTION")) {
+    const since = await executeDatabaseQuery<{ created_at: string }>(`SELECT created_at FROM note_records WHERE entity_type='Delivery' AND entity_id=$1 AND note LIKE 'WhatsApp settlement%' ORDER BY created_at DESC LIMIT 1`, [String(user.id)]);
+    const totals = await executeDatabaseQuery<Record<string, unknown>>(`SELECT mode,COALESCE(SUM(amount),0) AS amount FROM payments WHERE side='Sales' AND created_by=$1 AND created_at > COALESCE($2::timestamptz,'epoch'::timestamptz) AND reference_number LIKE 'WA-%' GROUP BY mode ORDER BY mode`, [user.fullName, since.rows[0]?.created_at || null]);
+    if (normalized === "LIST COLLECTION") {
+      const rows = await executeDatabaseQuery<Record<string, unknown>>(`SELECT c.name, p.amount,p.mode,p.created_at FROM payments p LEFT JOIN sales_orders so ON so.id=p.linked_order_id LEFT JOIN counterparties c ON c.id=so.shop_id WHERE p.side='Sales' AND p.created_by=$1 AND p.created_at > COALESCE($2::timestamptz,'epoch'::timestamptz) AND p.reference_number LIKE 'WA-%' ORDER BY p.created_at`, [user.fullName, since.rows[0]?.created_at || null]);
+      await sendText(from, rows.rows.length ? ["*Collection list since last settlement*", ...rows.rows.map((row) => `${text(row.name) || "Retailer"}: Rs.${numberValue(row.amount).toFixed(2)} ${text(row.mode)}`)].join("\n") : "Last settlement ke baad koi collection nahi hai.");
+    } else {
+      const byMode = new Map(totals.rows.map((row) => [text(row.mode), numberValue(row.amount)])); const grand = totals.rows.reduce((sum, row) => sum + numberValue(row.amount), 0);
+      await sendButtons(from, `*Collection summary since last settlement*\nCash: Rs.${(byMode.get("Cash") || 0).toFixed(2)}\nUPI: Rs.${(byMode.get("UPI") || 0).toFixed(2)}\nCheque: Rs.${(byMode.get("Cheque") || 0).toFixed(2)}\n*Grand total: Rs.${grand.toFixed(2)}*\n\nOffice mein cash tally karke hi settlement karein.`, [{ id: "wa-settlement:confirm", title: "Settle" }, { id: "wa-settlement:list", title: "Retailer list" }], "CollectionSummary", String(user.id));
+    }
     return true;
   }
   if (deliveryUser && normalized.startsWith("DELIVERED ")) {
