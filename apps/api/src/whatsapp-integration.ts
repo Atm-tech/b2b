@@ -2058,18 +2058,16 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (warehouseUser && normalized.startsWith("DCO ")) {
     const suffixes = normalized.slice(4).split(",").map((item) => item.trim()).filter(Boolean);
-    const dockets = snapshot.deliveryDockets.filter((docket) => docket.status === "Ready" && suffixes.some((suffix) => {
-      const sales = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId);
-      return matchSuffix(sales?.cartId || sales?.id || "", suffix);
-    }));
-    if (!dockets.length) { await sendText(from, "Ready dockets nahi mile. Pehle OUT aur READY complete karein."); return true; }
-    const warehouseId = dockets[0].warehouseId;
-    if (dockets.some((docket) => docket.warehouseId !== warehouseId)) { await sendText(from, "Ek DCO mein sirf ek warehouse ke bills select karein."); return true; }
-    const agent = snapshot.users.find((item) => item.active && staffHasRole(item, ["Delivery", "Out Delivery", "Collection Agent"]));
-    if (!agent) { await sendText(from, "Delivery+Collection agent registered nahi hai. WhatsApp Admin se user add karein."); return true; }
-    await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: agent.username }, user);
-    const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)) && item.assignedTo === agent.username);
-    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created and ready. Physical handover ke baad type karein: HANDOVER ${shortId(consignment?.id || "")}.`, "DCO", consignment?.id);
+    const readyCarts = new Map<string, typeof snapshot.salesOrders>();
+    for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) {
+      const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId);
+      if (order) { const cartId = order.cartId || order.id; if (suffixes.some((suffix) => matchSuffix(cartId, suffix) || matchSuffix(order.id, suffix))) readyCarts.set(cartId, [...(readyCarts.get(cartId) || []), order]); }
+    }
+    const matches = [...readyCarts.entries()];
+    if (!matches.length) { await sendText(from, "Ready SO nahi mila. DCO type karke list dekhein, ya SO last digits check karein."); return true; }
+    if (matches.length > 1) { await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Multiple SO mile. DCO mein add karne ke liye ek select karein." }, action: { button: "Select SO", sections: [{ title: "Matching packed SO", rows: matches.slice(0, 10).map(([cartId, lines]) => ({ id: `wa-dco:add:${encodeURIComponent(cartId)}`, title: `SO ${shortId(cartId)}`, description: compact(`${lines[0].shopName} - ${lines.length} product(s)`, 72) })) }] } } }, "DCOBuild"); return true; }
+    const [cartId] = matches[0]; const chosen = Array.from(new Set([...(dcoBuildSessions.get(from) || []), cartId])); dcoBuildSessions.set(from, chosen);
+    await sendButtons(from, `SO ${shortId(cartId)} added. Total selected: ${chosen.length}.`, [{ id: "wa-dco:list", title: "Add another" }, { id: "wa-dco:create", title: "Create DCO" }], "DCOBuild");
     return true;
   }
   if (warehouseUser && normalized === "DCO") {
