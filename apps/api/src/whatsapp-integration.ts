@@ -1610,8 +1610,8 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
   const lines = ["*B CONNECT staff WhatsApp commands*"];
   if (warehouse) lines.push("Warehouse: IN, OUT, READY <SO last 4>, DCO <SO last4,SO last4>");
-  if (delivery) lines.push("Delivery: READ, DELIVERED <task last4> <stop no>, COLLECT <task last4> <stop no> <amount> CASH|UPI|CHEQUE|LATER");
-  lines.push("Weight/delivery/payment photo pehle bhejein; phir command type karein.");
+  if (delivery) lines.push("Delivery: LIST (DCO/retailer select), SUM, LIST COLLECTION, SETTLE. Buttons se delivery aur collection complete karein.");
+  lines.push("Weight/delivery/payment photo maange jaane par bhejein; phir screen par aane wala button select karein.");
   await sendText(phone, lines.join("\n"), "StaffCommandHelp");
 }
 
@@ -1626,8 +1626,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === pending.taskId); const stop = task?.routeStops[pending.stopIndex];
       const party = snapshot.counterparties.find((item) => item.id === stop?.supplierId) as { allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean } | undefined;
       if (task && stop) {
+        const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === pending.stopIndex ? { ...item, delivered: true, deliveryProofName: staffProofs.get(from) } : item);
+        const allDelivered = stops.every((item) => item.delivered);
+        await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: allDelivered ? "Delivered" : "Handed Over" });
         const buttons = party?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${pending.stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }];
         await sendButtons(from, `${stop.supplierName} delivery photo saved. Collection amount: Rs.${stop.amountToPay.toFixed(2)}`, buttons, "Delivery", task.id);
+        return true;
       }
     }
     await sendText(from, "Proof saved. Ab apna command type karein.", "StaffProof");
