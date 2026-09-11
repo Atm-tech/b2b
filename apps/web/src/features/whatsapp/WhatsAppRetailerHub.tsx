@@ -558,6 +558,20 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
 
+  async function prepareMockDrill() {
+    setBusy(true); onError("");
+    try {
+      await api.post("/whatsapp/setup/test-retailers", {}, { headers });
+      const { data } = await api.post<{ products: unknown[] }>("/whatsapp/setup/test-products", {}, { headers });
+      await refresh();
+      onMessage(`${data.products.length} test products and 10 test retailers are ready for the mock drill.`);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createWhatsAppStaff(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true); onError("");
@@ -764,7 +778,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /> : null}
 
     {whatsappAdmin && activeSection === "Retailers" ? <>
-    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
+    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button" type="button" disabled={busy} onClick={() => void prepareMockDrill()}>Prepare mock drill</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
       {pendingRegistrations.length ? pendingRegistrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
     </section>
 
