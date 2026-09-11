@@ -1780,12 +1780,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
     packingWeightResults.delete(from); packingPhotoProofs.delete(from);
-    await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO ${shortId(cartId)} type karke ready SO bundle banayein.`, "WarehouseSO", cartId);
+    await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO type karke ready SO select karke bundle banayein.`, "WarehouseSO", cartId);
     return true;
   }
   if (action.startsWith("wa-so:change:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
+    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
     return true;
