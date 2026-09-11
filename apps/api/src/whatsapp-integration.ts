@@ -1669,6 +1669,22 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const interactive = message.interactive as JsonObject | undefined;
   const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
   const action = text(reply?.id);
+  if (action.startsWith("wa-in:po:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.slice("wa-in:po:".length)); const snapshot = await getSnapshot();
+    const lines = snapshot.purchaseOrders.filter((item) => (item.cartId || item.id) === cartId && !["Received", "Closed", "Cancelled"].includes(item.status));
+    if (!lines.length) { await sendText(from, "PO active nahi hai. IN type karke fresh list dekhein."); return true; }
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `PO ${shortId(cartId)} - received product select karein.` }, action: { button: "Products", sections: [{ title: lines[0].supplierName, rows: lines.slice(0, 10).map((line) => ({ id: `wa-in:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Ordered ${line.quantityOrdered} | Received ${line.quantityReceived}` })) }] } } }, "WarehouseIN", cartId);
+    return true;
+  }
+  if (action.startsWith("wa-in:line:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText); const snapshot = await getSnapshot();
+    const order = snapshot.purchaseOrders.find((item) => (item.cartId || item.id) === cartId && item.productSku === sku && !["Received", "Closed", "Cancelled"].includes(item.status));
+    if (!order) { await sendText(from, "PO product active nahi hai. IN type karke fresh list dekhein."); return true; }
+    await sendText(from, `*${order.productSku}*\nOrdered: ${order.quantityOrdered}\nAlready received: ${order.quantityReceived}\n\nWeight photo bhejein, phir type karein:\nRECEIVE ${shortId(cartId)} ${order.productSku} <qty> <gross weight kg>`, "WarehouseIN", cartId);
+    return true;
+  }
   if (action.startsWith("wa-delivery:task:")) {
     const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && item.assignedTo.toLowerCase() === user.username.toLowerCase());
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
@@ -1830,7 +1846,8 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     const rows = [...carts.entries()].slice(0, 10);
     if (!rows.length) await sendText(from, "Active PO nahi mila. IN <last 4 digits> try karein.");
-    else await sendText(from, ["*IN - active purchase orders*", ...rows.map(([key, lines]) => `${shortId(key)} | ${lines[0].supplierName} | ${lines.map((line) => `${line.productSku} ${line.quantityReceived}/${line.quantityOrdered}`).join(", ")}`), "Receive: RECEIVE <PO last6> <SKU> <qty> <gross weight kg>"].join("\n"));
+    else if (!suffix) await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Active PO select karein. Phir received product select hoga." }, action: { button: "View PO", sections: [{ title: "Active purchase orders", rows: rows.map(([key, lines]) => ({ id: `wa-in:po:${encodeURIComponent(key)}`, title: `PO ${shortId(key)}`, description: compact(`${lines[0].supplierName} - ${lines.length} product(s)`, 72) })) }] } } }, "WarehouseIN");
+    else await sendText(from, ["*IN - active purchase orders*", ...rows.map(([key, lines]) => `${shortId(key)} | ${lines[0].supplierName} | ${lines.map((line) => `${line.productSku} ${line.quantityReceived}/${line.quantityOrdered}`).join(", ")}`), "Weight photo bhejein, phir RECEIVE <PO last6> <SKU> <qty> <gross weight kg> type karein."].join("\n"));
     return true;
   }
   if (warehouseUser && normalized.startsWith("RECEIVE ")) {
