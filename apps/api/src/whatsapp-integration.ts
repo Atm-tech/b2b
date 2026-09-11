@@ -1745,10 +1745,11 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
         const tolerance = numberValue(party?.collectionTolerance);
         if (reading?.visible) {
           await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Delivery',$2,$3,$4,'Operational',NOW())`, [id("PAYREAD"), task.id, `${paymentPending.mode} proof read Rs.${reading.amount.toFixed(2)}${reading.payeeName ? `; payee ${reading.payeeName}` : ""}${reading.transactionDate ? `; date ${reading.transactionDate}` : ""}.`, user.fullName]);
-          if (reading.amount > stop.amountToPay + tolerance || (paymentPending.kind === "full" && Math.abs(reading.amount - stop.amountToPay) > tolerance) || (reading.amount + tolerance < stop.amountToPay && !party?.allowPartialCollection)) {
-            await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, reading.amount, `${paymentPending.mode} proof amount mismatch`);
+          const chequePayeeMismatch = paymentPending.mode === "Cheque" && Boolean(reading.payeeName) && !reading.payeeName.toLowerCase().includes("aapoorti");
+          if (reading.amount > stop.amountToPay + tolerance || (paymentPending.kind === "full" && Math.abs(reading.amount - stop.amountToPay) > tolerance) || (reading.amount + tolerance < stop.amountToPay && !party?.allowPartialCollection) || chequePayeeMismatch) {
+            await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, reading.amount, chequePayeeMismatch ? `Cheque payee mismatch: ${reading.payeeName}` : `${paymentPending.mode} proof amount mismatch`);
             paymentProofPending.set(from, paymentPending);
-            await sendText(from, `${paymentPending.mode} proof mein Rs.${reading.amount.toFixed(2)} read hua, bill Rs.${stop.amountToPay.toFixed(2)} hai. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin ya clear proof dobara bhejein.`, "Collection", task.id);
+            await sendText(from, chequePayeeMismatch ? `Cheque payee *${reading.payeeName}* read hua; Aapoorti ke naam par cheque required hai. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin.` : `${paymentPending.mode} proof mein Rs.${reading.amount.toFixed(2)} read hua, bill Rs.${stop.amountToPay.toFixed(2)} hai. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin ya clear proof dobara bhejein.`, "Collection", task.id);
             return true;
           }
           await sendButtons(from, `${paymentPending.mode} proof read: Rs.${reading.amount.toFixed(2)}${reading.payeeName ? `\nPayee: ${reading.payeeName}` : ""}\nConfirm karein.`, [{ id: `wa-proof:confirm:${paymentPending.mode.toLowerCase()}:${paymentPending.kind}:${task.id}:${paymentPending.stopIndex}:${reading.amount}`, title: `Confirm Rs.${reading.amount.toFixed(2)}` }], "Collection", task.id);
