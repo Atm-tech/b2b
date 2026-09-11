@@ -1590,6 +1590,7 @@ async function acceptOffer(offerId: string, profile: RetailerProfile, inboundMes
 const staffProofs = new Map<string, string>();
 const deliveryProofPending = new Map<string, { taskId: string; stopIndex: number }>();
 const cashCollectionPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; step: number; counts: number[] }>();
+const paymentProofPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; mode: "UPI" | "Cheque" }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
 function staffHasRole(user: StaffUser, roles: string[]) {
@@ -1633,6 +1634,17 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
         await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: allDelivered ? "Delivered" : "Handed Over" });
         const buttons = party?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${pending.stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }];
         await sendButtons(from, `${stop.supplierName} delivery photo saved. Collection amount: Rs.${stop.amountToPay.toFixed(2)}`, buttons, "Delivery", task.id);
+        return true;
+      }
+    }
+    const paymentPending = paymentProofPending.get(from);
+    if (paymentPending) {
+      paymentProofPending.delete(from);
+      const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === paymentPending.taskId); const stop = task?.routeStops[paymentPending.stopIndex];
+      if (task && stop) {
+        if (paymentPending.kind === "full") {
+          await sendButtons(from, `${paymentPending.mode} proof saved. Amount Rs.${stop.amountToPay.toFixed(2)} confirm karein.`, [{ id: `wa-proof:confirm:${paymentPending.mode.toLowerCase()}:${task.id}:${paymentPending.stopIndex}:${stop.amountToPay}`, title: `Confirm Rs.${stop.amountToPay.toFixed(2)}` }], "Collection", task.id);
+        } else await sendText(from, `${paymentPending.mode} proof saved. Partial amount type karein: AMOUNT ${shortId(task.id)} ${paymentPending.stopIndex + 1} <amount>.` , "Collection", task.id);
         return true;
       }
     }
@@ -1681,8 +1693,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       await sendText(from, `Cash collection due: Rs.${stop.amountToPay.toFixed(2)}. ₹500 ke notes kitne hain? Sirf number bhejein (0 bhi chalega).`, "Collection", taskId);
     }
     else {
+      const proofMode = mode === "upi" ? "UPI" : "Cheque";
+      paymentProofPending.set(from, { taskId, stopIndex: Number(indexText), kind: kind === "partial" ? "partial" : "full", mode: proofMode });
       if (mode === "upi") await sendCollectionQr(from, stop.amountToPay, taskId);
-      await sendText(from, `${mode === "upi" ? "UPI" : "Cheque"} proof photo bhejein, phir COLLECT ${shortId(taskId)} ${Number(indexText) + 1} <amount> ${mode.toUpperCase()} type karein.`, "Collection", taskId);
+      await sendText(from, `${proofMode} proof photo bhejein. Photo ke baad confirmation button aa jayega.`, "Collection", taskId);
     }
     return true;
   }
@@ -1697,6 +1711,17 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === stopIndex ? { ...item, paid: amount + tolerance >= item.amountToPay, collectionStatus: "Collected", collectionMode: "Cash", collectionAmount: amount } : item);
     await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: task.status });
     await sendText(from, `Rs.${amount.toFixed(2)} cash collection recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id);
+    return true;
+  }
+  if (action.startsWith("wa-proof:confirm:")) {
+    const [, , , modeText, taskId, indexText, amountText] = action.split(":"); const amount = numberValue(amountText); const mode = modeText === "cheque" ? "Cheque" : "UPI";
+    const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    if (!task || !stop || amount <= 0) { await sendText(from, "Collection unavailable hai. LIST se retailer dobara select karein."); return true; }
+    const proof = staffProofs.get(from); if (!proof) { await sendText(from, "Proof photo missing hai. Payment mode dobara select karein."); return true; }
+    await createPayment({ side: "Sales", linkedOrderId: stop.orderId, amount, mode, referenceNumber: `WA-${task.id}-${stopIndex + 1}-${Date.now()}`, proofName: proof, verificationStatus: "Submitted", verificationNote: `WhatsApp ${mode} collection by ${user.fullName}` }, user);
+    const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === stopIndex ? { ...item, paid: true, collectionStatus: "Collected", collectionMode: mode, collectionAmount: amount, collectionProofName: proof } : item);
+    await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: task.status });
+    staffProofs.delete(from); await sendText(from, `Rs.${amount.toFixed(2)} ${mode} collection recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id);
     return true;
   }
   if (action === "wa-settlement:list") { await sendText(from, "LIST COLLECTION type karein."); return true; }
