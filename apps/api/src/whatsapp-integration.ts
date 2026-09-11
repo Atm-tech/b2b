@@ -479,9 +479,13 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
   if (welcomeTemplate) {
     await sendTemplate(retailer.phoneE164, welcomeTemplate, [retailer.retailerName, retailer.salesmanName], "BroadcastWelcome", counterpartyId);
   } else {
-    await sendText(retailer.phoneE164,
+    await sendButtons(retailer.phoneE164,
       `Namaste ${retailer.retailerName} 👋\n\n*Aapoorti B Connect* mein aapka swagat hai. Aapke order ${retailer.salesmanName} handle karenge.\n\nYahin par product dhoondhiye, MRP aur apna special rate dekhiye, quantity choose kijiye aur cart finalize kijiye.\n\n*Order kaise karein*\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. Quantity bhejein\n4. Aur item chahiye to Add More choose karein\n5. Total check karke Finalize karein\n\n*Quick commands*\n• *demo* — step-by-step practice\n• *catalogue* — poori product list\n• *help* — madad\n• *chat* — salesperson se baat\n\nAap product ka naam bhejkar order shuru kar sakte hain.`,
-      "BroadcastWelcome", counterpartyId);
+      [
+        { id: "wa-guide:open", title: "Open guide" },
+        { id: "wa-menu:catalogue", title: "View catalogue" },
+        { id: "wa-menu:agent", title: "Chat with sales" }
+      ], "BroadcastWelcome", counterpartyId);
   }
 }
 
