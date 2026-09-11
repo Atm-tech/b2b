@@ -1762,6 +1762,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    packingChangePending.delete(from);
     const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
     const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
@@ -1982,6 +1983,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   const selectedPackingChange = packingChangePending.get(from);
   if (warehouseUser && selectedPackingChange) {
+    if (["CANCEL", "BACK", "MENU"].includes(normalized)) { packingChangePending.delete(from); await sendText(from, "Product change cancel ho gaya. SO type karke order dobara select karein.", "WarehouseSO", selectedPackingChange.cartId); return true; }
     const quantity = numberValue(command);
     const { cartId, sku } = selectedPackingChange;
     const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
