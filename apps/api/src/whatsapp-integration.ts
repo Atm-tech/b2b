@@ -458,6 +458,23 @@ async function sendTemplate(phone: string, name: string, parameters: string[], r
   }, relatedEntityType, relatedEntityId);
 }
 
+async function sendWelcomeTemplate(phone: string, retailerName: string, salespersonName: string, counterpartyId: string) {
+  const name = text(process.env.WHATSAPP_WELCOME_TEMPLATE);
+  if (!name) throw new Error("WHATSAPP_WELCOME_TEMPLATE is required outside the 24-hour chat window.");
+  const urlButton = text(process.env.WHATSAPP_WELCOME_TEMPLATE_URL_BUTTON).toLowerCase() === "true";
+  if (!urlButton) throw new Error("Welcome template must include the approved Open guide URL button. Set WHATSAPP_WELCOME_TEMPLATE_URL_BUTTON=true only after it is approved in Meta.");
+  return sendGraphMessage(phone, {
+    type: "template",
+    template: {
+      name,
+      language: { code: process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en" },
+      components: [
+        { type: "body", parameters: [retailerName, salespersonName].map((value) => ({ type: "text", text: value.slice(0, 1024) })) }
+      ]
+    }
+  }, "BroadcastWelcome", counterpartyId);
+}
+
 async function sendFirstTimeWelcome(counterpartyId: string) {
   const retailerResult = await executeDatabaseQuery<Record<string, unknown>>(
     `SELECT wr.*, c.name AS retailer_name, u.full_name AS salesman_name
@@ -475,10 +492,8 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
      LIMIT 1`, [counterpartyId]
   );
   if (alreadyWelcomed.rowCount) return;
-  const welcomeTemplate = text(process.env.WHATSAPP_WELCOME_TEMPLATE);
-  if (welcomeTemplate) {
-    await sendTemplate(retailer.phoneE164, welcomeTemplate, [retailer.retailerName, retailer.salesmanName], "BroadcastWelcome", counterpartyId);
-  } else {
+  const activeWindow = await executeDatabaseQuery(`SELECT id FROM whatsapp_messages WHERE phone_e164=$1 AND direction='Inbound' AND created_at >= NOW() - INTERVAL '24 hours' LIMIT 1`, [retailer.phoneE164]);
+  if (activeWindow.rowCount) {
     await sendButtons(retailer.phoneE164,
       `Namaste ${retailer.retailerName} 👋\n\n*Aapoorti B Connect* mein aapka swagat hai. Aapke order ${retailer.salesmanName} handle karenge.\n\nYahin par product dhoondhiye, MRP aur apna special rate dekhiye, quantity choose kijiye aur cart finalize kijiye.\n\n*Order kaise karein*\n1. Product ka naam type karein — jaise Lux, Maggi ya Coke\n2. Sahi item select karein\n3. Quantity bhejein\n4. Aur item chahiye to Add More choose karein\n5. Total check karke Finalize karein\n\n*Quick commands*\n• *demo* — step-by-step practice\n• *catalogue* — poori product list\n• *help* — madad\n• *chat* — salesperson se baat\n\nAap product ka naam bhejkar order shuru kar sakte hain.`,
       [
@@ -486,6 +501,8 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
         { id: "wa-menu:catalogue", title: "View catalogue" },
         { id: "wa-menu:agent", title: "Chat with sales" }
       ], "BroadcastWelcome", counterpartyId);
+  } else {
+    await sendWelcomeTemplate(retailer.phoneE164, retailer.retailerName, retailer.salesmanName, counterpartyId);
   }
 }
 
