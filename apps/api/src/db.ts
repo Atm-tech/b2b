@@ -583,21 +583,15 @@ async function seedDatabase() {
     { username: "admin", fullName: "Administrator", role: "Admin" as UserRole, password: "1234" },
     { username: "dm", fullName: "Delivery Manager", role: "Delivery Manager" as UserRole, password: "dm" },
     { username: "da", fullName: "Data Analyst", role: "Data Analyst" as UserRole, password: "da" },
-    { username: "c", fullName: "Collection Agent", role: "Collection Agent" as UserRole, password: "c" },
     { username: "in", fullName: "In Delivery", role: "In Delivery" as UserRole, password: "in" },
-    { username: "out", fullName: "Out Delivery", role: "Out Delivery" as UserRole, password: "out" }
+    { username: "out", fullName: "Delivery Out & Collection", role: "Out Delivery" as UserRole, roles: ["Out Delivery", "Collection Agent"], password: "out" }
   ];
   for (const user of seededUsers) {
     await query(
       `INSERT INTO users (username, full_name, mobile_number, role, roles_json, warehouse_ids_json, password, active, created_at)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, TRUE, $8)
-       ON CONFLICT (username) DO UPDATE
-       SET full_name = EXCLUDED.full_name,
-           role = EXCLUDED.role,
-           roles_json = EXCLUDED.roles_json,
-           password = EXCLUDED.password,
-           active = TRUE`,
-      [user.username.trim().toLowerCase(), user.fullName, "", user.role, JSON.stringify([user.role]), JSON.stringify([]), user.password.trim().toLowerCase(), now()]
+       ON CONFLICT (username) DO NOTHING`,
+      [user.username.trim().toLowerCase(), user.fullName, "", user.role, JSON.stringify(user.roles || [user.role]), JSON.stringify([]), user.password.trim().toLowerCase(), now()]
     );
   }
 }
@@ -1871,7 +1865,7 @@ export async function getUserBySessionToken(token: string) {
     `SELECT u.*
      FROM sessions s
      JOIN users u ON u.id = s.user_id
-     WHERE s.token = $1`,
+     WHERE s.token = $1 AND u.active = TRUE`,
     [token]
   );
   if (!row) return null;

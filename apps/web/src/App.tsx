@@ -888,7 +888,7 @@ function App() {
   const isSalesOnly = currentRoles.includes("Sales") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Warehouse Manager");
   const isWarehouseOnly = currentRoles.includes("Warehouse Manager") && !currentRoles.some((role) => role === "Admin" || role === "Accounts" || role === "Purchaser" || role === "Sales");
   const isDeliveryManager = currentRoles.includes("Delivery Manager");
-  const isDeliveryOnly = currentRoles.length === 1 && (currentRoles[0] === "In Delivery" || currentRoles[0] === "Out Delivery" || currentRoles[0] === "Delivery");
+  const isDeliveryOnly = isDeliveryExecutive(currentUser) && currentRoles.every((role) => ["In Delivery", "Out Delivery", "Delivery", "Collection Agent"].includes(role));
   const forceSimpleMode = shouldForceSimpleMode(currentUser);
   const effectiveSimpleMode = forceSimpleMode ? true : simpleMode;
   const visibleViews = getVisibleViewsForMode(currentUser, effectiveSimpleMode);
@@ -896,11 +896,14 @@ function App() {
   const purchaserBottomViews: ViewKey[] = ["Overview", "Purchase", "Purchases"];
   const salesBottomViews: ViewKey[] = ["Overview", "Sales", "SalesOrders"];
   const collectionBottomViews: ViewKey[] = ["Overview", "Payments", "SalesOrders"];
+  const deliveryCollectionBottomViews: ViewKey[] = ["Overview", "CurrentDelivery", "NewAssignment", "Payments"];
   const accountsBottomViews: ViewKey[] = ["Overview", "Payments", "GoodsWarrants"];
   const operationalBottomViews: ViewKey[] = currentRoles.includes("Purchaser") && !currentRoles.includes("Sales")
     ? purchaserBottomViews.filter((view) => safeVisibleViews.includes(view))
     : currentRoles.includes("Sales") && !currentRoles.includes("Purchaser")
       ? salesBottomViews.filter((view) => safeVisibleViews.includes(view))
+      : isDeliveryOnly && isCollectionAgent
+        ? deliveryCollectionBottomViews.filter((view) => safeVisibleViews.includes(view))
       : currentRoles.includes("Collection Agent")
         ? collectionBottomViews.filter((view) => safeVisibleViews.includes(view))
         : currentRoles.includes("Accounts")
