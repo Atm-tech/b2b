@@ -11,4 +11,12 @@
 - Content comes from `/guides/:slug` after server authorization (retailer excepted); protected lesson content is not shipped in the frontend bundle. Guide/API responses are not cached by the service worker. All guides are noindex and outside normal navigation.
 - Activities use sample data and do not create operational orders, payments or messages.
 
+## Training links in chat and broadcasts
+
+- Incoming WhatsApp `guide` or `/guide` is handled after message deduplication and before registration, retailer lookup and cart actions. It sends the public retailer link for unregistered numbers and role links for an unambiguously matched active staff mobile number. Both admin types receive the whole library. `guide <module>` supports the existing aliases and only shares permitted module links; opening staff content still requires an authenticated session.
+- Typing `guide` in the app's global assistant opens the training library in a separate tab, preserving any current order draft. `guide <module>` opens that module's protected route.
+- Marketing → Broadcast includes a training preview and **Send training link** for the selected retailer audience. It uses the existing consent, permissions, confirmation and campaign reporting flow. The backend constructs the public retailer URL from `PUBLIC_WEB_URL` (default: the production Vercel origin).
+- With an approved Meta template selected, its body parameters must contain `{guide_link}` in the correct approved parameter position. The backend rejects a training broadcast that would omit the URL, including truncation beyond Meta's parameter limit. Ordinary announcements retain their existing behavior.
+- These changes do not add staff operational WhatsApp bot commands. Staff lesson scope needs to match the intended chat surface before replacing the existing app workflow lessons.
+
 Validation: `npm test`, `npm run build`, and `apps/api/test/guides.test.ts` cover the role/route matrix, public retailer, both admins, stale sessions and salesperson recipient scope. Browser checks cover mobile layout, search practice, audio start/end/replay, chapter switching, denied role and staff login.

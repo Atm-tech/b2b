@@ -91,6 +91,7 @@ type WhatsAppDraft = {
   lines: DraftLine[];
 };
 type Dashboard = {
+  trainingBroadcast?: { message: string; url: string };
   permissions: { whatsappAdmin: boolean };
   configuration: { connected: boolean; mode: string; phoneNumberIdPresent: boolean; catalogIdPresent: boolean; verifyTokenPresent: boolean; appSecretPresent: boolean };
   retailers: RetailerProfile[];
@@ -580,15 +581,21 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     }
   }
 
-  async function sendBroadcast(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!window.confirm(`Send this WhatsApp message to ${broadcastRetailerIds.length} selected retailer${broadcastRetailerIds.length === 1 ? "" : "s"}?`)) return;
+  async function sendBroadcast(event?: FormEvent<HTMLFormElement>, training = false) {
+    event?.preventDefault();
+    const message = training ? dashboard?.trainingBroadcast?.message || "" : broadcastMessage;
+    if (training && !message) return;
+    if (training && broadcastTemplate && !broadcastTemplateParameters.includes("{guide_link}") && !broadcastTemplateParameters.includes(dashboard!.trainingBroadcast!.url)) {
+      onError("Approved training template ke sahi parameter mein {guide_link} daalein."); return;
+    }
+    if (!window.confirm(`Send ${training ? "training link" : "this WhatsApp message"} to ${broadcastRetailerIds.length} selected retailer${broadcastRetailerIds.length === 1 ? "" : "s"}?\n\n${broadcastTemplate ? `Template: ${broadcastTemplate}\n${broadcastTemplateParameters.replaceAll("{guide_link}", dashboard?.trainingBroadcast?.url || "")}` : message}`)) return;
     setBusy(true); onError(""); setBroadcastReport("");
     try {
       const { data } = await api.post<{ sent: number; skipped: number; failed: number; dashboard: Dashboard; results: Array<{ retailer: string; status: string; error?: string }> }>("/whatsapp/broadcasts", {
         counterpartyIds: broadcastRetailerIds,
-        title: broadcastTitle,
-        message: broadcastMessage,
+        title: training ? "WhatsApp training" : broadcastTitle,
+        message,
+        training,
         templateName: broadcastTemplate,
         templateParameters: broadcastTemplateParameters.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
       }, { headers });
@@ -813,7 +820,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <div className="wa-broadcast-presets wide-field"><button className="ghost-button" type="button" onClick={() => setBroadcastMessage(festivalBroadcast)}>Festival message</button><button className="ghost-button" type="button" onClick={() => setBroadcastMessage(featureBroadcast)}>New feature</button><button className="ghost-button" type="button" onClick={() => setBroadcastMessage("")}>Clear</button></div>
       <label className="wide-field">Announcement<textarea rows={13} value={broadcastMessage} onChange={(event) => setBroadcastMessage(event.target.value)} maxLength={3500} placeholder="Festival, new feature, delivery update or another announcement likhein" /></label>
       <p className="field-hint wide-field">Use <strong>{"{retailer}"}</strong> where the retail outlet name should appear. {broadcastMessage.length}/3500 characters.</p>
-      <div className="wa-broadcast-actions wide-field"><button className="primary-button" disabled={busy || !broadcastRetailerIds.length || (!broadcastMessage.trim() && !broadcastTemplate)}>Review & send announcement</button></div>
+      {dashboard?.trainingBroadcast && <div className="wide-field"><strong>WhatsApp chat training</strong><p className="helper-text">Naye aur purane retailers ke liye public audio guide.</p><pre className="import-report">{dashboard.trainingBroadcast.message}</pre><a href={dashboard.trainingBroadcast.url} target="_blank" rel="noreferrer">Preview training →</a><p className="field-hint">Approved training template use kar rahe hain to URL wale parameter mein {"{guide_link}"} daalein.</p></div>}
+      <div className="wa-broadcast-actions wide-field"><button className="primary-button" disabled={busy || !broadcastRetailerIds.length || (!broadcastMessage.trim() && !broadcastTemplate)}>Review & send announcement</button><button className="ghost-button" type="button" disabled={busy || !broadcastRetailerIds.length || !dashboard?.trainingBroadcast} onClick={() => void sendBroadcast(undefined, true)}>Send training link</button></div>
       <p className="helper-text wide-field">WhatsApp allows a normal text broadcast only inside the retailer's active 24-hour chat window. Outside it, Meta requires an approved message template.</p>
       {broadcastReport ? <pre className="import-report wide-field">{broadcastReport}</pre> : null}
     </form></Panel>} right={<Panel title="Choose recipients" eyebrow="Active retailers with consent"><div className="form-grid">

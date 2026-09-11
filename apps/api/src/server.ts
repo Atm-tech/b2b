@@ -1400,6 +1400,7 @@ app.post("/whatsapp/offers", async (req, res) => wrap(res, async () => {
 app.post("/whatsapp/broadcasts", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
   return sendWhatsAppBroadcast({
+    training: req.body?.training === true,
     counterpartyIds: requiredStringArray(req.body?.counterpartyIds, "Retailers"),
     message: optionalString(req.body?.message) || "",
     title: optionalString(req.body?.title),

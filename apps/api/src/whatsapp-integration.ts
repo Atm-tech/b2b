@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { prepareTrainingBroadcast, trainingBroadcastMessage, trainingLinkReply, trainingUrl } from "./training-links.js";
 import type { AppUser, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aapoorti-b2b/domain";
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
 import { createSalesCart, executeDatabaseQuery, getSnapshot } from "./db.js";
@@ -1550,6 +1551,16 @@ async function handleInboundMessage(message: JsonObject) {
   const context = message.context as JsonObject | undefined;
   const saved = await recordMessage({ waMessageId: messageId, direction: "Inbound", phone: from, type: messageType, contextMessageId: text(context?.id), payload: message });
   if (!saved) return;
+  const guideCommand = messageType === "text" ? text((message.text as JsonObject | undefined)?.body) : "";
+  if (trainingLinkReply(guideCommand) !== null) {
+    const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
+      FROM users WHERE active=TRUE AND regexp_replace(COALESCE(mobile_number,''),'[^0-9]','','g') IN ($1,$2,$3)`,
+      [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
+    // Ambiguous shared numbers never combine staff permissions.
+    const user = staff.rows.length === 1 ? staff.rows[0] : undefined;
+    await sendText(from, trainingLinkReply(guideCommand, user?.roles?.length ? user.roles : user ? [user.role] : [], user ? isWhatsAppAdminUser(user) : false)!, "TrainingGuide");
+    return;
+  }
   const profile = await getRetailerByPhone(from);
   if (!profile) {
     try {
@@ -2365,6 +2376,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const displayPhone = text(process.env.WHATSAPP_DISPLAY_PHONE || process.env.WHATSAPP_BUSINESS_PHONE);
   return {
     permissions: { whatsappAdmin: isAdmin },
+    trainingBroadcast: { message: trainingBroadcastMessage(), url: trainingUrl("retailer") },
     configuration: {
       connected: isAdmin && configured(),
       phoneNumberIdPresent: isAdmin && Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
@@ -3099,13 +3111,15 @@ export async function createWhatsAppOffer(input: {
 export async function sendWhatsAppBroadcast(input: {
   counterpartyIds: string[];
   message: string;
+  training?: boolean;
   title?: string;
   templateName?: string;
   templateParameters?: string[];
 }, currentUser: StaffUser) {
   if (!isWhatsAppAdminUser(currentUser)) throw new Error("Only the WhatsApp admin can send broadcasts.");
   const counterpartyIds = Array.from(new Set(input.counterpartyIds)).slice(0, 500);
-  const message = input.message.trim();
+  const prepared = prepareTrainingBroadcast(input);
+  const message = prepared.message;
   if (!counterpartyIds.length) throw new Error("Select at least one retailer.");
   const templateName = text(input.templateName);
   if (!message && !templateName) throw new Error("Enter a message or an approved template name.");
@@ -3133,7 +3147,7 @@ export async function sendWhatsAppBroadcast(input: {
     try {
       const personalizedMessage = message.replaceAll("{retailer}", retailer.retailerName);
       if (templateName) {
-        const parameters = (input.templateParameters || [retailer.retailerName])
+        const parameters = (prepared.parameters || [retailer.retailerName])
           .map((parameter) => parameter.replaceAll("{retailer}", retailer.retailerName));
         await sendTemplate(retailer.phoneE164, templateName, parameters, "Broadcast", campaignId);
       } else {

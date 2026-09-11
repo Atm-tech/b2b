@@ -132,6 +132,12 @@ export function AssistantPanel({ snapshot, currentUser, sessionToken, onSnapshot
   async function ask(value = text) {
     const request = value.trim();
     if (!request || busy) return;
+    if (/^\/?guide(?:\s+.+)?$/i.test(request)) {
+      // Open separately so an in-progress draft and its command thread stay intact.
+      const module = request.replace(/^\/?guide\s*/i, "").trim().toLowerCase().replace(/\s+/g, "-");
+      window.open(`/guide${module ? `/${encodeURIComponent(module)}` : ""}`, "_blank", "noopener,noreferrer");
+      return;
+    }
     const detectedSide = orderSideFromCommand(request);
     const nextThread = orderThread
       ? { ...orderThread, side: orderThread.side === "Unknown" && detectedSide ? detectedSide : orderThread.side, commands: [...orderThread.commands, request] }
