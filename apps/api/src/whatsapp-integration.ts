@@ -1754,7 +1754,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
     const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
     const toleranceKg = Math.max(0.05, lines.reduce((sum, line) => sum + numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.toleranceKg), 0));
@@ -1775,7 +1775,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:change:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
     return true;
@@ -1957,7 +1957,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
     const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
-    for (const order of snapshot.salesOrders.filter((item) => ["Booked", "Ready for Dispatch"].includes(item.status) && item.deliveryMode === "Delivery")) {
+    for (const order of snapshot.salesOrders.filter((item) => item.status === "Booked" && item.deliveryMode === "Delivery")) {
       const key = order.cartId || order.id;
       if (!suffix || matchSuffix(key, suffix) || matchSuffix(order.id, suffix)) carts.set(key, [...(carts.get(key) || []), order]);
     }
@@ -1968,7 +1968,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (warehouseUser && normalized.startsWith("CHANGE ")) {
     const parts = command.trim().split(/\s+/); const cartId = snapshot.salesOrders.find((item) => matchSuffix(item.cartId || item.id, parts[1] || ""))?.cartId || ""; const sku = parts[2]; const quantity = numberValue(parts[3]);
-    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
+    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!cartId || !sku || parts.length < 4 || quantity < 0 || !lines.some((item) => item.productSku.toUpperCase() === sku.toUpperCase())) { await sendText(from, "Format: CHANGE <SO last6> <SKU> <new qty>. SO aur product select karke dobara try karein."); return true; }
     const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku.toUpperCase() === sku.toUpperCase() ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
     if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
