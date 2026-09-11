@@ -1637,6 +1637,35 @@ async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, tole
   } catch { return null; }
 }
 
+async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque") {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
+  if (!accessToken || !apiKey || !mediaId) return null;
+  try {
+    const meta = await fetch(`${graphBase}/${encodeURIComponent(mediaId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!meta.ok) return null;
+    const source = await meta.json() as { url?: string; mime_type?: string };
+    if (!source.url) return null;
+    const image = await fetch(source.url, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!image.ok) return null;
+    const bytes = Buffer.from(await image.arrayBuffer());
+    if (bytes.length > 8 * 1024 * 1024) return null;
+    const mime = source.mime_type || image.headers.get("content-type") || "image/jpeg";
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: process.env.OPENAI_VISION_MODEL?.trim() || "gpt-4o-mini", input: [{ role: "user", content: [
+        { type: "input_text", text: `Read this ${mode} payment proof. Reply only JSON: {"paymentVisible":boolean,"amount":number|null,"payeeName":string|null,"transactionDate":string|null}. Extract only an amount clearly visible as paid/transfer/cheque amount. Never guess.` },
+        { type: "input_image", image_url: `data:${mime};base64,${bytes.toString("base64")}` }
+      ] }] })
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { output_text?: string }; const match = text(payload.output_text).match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { paymentVisible?: unknown; amount?: unknown; payeeName?: unknown; transactionDate?: unknown };
+    const amount = numberValue(parsed.amount);
+    return { visible: Boolean(parsed.paymentVisible) && amount > 0, amount, payeeName: text(parsed.payeeName), transactionDate: text(parsed.transactionDate) };
+  } catch { return null; }
+}
+
 async function alertWhatsAppAdminForCollection(taskId: string, retailer: string, due: number, received: number, reason: string) {
   const admins = await executeDatabaseQuery<{ mobile_number: string }>(`SELECT mobile_number FROM users WHERE active=TRUE AND (role='Admin' OR roles_json ? 'Admin') AND COALESCE(mobile_number,'')<>''`);
   const body = `Collection approval alert\nRetailer: ${retailer}\nTask: ${shortId(taskId)}\nDue: Rs.${due.toFixed(2)}\nReceived: Rs.${received.toFixed(2)}\nDifference: Rs.${(due - received).toFixed(2)}\nReason: ${reason}`;
@@ -1711,12 +1740,22 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       paymentProofPending.delete(from);
       const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === paymentPending.taskId); const stop = task?.routeStops[paymentPending.stopIndex];
       if (task && stop) {
-        if (paymentPending.kind === "full") {
-          await sendButtons(from, `${paymentPending.mode} proof saved. Amount Rs.${stop.amountToPay.toFixed(2)} confirm karein.`, [{ id: `wa-proof:confirm:${paymentPending.mode.toLowerCase()}:full:${task.id}:${paymentPending.stopIndex}:${stop.amountToPay}`, title: `Confirm Rs.${stop.amountToPay.toFixed(2)}` }], "Collection", task.id);
-        } else {
-          paymentProofPending.set(from, paymentPending);
-          await sendText(from, `${paymentPending.mode} proof saved. Partial amount type karein: AMOUNT ${shortId(task.id)} ${paymentPending.stopIndex + 1} <amount>.` , "Collection", task.id);
+        const reading = messageType === "image" ? await readWhatsAppPaymentProof(text(media), paymentPending.mode) : null;
+        const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
+        const tolerance = numberValue(party?.collectionTolerance);
+        if (reading?.visible) {
+          await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Delivery',$2,$3,$4,'Operational',NOW())`, [id("PAYREAD"), task.id, `${paymentPending.mode} proof read Rs.${reading.amount.toFixed(2)}${reading.payeeName ? `; payee ${reading.payeeName}` : ""}${reading.transactionDate ? `; date ${reading.transactionDate}` : ""}.`, user.fullName]);
+          if (reading.amount > stop.amountToPay + tolerance || (paymentPending.kind === "full" && Math.abs(reading.amount - stop.amountToPay) > tolerance) || (reading.amount + tolerance < stop.amountToPay && !party?.allowPartialCollection)) {
+            await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, reading.amount, `${paymentPending.mode} proof amount mismatch`);
+            paymentProofPending.set(from, paymentPending);
+            await sendText(from, `${paymentPending.mode} proof mein Rs.${reading.amount.toFixed(2)} read hua, bill Rs.${stop.amountToPay.toFixed(2)} hai. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin ya clear proof dobara bhejein.`, "Collection", task.id);
+            return true;
+          }
+          await sendButtons(from, `${paymentPending.mode} proof read: Rs.${reading.amount.toFixed(2)}${reading.payeeName ? `\nPayee: ${reading.payeeName}` : ""}\nConfirm karein.`, [{ id: `wa-proof:confirm:${paymentPending.mode.toLowerCase()}:${paymentPending.kind}:${task.id}:${paymentPending.stopIndex}:${reading.amount}`, title: `Confirm Rs.${reading.amount.toFixed(2)}` }], "Collection", task.id);
+          return true;
         }
+        paymentProofPending.set(from, paymentPending);
+        await sendText(from, `${paymentPending.mode} proof saved, lekin amount clearly read nahi hua. Amount type karein: AMOUNT ${shortId(task.id)} ${paymentPending.stopIndex + 1} <amount>.`, "Collection", task.id);
         return true;
       }
     }
@@ -1939,7 +1978,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const task = snapshot.deliveryTasks.find((item) => item.id === pending.taskId); const stop = task?.routeStops[pending.stopIndex];
     if (!task || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     if (amount > stop.amountToPay) { await sendText(from, `Bill Rs.${stop.amountToPay.toFixed(2)} hai. Isse zyada amount confirm nahi kar sakte.`); return true; }
-    await sendButtons(from, `${pending.mode} partial collection: Rs.${amount.toFixed(2)}. Confirm karein.`, [{ id: `wa-proof:confirm:${pending.mode.toLowerCase()}:partial:${task.id}:${pending.stopIndex}:${amount}`, title: `Confirm Rs.${amount.toFixed(2)}` }], "Collection", task.id);
+    await sendButtons(from, `${pending.mode} ${pending.kind} collection: Rs.${amount.toFixed(2)}. Confirm karein.`, [{ id: `wa-proof:confirm:${pending.mode.toLowerCase()}:${pending.kind}:${task.id}:${pending.stopIndex}:${amount}`, title: `Confirm Rs.${amount.toFixed(2)}` }], "Collection", task.id);
     return true;
   }
 
