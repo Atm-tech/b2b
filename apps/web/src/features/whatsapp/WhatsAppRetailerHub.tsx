@@ -41,6 +41,18 @@ Aapoorti Wholesale mein naya feature aa gaya hai: [Feature name]
 
 Madad ke liye *help* bhejein.`;
 
+const trainingPdfBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || (location.port === "5173" || location.port === "4173" ? `${location.protocol}//${location.hostname}:8080` : location.origin)).replace(/\/$/, "");
+const teamTraining = [
+  ["Admin and user registration", "01_Admin_User_Registration.pdf"],
+  ["Purchase", "02_Purchase_User_Guide.pdf"],
+  ["Sales and retailer order", "03_Sales_User_Guide.pdf"],
+  ["Warehouse WhatsApp IN / OUT / DCO", "04_Warehouse_IN_OUT_Guide.pdf"],
+  ["Delivery and collection WhatsApp", "05_Delivery_Collection_Guide.pdf"],
+  ["Accounts", "06_Accounts_Guide.pdf"],
+  ["WhatsApp Admin and chat", "07_WhatsApp_Admin_Chat_Guide.pdf"],
+  ["Marketing and insights", "08_Marketing_Insights_Guide.pdf"]
+] as const;
+
 type RetailerProfile = {
   counterpartyId: string;
   retailerName: string;
@@ -766,7 +778,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       </section>
     </> : null}
 
-    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
+    {!isMarketingWorkspace && whatsappAdmin && activeSection === "Team" ? <><Panel title="Training material" eyebrow="Interactive guide + downloadable PDFs"><p className="helper-text">Har role ki script yahin milegi. Warehouse aur Delivery guides mein WhatsApp commands bhi hain.</p><div className="payment-card-actions">{teamTraining.map(([label, file]) => <a className="ghost-button" key={file} href={`${trainingPdfBase}/training-pdfs/${file}`} target="_blank" rel="noreferrer">Download {label} PDF</a>)}</div></Panel><TwoCol left={<Panel title="Register operational WhatsApp user" eyebrow="Sales, purchase, warehouse, delivery and collection"><form className="form-grid" onSubmit={createWhatsAppStaff}>
       <p className="helper-text wide-field">Create the B CONNECT user and record the WhatsApp number from one control point. User will receive only the modules assigned by role.</p>
       <label>Name<input required value={staffForm.fullName} onChange={(event) => setStaffForm((current) => ({ ...current, fullName: event.target.value }))} placeholder="Staff full name" /></label>
       <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
@@ -775,7 +787,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Warehouse<select value={staffForm.warehouseId} onChange={(event) => setStaffForm((current) => ({ ...current, warehouseId: event.target.value }))}><option value="">No warehouse scope</option>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
       <label>Temporary password<input required value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} /></label>
       <button className="primary-button wide-field" disabled={busy}>Create operational user</button>
-    </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /> : null}
+    </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /></> : null}
 
     {whatsappAdmin && activeSection === "Retailers" ? <>
     <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button" type="button" disabled={busy} onClick={() => void prepareMockDrill()}>Prepare mock drill</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>

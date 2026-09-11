@@ -104,6 +104,7 @@ const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 8080);
 const uploadsDir = path.resolve(process.env.UPLOADS_DIR || path.resolve(process.cwd(), "uploads"));
+const trainingPdfDir = path.resolve(process.cwd(), "output", "pdf");
 const csvDir = path.join(uploadsDir, "csv");
 const paymentDir = path.join(uploadsDir, "payment-proofs");
 const deliveryDir = path.join(uploadsDir, "delivery-proofs");
@@ -279,6 +280,11 @@ if (r2Enabled) {
 app.use("/uploads", express.static(uploadsDir, {
   fallthrough: false,
   maxAge: isProduction ? "7d" : 0
+}));
+app.use("/training-pdfs", express.static(trainingPdfDir, {
+  fallthrough: false,
+  maxAge: isProduction ? "7d" : 0,
+  setHeaders(res) { res.setHeader("Content-Disposition", "inline"); }
 }));
 
 app.get("/", (_req, res) => {
