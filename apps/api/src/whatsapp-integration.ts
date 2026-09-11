@@ -1816,7 +1816,11 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
     const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
-    const toleranceKg = Math.max(0.05, lines.reduce((sum, line) => sum + numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.toleranceKg), 0));
+    const toleranceKg = Math.max(0.05, lines.reduce((sum, line) => {
+      const product = snapshot.products.find((item) => item.sku === line.productSku);
+      const lineWeightKg = line.quantity * numberValue(product?.defaultWeightKg);
+      return sum + line.quantity * numberValue(product?.toleranceKg) + lineWeightKg * numberValue(product?.tolerancePercent) / 100;
+    }, 0));
     packingPhotoPending.set(from, { cartId, expectedKg, toleranceKg });
     await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nPacked weight photo bhejein. Qty/product change ho to Change select karein.`, [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }, { id: `wa-so:change:${encodeURIComponent(cartId)}`, title: "Change" }], "WarehouseSO", cartId);
     return true;
