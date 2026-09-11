@@ -1659,12 +1659,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const action = text(reply?.id);
   if (action.startsWith("wa-delivery:task:")) {
     const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.assignedTo.toLowerCase() === user.username.toLowerCase());
-    if (!task) { await sendText(from, "Delivery task no longer active hai. READ type karein."); return true; }
+    if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery stops", rows: task.routeStops.filter((stop) => !stop.delivered).slice(0, 10).map((stop, index) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:stop:")) {
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
-    if (!task || !stop) { await sendText(from, "Stop unavailable hai. READ type karein."); return true; }
+    if (!task || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId);
     await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${stop.amountToPay.toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
   }
@@ -1880,14 +1880,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (deliveryUser && normalized.startsWith("DELIVERED ")) {
     const [, taskSuffix, stopText] = normalized.split(" "); const stopIndex = Number(stopText) - 1;
     const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, taskSuffix));
-    if (!task || !task.routeStops[stopIndex]) { await sendText(from, "Task/stop nahi mila. READ type karke list dekhein."); return true; }
+    if (!task || !task.routeStops[stopIndex]) { await sendText(from, "Task/stop nahi mila. LIST type karke list dekhein."); return true; }
     const proof = staffProofs.get(from); if (!proof) { await sendText(from, "Pehle delivery photo bhejein, phir DELIVERED command type karein."); return true; }
     const stops: DeliveryRouteStop[] = task.routeStops.map((stop, index) => index === stopIndex ? { ...stop, delivered: true, deliveryProofName: proof } : stop);
     const allDone = stops.every((stop) => stop.delivered);
     await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: allDone ? "Delivered" : "Handed Over" });
     staffProofs.delete(from);
     const stop = stops[stopIndex];
-    await sendText(from, stop.paymentRequired ? `${stop.supplierName} delivered. Collection: COLLECT ${shortId(task.id)} ${stopIndex + 1} <amount> CASH|UPI|CHEQUE|LATER` : `${stop.supplierName} delivered. READ for next stop.`, "Delivery", task.id);
+    await sendText(from, stop.paymentRequired ? `${stop.supplierName} delivered. Collection buttons ke liye LIST se retailer select karein.` : `${stop.supplierName} delivered. LIST type karke agla stop select karein.`, "Delivery", task.id);
     return true;
   }
   if (deliveryUser && normalized.startsWith("COLLECT ")) {
@@ -1908,7 +1908,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (mode !== "LATER") await createPayment({ side: "Sales", linkedOrderId: stop.orderId, amount, mode, referenceNumber: `WA-${task.id}-${stopIndex + 1}-${Date.now()}`, proofName: proof, verificationStatus: "Submitted", verificationNote: `WhatsApp collection by ${user.fullName}` }, user);
     const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === stopIndex ? { ...item, paid: mode !== "LATER" && amount + tolerance >= item.amountToPay, collectionStatus: mode === "LATER" ? "Later" : "Collected", collectionMode: mode === "LATER" ? undefined : mode, collectionAmount: mode === "LATER" ? undefined : amount, collectionProofName: proof } : item);
     await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: proof, status: task.status });
-    staffProofs.delete(from); await sendText(from, mode === "LATER" ? "Later collection recorded. READ for pending deliveries." : `₹${amount.toFixed(2)} ${mode} collection recorded. READ for pending deliveries.`, "Collection", task.id);
+    staffProofs.delete(from); await sendText(from, mode === "LATER" ? "Later collection recorded. LIST se pending deliveries dekhein." : `Rs.${amount.toFixed(2)} ${mode} collection recorded. LIST se pending deliveries dekhein.`, "Collection", task.id);
     return true;
   }
   if (warehouseUser || deliveryUser) { await sendStaffHelp(from, user); return true; }
