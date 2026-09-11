@@ -1598,6 +1598,13 @@ function shortId(value: string) {
   return value.slice(-6);
 }
 
+async function alertWhatsAppAdminForCollection(taskId: string, retailer: string, due: number, received: number, reason: string) {
+  const admins = await executeDatabaseQuery<{ mobile_number: string }>(`SELECT mobile_number FROM users WHERE active=TRUE AND (role='Admin' OR roles_json ? 'Admin') AND COALESCE(mobile_number,'')<>''`);
+  const body = `Collection approval alert\nRetailer: ${retailer}\nTask: ${shortId(taskId)}\nDue: Rs.${due.toFixed(2)}\nReceived: Rs.${received.toFixed(2)}\nDifference: Rs.${(due - received).toFixed(2)}\nReason: ${reason}`;
+  await Promise.all(admins.rows.map((admin) => sendText(text(admin.mobile_number), body, "CollectionAlert", taskId).catch(() => undefined)));
+  await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Delivery',$2,$3,'System','Operational',NOW())`, [id("COLALERT"), taskId, body]);
+}
+
 async function sendStaffHelp(phone: string, user: StaffUser) {
   const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
@@ -1774,7 +1781,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const total = Object.entries(counts).reduce((sum, [note, count]) => sum + Number(note) * Math.max(0, count), 0) + Math.max(0, coins);
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
     const tolerance = numberValue(party?.collectionTolerance); const short = stop.amountToPay - total;
-    if (short > tolerance && !party?.allowPartialCollection) { await sendText(from, `Cash total Rs.${total.toFixed(2)} hai, bill Rs.${stop.amountToPay.toFixed(2)} hai. Difference Rs.${short.toFixed(2)}. Contact WhatsApp Admin.`); return true; }
+    if (short > tolerance && !party?.allowPartialCollection) { await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, total, "Cash short collection without partial privilege"); await sendText(from, `Cash total Rs.${total.toFixed(2)} hai, bill Rs.${stop.amountToPay.toFixed(2)} hai. Difference Rs.${short.toFixed(2)}. WhatsApp Admin ko alert bhej diya gaya hai; Contact Admin.`); return true; }
     await sendText(from, `Cash counted: Rs.${total.toFixed(2)}. Bill: Rs.${stop.amountToPay.toFixed(2)}.${short > tolerance ? ` Pending: Rs.${short.toFixed(2)}.` : " Tally OK."}\nAb proof photo bhejkar COLLECT ${shortId(task.id)} ${stopIndex + 1} ${total.toFixed(2)} CASH type karein.`, "CashCount", task.id);
     return true;
   }
@@ -1803,7 +1810,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const privilege = party as typeof party & { allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean; collectionTolerance?: number } | undefined;
     if (mode === "LATER" && !privilege?.allowLaterCollection) { await sendText(from, "Is retailer ke liye later collection allowed nahi hai."); return true; }
     if (mode === "Cheque" && !privilege?.allowChequeCollection) { await sendText(from, "Is retailer ke liye cheque collection allowed nahi hai."); return true; }
-    const tolerance = numberValue(privilege?.collectionTolerance); if (mode !== "LATER" && amount + tolerance < stop.amountToPay && !privilege?.allowPartialCollection) { await sendText(from, `Full collection required: ₹${stop.amountToPay.toFixed(2)}. Short collection WhatsApp Admin approval par jayegi.`); return true; }
+    const tolerance = numberValue(privilege?.collectionTolerance); if (mode !== "LATER" && amount + tolerance < stop.amountToPay && !privilege?.allowPartialCollection) { await alertWhatsAppAdminForCollection(task.id, stop.supplierName, stop.amountToPay, amount, "Short collection without partial privilege"); await sendText(from, `Full collection required: ₹${stop.amountToPay.toFixed(2)}. WhatsApp Admin ko approval alert bhej diya gaya hai; Contact Admin.`); return true; }
     const proof = staffProofs.get(from);
     if (mode !== "LATER" && !proof) { await sendText(from, "Pehle UPI/cash/cheque proof photo bhejein, phir COLLECT command type karein."); return true; }
     if (mode !== "LATER") await createPayment({ side: "Sales", linkedOrderId: stop.orderId, amount, mode, referenceNumber: `WA-${task.id}-${stopIndex + 1}-${Date.now()}`, proofName: proof, verificationStatus: "Submitted", verificationNote: `WhatsApp collection by ${user.fullName}` }, user);
