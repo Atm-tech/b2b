@@ -1594,6 +1594,7 @@ const paymentProofPending = new Map<string, { taskId: string; stopIndex: number;
 const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingWeightResults = new Map<string, { cartId: string; withinTolerance: boolean; weightKg: number; expectedKg: number }>();
 const dcoBuildSessions = new Map<string, string[]>();
+const receiptSessions = new Map<string, { cartId: string; purchaseOrderId: string; sku: string; warehouseId: string; remainingQty: number; stage: "photo" | "quantity" | "weight"; quantity?: number }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
 function staffHasRole(user: StaffUser, roles: string[]) {
@@ -1667,6 +1668,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (["image", "document"].includes(messageType)) {
     const media = (message[messageType] as JsonObject | undefined)?.id || (message[messageType] as JsonObject | undefined)?.media_id;
     staffProofs.set(from, `WhatsApp ${messageType} ${text(media) || new Date().toISOString()}`);
+    const receipt = receiptSessions.get(from);
+    if (receipt && messageType === "image" && receipt.stage === "photo") {
+      receipt.stage = "quantity";
+      await sendText(from, `Weight photo saved for ${receipt.sku}. Received quantity type karein (maximum ${receipt.remainingQty}).`, "WarehouseIN", receipt.cartId);
+      return true;
+    }
     const packing = packingPhotoPending.get(from);
     if (packing && messageType === "image") {
       packingPhotoPending.delete(from);
@@ -1791,8 +1798,13 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText); const snapshot = await getSnapshot();
     const order = snapshot.purchaseOrders.find((item) => (item.cartId || item.id) === cartId && item.productSku === sku && !["Received", "Closed", "Cancelled"].includes(item.status));
     if (!order) { await sendText(from, "PO product active nahi hai. IN type karke fresh list dekhein."); return true; }
-    await sendText(from, `*${order.productSku}*\nOrdered: ${order.quantityOrdered}\nAlready received: ${order.quantityReceived}\n\nWeight photo bhejein, phir type karein:\nRECEIVE ${shortId(cartId)} ${order.productSku} <qty> <gross weight kg>`, "WarehouseIN", cartId);
+    const remainingQty = order.quantityOrdered - order.quantityReceived;
+    receiptSessions.set(from, { cartId, purchaseOrderId: order.id, sku: order.productSku, warehouseId: order.warehouseId, remainingQty, stage: "photo" });
+    await sendText(from, `*${order.productSku}*\nOrdered: ${order.quantityOrdered}\nAlready received: ${order.quantityReceived}\nPending: ${remainingQty}\n\nAb weighing scale ke saath clear weight photo bhejein.`, "WarehouseIN", cartId);
     return true;
+  }
+  if (action.startsWith("wa-in:finish:")) {
+    receiptSessions.delete(from); await sendText(from, "Inward session complete. Stock received entries record ho gayi hain. IN type karke pending PO check kar sakte hain.", "WarehouseIN"); return true;
   }
   if (action.startsWith("wa-delivery:task:")) {
     const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && item.assignedTo.toLowerCase() === user.username.toLowerCase());
@@ -1923,6 +1935,25 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (normalized === "HELP" || normalized === "MENU" || normalized === "START") {
     await sendStaffHelp(from, user);
     return true;
+  }
+  const receiptSession = receiptSessions.get(from);
+  if (warehouseUser && receiptSession) {
+    const value = numberValue(command);
+    if (receiptSession.stage === "quantity") {
+      if (!Number.isInteger(value) || value <= 0 || value > receiptSession.remainingQty) { await sendText(from, `Valid received quantity type karein: 1 se ${receiptSession.remainingQty} tak.`); return true; }
+      receiptSession.quantity = value; receiptSession.stage = "weight";
+      await sendText(from, `Received qty ${value} noted. Ab gross weight kg type karein (example: 8.45).`);
+      return true;
+    }
+    if (receiptSession.stage === "weight") {
+      if (value <= 0 || !receiptSession.quantity) { await sendText(from, "Valid gross weight kg type karein, example: 8.45."); return true; }
+      const proof = staffProofs.get(from); if (!proof) { await sendText(from, "Weight photo missing hai. Product dobara select karke photo bhejein."); receiptSessions.delete(from); return true; }
+      await createReceiptCheck({ purchaseOrderId: receiptSession.purchaseOrderId, warehouseId: receiptSession.warehouseId, receivedQuantity: receiptSession.quantity, actualWeightKg: value, weighingProofName: proof, note: `WhatsApp guided IN by ${user.fullName}`, confirmPartial: receiptSession.quantity < receiptSession.remainingQty }, user);
+      staffProofs.delete(from); const cartId = receiptSession.cartId; const sku = receiptSession.sku; receiptSessions.delete(from);
+      const fresh = await getSnapshot(); const pendingLines = fresh.purchaseOrders.filter((item) => (item.cartId || item.id) === cartId && !["Received", "Closed", "Cancelled"].includes(item.status));
+      await sendButtons(from, `${sku}: ${receiptSession.quantity} received and stock recorded. ${pendingLines.length ? "Isi PO mein aur product receive karna hai?" : "PO inward complete hai."}`, pendingLines.length ? [{ id: `wa-in:po:${encodeURIComponent(cartId)}`, title: "Receive another" }, { id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }] : [{ id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }], "WarehouseIN", cartId);
+      return true;
+    }
   }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
     const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
