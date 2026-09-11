@@ -1881,6 +1881,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     return true;
   }
+  if (deliveryUser && (normalized === "READ" || normalized.startsWith("CASH ") || normalized.startsWith("DELIVERED ") || normalized.startsWith("COLLECT "))) {
+    await sendText(from, "Delivery aur collection buttons se complete hoti hai. LIST type karke DCO/retailer select karein.", "Delivery");
+    return true;
+  }
   if (deliveryUser && normalized.startsWith("CASH ")) {
     const parts = normalized.split(" ");
     const task = snapshot.deliveryTasks.find((item) => item.side === "Sales" && item.assignedTo.toLowerCase() === user.username.toLowerCase() && matchSuffix(item.id, parts[1] || ""));
