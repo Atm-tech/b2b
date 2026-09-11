@@ -1767,6 +1767,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
     if (!proof) { await sendText(from, "Pehle packed maal ke saath weight photo bhejein, phir Packed dabayein."); return true; }
     const weightResult = packingWeightResults.get(from);
+    if (text(process.env.OPENAI_API_KEY) && (!weightResult || weightResult.cartId !== cartId)) { await sendText(from, "Weight scale photo read/verify nahi hua. SO dobara select karke clear weighing-scale photo bhejein."); return true; }
     if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
     packingWeightResults.delete(from);
