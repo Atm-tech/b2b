@@ -1594,6 +1594,7 @@ const paymentProofPending = new Map<string, { taskId: string; stopIndex: number;
 const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingWeightResults = new Map<string, { cartId: string; withinTolerance: boolean; weightKg: number; expectedKg: number }>();
 const packingPhotoProofs = new Map<string, string>();
+const packingChangePending = new Map<string, { cartId: string; sku: string }>();
 const dcoBuildSessions = new Map<string, string[]>();
 const receiptSessions = new Map<string, { cartId: string; purchaseOrderId: string; sku: string; warehouseId: string; remainingQty: number; stage: "photo" | "quantity" | "weight"; quantity?: number }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
@@ -1790,7 +1791,8 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:line:")) {
     const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText);
-    await sendText(from, `*${sku}* quantity change ke liye type karein:\nCHANGE ${shortId(cartId)} ${sku} <new qty>\nProduct remove karne ke liye new qty 0 type karein.`, "WarehouseSO", cartId);
+    packingChangePending.set(from, { cartId, sku });
+    await sendText(from, `*${sku}* selected hai. Nayi quantity sirf number mein bhejein. Product remove karne ke liye 0 bhejein.`, "WarehouseSO", cartId);
     return true;
   }
   if (action.startsWith("wa-in:po:")) {
@@ -1976,6 +1978,20 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const rows = [...carts.entries()].slice(0, 10);
     if (!rows.length) await sendText(from, "Koi dispatch-ready SO nahi mila. SO <last 4 digits> try karein.");
     else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Sales order select karein. Weight photo, Packed ya Change next aayega." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready sales orders", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
+    return true;
+  }
+  const selectedPackingChange = packingChangePending.get(from);
+  if (warehouseUser && selectedPackingChange) {
+    const quantity = numberValue(command);
+    const { cartId, sku } = selectedPackingChange;
+    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
+    if (!Number.isInteger(quantity) || quantity < 0) { await sendText(from, "Sirf whole-number quantity bhejein. Remove karne ke liye 0 bhejein."); return true; }
+    if (!lines.some((item) => item.productSku === sku)) { packingChangePending.delete(from); await sendText(from, "Selected product SO mein available nahi hai. SO dobara select karein."); return true; }
+    const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku === sku ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
+    if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
+    const first = lines[0]; await updateSalesOrderGroup(cartId, { paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: `${first.note || ""} | Warehouse packing change by ${user.fullName}`.trim(), status: "Booked", lines: nextLines }, user);
+    packingChangePending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
+    await sendText(from, `SO ${shortId(cartId)} update ho gaya. SO ${shortId(cartId)} select karke fresh weight photo bhejein, phir Packed dabayein.`, "WarehouseSO", cartId);
     return true;
   }
   if (warehouseUser && normalized.startsWith("CHANGE ")) {
