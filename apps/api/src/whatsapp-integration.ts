@@ -476,6 +476,13 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
   }
 }
 
+async function sendFirstStaffTraining(phone: string, user: StaffUser) {
+  const alreadySent = await executeDatabaseQuery(`SELECT id FROM whatsapp_messages WHERE related_entity_type='StaffTraining' AND related_entity_id=$1 AND status<>'Failed' LIMIT 1`, [String(user.id)]);
+  if (alreadySent.rowCount) return;
+  const reply = trainingLinkReply("guide", user.roles.length ? user.roles : [user.role], isWhatsAppAdminUser(user));
+  if (reply) await sendText(phone, `Welcome ${user.fullName}. Aapke assigned modules ki training yahan hai:\n\n${reply}`, "StaffTraining", String(user.id));
+}
+
 async function createServiceTicket(profile: RetailerProfile, input: {
   kind: "Live Chat" | "Return" | "Damage" | "Voice Order" | "Support";
   subject?: string;
@@ -1706,7 +1713,7 @@ async function handleInboundMessage(message: JsonObject) {
       [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
     // Ambiguous shared numbers never combine staff permissions.
     const user = staff.rows.length === 1 ? staff.rows[0] : undefined;
-    await sendText(from, trainingLinkReply(guideCommand, user?.roles?.length ? user.roles : user ? [user.role] : [], user ? isWhatsAppAdminUser(user) : false)!, "TrainingGuide");
+    await sendText(from, trainingLinkReply(guideCommand, user?.roles?.length ? user.roles : user ? [user.role] : [], user ? isWhatsAppAdminUser(user) : false)!, user ? "StaffTraining" : "TrainingGuide", user ? String(user.id) : undefined);
     return;
   }
   const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
@@ -1714,7 +1721,10 @@ async function handleInboundMessage(message: JsonObject) {
     [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
   // Staff numbers take command precedence. A shared/ambiguous number stays out of
   // the command path so permissions can never be accidentally combined.
-  if (staff.rows.length === 1 && await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
+  if (staff.rows.length === 1) {
+    await sendFirstStaffTraining(from, staff.rows[0]);
+    if (await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
+  }
   const profile = await getRetailerByPhone(from);
   if (!profile) {
     try {
@@ -2127,7 +2137,11 @@ async function handleInboundMessage(message: JsonObject) {
       const offer = await executeDatabaseQuery<{ id: string }>(`SELECT id FROM whatsapp_offers WHERE outbound_message_id = $1 AND counterparty_id = $2 AND status = 'Sent' ORDER BY created_at DESC LIMIT 1`, [contextId, profile.counterpartyId]);
       if (offer.rows[0]) { await acceptOffer(offer.rows[0].id, profile, messageId, numberValue(normalized)); return; }
     }
-    if (/^(demo|demo order|how to order|help|guide)$/i.test(normalized)) {
+    if (/^guide$/i.test(normalized)) {
+      await sendText(from, `Retailer ordering training:\n${trainingUrl("retailer")}\n\nIsme registration, catalogue, MOQ, cart, proforma aur confirmation ka full step-by-step guide hai.`, "TrainingGuide", profile.counterpartyId);
+      return;
+    }
+    if (/^(demo|demo order|how to order|help)$/i.test(normalized)) {
       await sendOrderGuide(profile);
       return;
     }
