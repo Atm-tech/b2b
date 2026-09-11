@@ -1594,6 +1594,7 @@ const paymentProofPending = new Map<string, { taskId: string; stopIndex: number;
 const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingWeightResults = new Map<string, { cartId: string; withinTolerance: boolean; weightKg: number; expectedKg: number }>();
 const packingPhotoProofs = new Map<string, string>();
+const packingManualWeightPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingChangePending = new Map<string, { cartId: string; sku: string }>();
 const dcoBuildSessions = new Map<string, string[]>();
 const receiptSessions = new Map<string, { cartId: string; purchaseOrderId: string; sku: string; warehouseId: string; remainingQty: number; stage: "photo" | "quantity" | "weight"; quantity?: number }>();
@@ -1724,7 +1725,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
         return true;
       }
       const reading = await readWhatsAppWeightPhoto(text(media), packing.expectedKg, packing.toleranceKg);
-      if (!reading) await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Automatic reading unavailable; expected packed weight ${packing.expectedKg.toFixed(3)} kg. Weight scale ko manually verify karke Packed/Change select karein.`, "WarehouseWeight", packing.cartId);
+      if (!reading) { packingManualWeightPending.set(from, packing); await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Scale par dikh raha actual weight kg type karein, example: 8.45. Expected: ${packing.expectedKg.toFixed(3)} kg.`, "WarehouseWeight", packing.cartId); }
       else if (!reading.visible) await sendText(from, `Weight scale photo mein clearly read nahi hua. Expected ${packing.expectedKg.toFixed(3)} kg. Clear scale photo bhejein, phir SO ${shortId(packing.cartId)} select karke Packed/Change karein.`, "WarehouseWeight", packing.cartId);
       else { packingWeightResults.set(from, { cartId: packing.cartId, withinTolerance: reading.withinTolerance, weightKg: reading.weightKg, expectedKg: packing.expectedKg }); await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Sales Order',$2,$3,$4,'Operational',NOW())`, [id("WEIGHT"), packing.cartId, `WhatsApp scale read ${reading.weightKg.toFixed(3)} kg; expected ${packing.expectedKg.toFixed(3)} kg; difference ${reading.difference.toFixed(3)} kg; ${reading.withinTolerance ? "within tolerance" : "outside tolerance"}.`, user.fullName]); await sendText(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance - Packed select kar sakte hain." : "Tolerance se bahar - Change select karke SO verify karein."}`, "WarehouseWeight", packing.cartId); }
       return true;
@@ -1811,7 +1812,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    packingChangePending.delete(from);
+    packingChangePending.delete(from); packingManualWeightPending.delete(from);
     const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
     const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
@@ -1825,16 +1826,16 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
     if (!proof || packingPhotoProofs.get(from) !== cartId) { await sendText(from, "Isi SO ke packed maal ke saath fresh weight photo bhejein, phir Packed dabayein."); return true; }
     const weightResult = packingWeightResults.get(from);
-    if (whatsappVisionEnabled() && text(process.env.OPENAI_API_KEY) && (!weightResult || weightResult.cartId !== cartId)) { await sendText(from, "Weight scale photo read/verify nahi hua. SO dobara select karke clear weighing-scale photo bhejein."); return true; }
+    if (!weightResult || weightResult.cartId !== cartId) { await sendText(from, "Scale photo ke baad actual weight kg type karein. Weight verification complete hone par hi Packed hoga."); return true; }
     if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
-    packingWeightResults.delete(from); packingPhotoProofs.delete(from);
+    packingWeightResults.delete(from); packingPhotoProofs.delete(from); packingManualWeightPending.delete(from);
     await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO type karke ready SO select karke bundle banayein.`, "WarehouseSO", cartId);
     return true;
   }
   if (action.startsWith("wa-so:change:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
+    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
     return true;
@@ -2024,6 +2025,17 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       await sendButtons(from, `${sku}: ${receiptSession.quantity} received and stock recorded. ${pendingLines.length ? "Isi PO mein aur product receive karna hai?" : "PO inward complete hai."}`, pendingLines.length ? [{ id: `wa-in:po:${encodeURIComponent(cartId)}`, title: "Receive another" }, { id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }] : [{ id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }], "WarehouseIN", cartId);
       return true;
     }
+  }
+  const manualPackingWeight = packingManualWeightPending.get(from);
+  if (warehouseUser && manualPackingWeight) {
+    const weightKg = numberValue(command);
+    if (weightKg <= 0) { await sendText(from, "Scale par dikh raha valid weight kg type karein, example: 8.45."); return true; }
+    packingManualWeightPending.delete(from);
+    const difference = weightKg - manualPackingWeight.expectedKg; const withinTolerance = Math.abs(difference) <= manualPackingWeight.toleranceKg;
+    packingWeightResults.set(from, { cartId: manualPackingWeight.cartId, withinTolerance, weightKg, expectedKg: manualPackingWeight.expectedKg });
+    await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Sales Order',$2,$3,$4,'Operational',NOW())`, [id("WEIGHT"), manualPackingWeight.cartId, `WhatsApp manual scale weight ${weightKg.toFixed(3)} kg; expected ${manualPackingWeight.expectedKg.toFixed(3)} kg; difference ${difference.toFixed(3)} kg; ${withinTolerance ? "within tolerance" : "outside tolerance"}.`, user.fullName]);
+    await sendText(from, `Weight entered: ${weightKg.toFixed(3)} kg\nExpected: ${manualPackingWeight.expectedKg.toFixed(3)} kg\nDifference: ${difference >= 0 ? "+" : ""}${difference.toFixed(3)} kg\n${withinTolerance ? "Within tolerance - Packed dabayein." : "Tolerance se bahar - Change select karke quantity/product verify karein."}`, "WarehouseWeight", manualPackingWeight.cartId);
+    return true;
   }
   if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT ") || normalized.startsWith("READY "))) {
     await sendText(from, "Warehouse outbound ka verified flow SO se chalta hai. SO type karke order select karein, weight photo bhejein, phir Packed/Change select karein.", "WarehouseSO");
