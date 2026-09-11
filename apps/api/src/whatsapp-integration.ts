@@ -438,6 +438,15 @@ async function sendOrderGuide(profile: RetailerProfile) {
     ], "OrderGuide", profile.counterpartyId);
 }
 
+async function sendRetailerTrainingGuide(profile: RetailerProfile) {
+  await sendButtons(profile.phoneE164,
+    "Retailer ordering training ready hai. Registration, catalogue, MOQ, cart, proforma aur order confirmation step-by-step seekhein.",
+    [
+      { id: "wa-guide:open", title: "Open guide" },
+      { id: "wa-guide:start", title: "Start demo" }
+    ], "TrainingGuide", profile.counterpartyId);
+}
+
 async function sendTemplate(phone: string, name: string, parameters: string[], relatedEntityType?: string, relatedEntityId?: string) {
   return sendGraphMessage(phone, {
     type: "template",
@@ -1758,6 +1767,10 @@ async function handleInboundMessage(message: JsonObject) {
     const buttonReply = interactive?.button_reply as JsonObject | undefined;
     const listReply = interactive?.list_reply as JsonObject | undefined;
     const buttonId = text(buttonReply?.id || listReply?.id);
+    if (buttonId === "wa-guide:open") {
+      await sendText(from, `Retailer ordering training:\n${trainingUrl("retailer")}\n\nLink par tap karke guide kholo.`, "TrainingGuide", profile.counterpartyId);
+      return;
+    }
     if (buttonId === "wa-menu:departments") {
       await sendDepartmentPicker(profile);
       return;
@@ -2138,7 +2151,7 @@ async function handleInboundMessage(message: JsonObject) {
       if (offer.rows[0]) { await acceptOffer(offer.rows[0].id, profile, messageId, numberValue(normalized)); return; }
     }
     if (/^guide$/i.test(normalized)) {
-      await sendText(from, `Retailer ordering training:\n${trainingUrl("retailer")}\n\nIsme registration, catalogue, MOQ, cart, proforma aur confirmation ka full step-by-step guide hai.`, "TrainingGuide", profile.counterpartyId);
+      await sendRetailerTrainingGuide(profile);
       return;
     }
     if (/^(demo|demo order|how to order|help)$/i.test(normalized)) {
