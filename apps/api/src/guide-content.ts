@@ -227,10 +227,10 @@ export const trainingGuides: TrainingGuide[] = [
       },
       {
         "title": "Maal ki receipt check karo",
-        "screen": "WhatsApp: IN / RECEIVE",
+        "screen": "WhatsApp: IN",
         "speech": "“Maal ki receipt check karo — saath mein practice karein.”",
         "narration": "रसीद जांच में पहले खरीद ऑर्डर और वेयरहाउस मिलाएं। सौ में से छियानवे यूनिट मिले तो छियानवे दर्ज करें। नुकसान, वजन और अंतर भी नोट करें।",
-        "body": "Apne registered WhatsApp se IN type karo. PO ke last digits verify karo, weight photo bhejo, phir RECEIVE <PO last6> <SKU> <qty> <gross weight kg> type karo. Sirf jitna maal mila utna record hota hai.",
+        "body": "Apne registered WhatsApp se IN type karo. Active PO select karo, product select karo, scale photo bhejo, actual quantity aur gross weight type karo. Receive another se isi PO ka next product lo; Finish inward se session band karo.",
         "example": "PO: 100 units · actual received: 96 units",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -258,11 +258,11 @@ export const trainingGuides: TrainingGuide[] = [
         "success": "Sahi! Actual accepted quantity aur damage ki entry sachchi honi chahiye. Receipt note/proof se mismatch samjhao. Received status bina poora check kiye mat maano."
       },
       {
-        "title": "Packing ke baad Ready",
-        "screen": "WhatsApp: OUT / READY / DCO",
+        "title": "SO packing aur DCO",
+        "screen": "WhatsApp: SO / DCO / HANDOVER",
         "speech": "“Packing ke baad Ready — saath mein practice karein.”",
         "narration": "सेल्स ऑर्डर के मुताबिक सही माल पैक करें। मात्रा और वेयरहाउस मिलाएं। पैकिंग पूरी होने पर डॉकिट रेडी करें। अभी डिलीवर्ड नहीं करना है।",
-        "body": "WhatsApp par OUT se order dekho. Packing/weight photo bhejo, READY <SO last6> type karke docket banao. Multiple ready orders ke liye DCO <SO last6,SO last6> type karo.",
+        "body": "WhatsApp par SO type karo aur sales order select karo. Packing scale photo bhejo; system expected weight se compare karega. Match ho to Packed dabao. Change par product select karke nayi quantity (0 se remove) bhejo. DCO type karke multiple packed SO add karo, agent select karo, phir physical handover ke baad HANDOVER <DCO last6> type karo.",
         "example": "Docket: Pending Packing → packing checked",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
