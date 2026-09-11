@@ -1657,7 +1657,7 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
   const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
   const lines = ["*B CONNECT staff WhatsApp commands*"];
-  if (warehouse) lines.push("Warehouse: IN, OUT, READY <SO last 4>, DCO <SO last4,SO last4>, HANDOVER <DCO last6,DCO last6>");
+  if (warehouse) lines.push("Warehouse: IN (purchase receipt), SO (packing), DCO (select packed SO), HANDOVER <DCO last6,DCO last6>");
   if (delivery) lines.push("Delivery: LIST (DCO/retailer select), SUM, LIST COLLECTION, SETTLE. Buttons se delivery aur collection complete karein.");
   lines.push("Weight/delivery/payment photo maange jaane par bhejein; phir screen par aane wala button select karein.");
   await sendText(phone, lines.join("\n"), "StaffCommandHelp");
