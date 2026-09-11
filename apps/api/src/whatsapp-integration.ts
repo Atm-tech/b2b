@@ -1667,14 +1667,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-delivery:task:")) {
     const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.assignedTo.toLowerCase() === user.username.toLowerCase());
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
-    const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && stop.collectionStatus === "Pending"));
-    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / pending collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection pending - Rs.${stop.amountToPay.toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
+    const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")));
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / pending collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection ${stop.collectionStatus === "Later" ? "later" : "pending"} - Rs.${stop.amountToPay.toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:stop:")) {
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
     const party = snapshot.counterparties.find((item) => item.id === stop.supplierId);
-    if (stop.delivered && stop.paymentRequired && stop.collectionStatus === "Pending") {
+    if (stop.delivered && stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")) {
       const privileged = party as { allowLaterCollection?: boolean } | undefined;
       const choices = privileged?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${stopIndex}`, title: "Collect now" }];
       await sendButtons(from, `*${stop.supplierName}*\nDelivery complete. Collection due: Rs.${stop.amountToPay.toFixed(2)}.`, choices, "Collection", task.id); return true;
@@ -1858,7 +1858,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if (deliveryUser && normalized === "LIST") {
-    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.routeStops.some((stop) => !stop.delivered || (stop.paymentRequired && stop.collectionStatus === "Pending")));
+    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.assignedTo.toLowerCase() === user.username.toLowerCase() && task.routeStops.some((stop) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || ""))));
     if (!tasks.length) await sendText(from, "Aapke paas koi active DCO delivery nahi hai.");
     else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Apna DCO select karein. Phir retailer list khulegi." }, action: { button: "View DCO", sections: [{ title: "Assigned DCO", rows: tasks.slice(0, 10).map((task) => ({ id: `wa-delivery:task:${encodeURIComponent(task.id)}`, title: `DCO ${shortId(task.consignmentId || task.id)}`, description: compact(task.routeStops.filter((stop) => !stop.delivered).map((stop) => stop.supplierName).join(", "), 72) })) }] } } }, "Delivery");
     return true;
