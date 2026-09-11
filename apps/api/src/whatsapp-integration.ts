@@ -1592,6 +1592,7 @@ const deliveryProofPending = new Map<string, { taskId: string; stopIndex: number
 const cashCollectionPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; step: number; counts: number[] }>();
 const paymentProofPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; mode: "UPI" | "Cheque" }>();
 const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
+const packingWeightResults = new Map<string, { cartId: string; withinTolerance: boolean; weightKg: number; expectedKg: number }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
 function staffHasRole(user: StaffUser, roles: string[]) {
@@ -1671,7 +1672,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       const reading = await readWhatsAppWeightPhoto(text(media), packing.expectedKg, packing.toleranceKg);
       if (!reading) await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Automatic reading unavailable; expected packed weight ${packing.expectedKg.toFixed(3)} kg. Weight scale ko manually verify karke Packed/Change select karein.`, "WarehouseWeight", packing.cartId);
       else if (!reading.visible) await sendText(from, `Weight scale photo mein clearly read nahi hua. Expected ${packing.expectedKg.toFixed(3)} kg. Clear scale photo bhejein, phir SO ${shortId(packing.cartId)} select karke Packed/Change karein.`, "WarehouseWeight", packing.cartId);
-      else await sendText(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance - Packed select kar sakte hain." : "Tolerance se bahar - Change select karke SO verify karein."}`, "WarehouseWeight", packing.cartId);
+      else { packingWeightResults.set(from, { cartId: packing.cartId, withinTolerance: reading.withinTolerance, weightKg: reading.weightKg, expectedKg: packing.expectedKg }); await sendText(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance - Packed select kar sakte hain." : "Tolerance se bahar - Change select karke SO verify karein."}`, "WarehouseWeight", packing.cartId); }
       return true;
     }
     const pending = deliveryProofPending.get(from);
@@ -1723,7 +1724,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
     if (!proof) { await sendText(from, "Pehle packed maal ke saath weight photo bhejein, phir Packed dabayein."); return true; }
+    const weightResult = packingWeightResults.get(from);
+    if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
+    packingWeightResults.delete(from);
     await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO ${shortId(cartId)} type karke ready SO bundle banayein.`, "WarehouseSO", cartId);
     return true;
   }
@@ -1903,6 +1907,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku.toUpperCase() === sku.toUpperCase() ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
     if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
     const first = lines[0]; await updateSalesOrderGroup(cartId, { paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: `${first.note || ""} | Warehouse packing change by ${user.fullName}`.trim(), status: "Booked", lines: nextLines }, user);
+    packingWeightResults.delete(from); staffProofs.delete(from);
     await sendText(from, `SO ${shortId(cartId)} update ho gaya. Weight photo bhejein aur SO ${shortId(cartId)} type karke Packed dabayein.`, "WarehouseSO", cartId);
     return true;
   }
