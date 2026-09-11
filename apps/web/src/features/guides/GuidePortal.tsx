@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { normalizeGuideSlug, type TrainingGuide, type GuideSlug } from "@aapoorti-b2b/domain";
 import { useGuideNarration } from "./useGuideNarration";
+import { guideArtwork } from "./guideArtwork";
 import "./guides.css";
 
 const apiBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || (location.port === "5173" || location.port === "4173" ? `${location.protocol}//${location.hostname}:8080` : location.origin)).replace(/\/$/, "");
@@ -75,11 +76,15 @@ function Book({ guide, name, whatsappUrl }: Payload) {
   const navigate = (next: number) => { audio.pause(); setValue(""); setIndex(Math.max(0, Math.min(guide.steps.length - 1, next))); };
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [index]);
   const answer = (correct: boolean) => setFeedback(f => ({ ...f, [index]: correct ? step.success : "Ek baar upar ka step dobara padho ya replay suno, phir try karo." }));
+  const art = guide.slug === "retailer" ? null : guideArtwork[guide.slug];
   return <>
     <div className="training-context"><span>{guide.title}</span><span>{name}</span></div>
     {guide.slug === "retailer" && index === 0 && <div className="training-start-options"><span>Naye hain? Neeche registration se shuru karein.</span><button onClick={() => navigate(1)}>Pehle se registered? Ordering seekhein →</button></div>}
     <article className="training-book">
-      <section className="training-art"><img src="/guide-assets/ravi-shop.png" alt="Cartoon Ravi, Aapoorti ke saath program seekhte hue" /><span className="training-sticker">Chalo, saath seekhein!</span><p>{step.speech}</p></section>
+      <section className={`training-art${art ? " training-art-role" : ""}`}>{art
+        ? <svg className="training-role-art" viewBox={`${art.x} ${art.y} 768 1024`} preserveAspectRatio="xMidYMin slice" role="img" aria-label={art.alt}><title>{art.alt}</title><image href={`/guide-assets/${art.file}.png`} width="1536" height={art.height} /></svg>
+        : <img src="/guide-assets/ravi-shop.png" alt="Retailer Ravi apni kirana dukaan mein ordering seekhte hue" />}
+        <span className="training-sticker">Chalo, saath seekhein!</span><p>{step.speech}</p></section>
       <section className="training-page"><p className="training-kicker">Step {index + 1} / {guide.steps.length} · {step.screen}</p><h1 tabIndex={-1} ref={heading}>{step.title}</h1><p className="training-body">{step.body}</p>
         <div className="training-audio"><button onClick={audio.status === "playing" ? audio.pause : audio.play}>{audio.status === "playing" ? "■ Audio band karein" : audio.status === "blocked" ? "▶ Tap karke audio shuru karein" : "↻ Audio replay"}</button><span role="status">{audio.status === "playing" ? "Sun rahe hain…" : audio.status === "ended" ? "Audio band hai. Replay kar sakte hain." : audio.status === "unsupported" ? "Is browser mein voice nahi hai; neeche narration padhein." : audio.status === "blocked" ? "Pehli baar audio ke liye tap zaroori ho sakta hai." : "Audio taiyar hai"}</span></div>
         <div className="training-practice"><span className="training-screen">{step.screen} · Sample practice</span><p className="training-example">{step.example}</p><h2>{step.task}</h2>
