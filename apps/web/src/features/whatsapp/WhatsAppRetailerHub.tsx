@@ -361,7 +361,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const [wishlistProducts, setWishlistProducts] = useState<Record<string, string>>({});
   const [retailerTagDrafts, setRetailerTagDrafts] = useState<Record<string, string>>({});
   const [broadcastReport, setBroadcastReport] = useState("");
-  const [staffForm, setStaffForm] = useState(() => ({ username: "", fullName: "", mobileNumber: "", role: "Sales" as UserRole, warehouseId: pilotWarehouseId(snapshot), password: "1234" }));
+  const [staffForm, setStaffForm] = useState(() => ({ username: "", fullName: "", mobileNumber: "", role: "Sales" as UserRole, alsoCollection: false, warehouseId: pilotWarehouseId(snapshot), password: "1234" }));
   const [activeSection, setActiveSection] = useState<WhatsAppAdminSection>(workspace === "marketing" ? "Offers" : "Home");
   const isMarketingWorkspace = workspace === "marketing";
   const workspaceSections = isMarketingWorkspace ? marketingSections : operationsSections;
@@ -609,17 +609,18 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     event.preventDefault();
     setBusy(true); onError("");
     try {
+      const roles = staffForm.alsoCollection ? Array.from(new Set<UserRole>([staffForm.role, "Delivery", "Collection Agent"])) : [staffForm.role];
       const { data } = await api.post<AppSnapshot>("/whatsapp/staff-users", {
         username: staffForm.username,
         fullName: staffForm.fullName,
         mobileNumber: staffForm.mobileNumber,
-        role: staffForm.role,
-        roles: [staffForm.role],
+        role: roles[0],
+        roles,
         warehouseIds: staffForm.warehouseId ? [staffForm.warehouseId] : [],
         password: staffForm.password
       }, { headers });
       onSnapshot(data);
-      setStaffForm({ username: "", fullName: "", mobileNumber: "", role: "Sales", warehouseId: pilotWarehouseId(data), password: "1234" });
+      setStaffForm({ username: "", fullName: "", mobileNumber: "", role: "Sales", alsoCollection: false, warehouseId: pilotWarehouseId(data), password: "1234" });
       onMessage("Operational WhatsApp user created.");
     } catch (error) {
       onError(errorMessage(error));
@@ -805,6 +806,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Username<input required value={staffForm.username} onChange={(event) => setStaffForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/\s+/g, ".") }))} placeholder="e.g. warehouse.panvel" /></label>
       <label>WhatsApp number<input required value={staffForm.mobileNumber} onChange={(event) => setStaffForm((current) => ({ ...current, mobileNumber: event.target.value }))} placeholder="919876543210" /></label>
       <label>Operational role<select value={staffForm.role} onChange={(event) => setStaffForm((current) => ({ ...current, role: event.target.value as UserRole }))}>{operationalRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+      <label className="checkbox-line"><input type="checkbox" checked={staffForm.alsoCollection} onChange={(event) => setStaffForm((current) => ({ ...current, alsoCollection: event.target.checked }))} />Delivery + Collection same person</label>
       <label>Warehouse<select value={staffForm.warehouseId} onChange={(event) => setStaffForm((current) => ({ ...current, warehouseId: event.target.value }))}><option value="">No warehouse scope</option>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
       <label>Temporary password<input required value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} /></label>
       <button className="primary-button wide-field" disabled={busy}>Create operational user</button>
