@@ -1435,8 +1435,21 @@ app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, a
 
 app.get("/whatsapp/settlements", async (req, res) => wrap(res, async () => {
   await requireWhatsAppAdmin(req);
-  const result = await executeDatabaseQuery<Record<string, unknown>>(`SELECT p.created_by, p.mode, COALESCE(SUM(p.amount),0) AS amount, COUNT(*)::int AS entries
-    FROM payments p WHERE p.side='Sales' AND p.reference_number LIKE 'WA-%' GROUP BY p.created_by,p.mode ORDER BY p.created_by,p.mode`);
+  const result = await executeDatabaseQuery<Record<string, unknown>>(`WITH last_settlement AS (
+      SELECT entity_id, MAX(created_at) AS settled_at
+      FROM note_records
+      WHERE entity_type='Delivery' AND note LIKE 'WhatsApp settlement%'
+      GROUP BY entity_id
+    )
+    SELECT p.created_by, p.mode, COALESCE(SUM(p.amount),0) AS amount, COUNT(*)::int AS entries,
+      MAX(last_settlement.settled_at) AS last_settled_at
+    FROM payments p
+    LEFT JOIN users u ON u.full_name=p.created_by
+    LEFT JOIN last_settlement ON last_settlement.entity_id=u.id::text
+    WHERE p.side='Sales' AND p.reference_number LIKE 'WA-%'
+      AND p.created_at > COALESCE(last_settlement.settled_at,'epoch'::timestamptz)
+    GROUP BY p.created_by,p.mode
+    ORDER BY p.created_by,p.mode`);
   return { rows: result.rows };
 }));
 
