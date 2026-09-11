@@ -1654,6 +1654,13 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const choices = party?.allowPartialCollection ? [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Full" }, { id: `wa-collect:partial:${taskId}:${stopIndex}`, title: "Partial" }] : [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Collect full" }];
     await sendButtons(from, `Collection due: Rs.${stop.amountToPay.toFixed(2)}. Amount choice select karein.`, choices, "Collection", taskId); return true;
   }
+  if (action.startsWith("wa-collect:later:")) {
+    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    if (!task || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
+    const stops = task.routeStops.map((item, index) => index === stopIndex ? { ...item, collectionStatus: "Later" as const, paid: false } : item);
+    await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: task.status });
+    await sendText(from, `${stop.supplierName} ke liye Collect Later recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id); return true;
+  }
   if (action.startsWith("wa-collect:full:") || action.startsWith("wa-collect:partial:")) {
     const [, , kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; const party = snapshot.counterparties.find((item) => item.id === stop?.supplierId) as { allowChequeCollection?: boolean } | undefined;
     if (!task || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
