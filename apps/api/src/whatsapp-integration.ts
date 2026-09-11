@@ -195,6 +195,12 @@ async function sendButtons(phone: string, body: string, buttons: Array<{ id: str
   }, relatedEntityType, relatedEntityId);
 }
 
+async function sendCollectionQr(phone: string, amount: number, relatedEntityId: string) {
+  const imageUrl = text(process.env.WHATSAPP_COLLECTION_QR_IMAGE_URL);
+  if (imageUrl) await sendGraphMessage(phone, { type: "image", image: { link: imageUrl, caption: `UPI collection QR - amount Rs.${amount.toFixed(2)}` } }, "CollectionQR", relatedEntityId);
+  else await sendText(phone, `UPI QR image is not configured yet. Amount payable: Rs.${amount.toFixed(2)}. WhatsApp Admin must upload/set WHATSAPP_COLLECTION_QR_IMAGE_URL.`, "CollectionQR", relatedEntityId);
+}
+
 async function sendFlow(phone: string, flowId: string, body: string, cta: string, flowToken: string, relatedEntityType?: string, relatedEntityId?: string) {
   return sendGraphMessage(phone, {
     type: "interactive",
@@ -1651,7 +1657,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const [, mode, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)];
     if (!task || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
     if (mode === "cash") await sendText(from, `Cash denomination type karein: CASH ${shortId(taskId)} ${Number(indexText) + 1} 500x0 200x0 100x0 50x0 20x0 10x0 COINSx0. System total Rs.${stop.amountToPay.toFixed(2)} se tally karega.`, "Collection", taskId);
-    else await sendText(from, `${mode === "upi" ? "UPI" : "Cheque"} proof photo bhejein, phir COLLECT ${shortId(taskId)} ${Number(indexText) + 1} <amount> ${mode.toUpperCase()} type karein.`, "Collection", taskId);
+    else {
+      if (mode === "upi") await sendCollectionQr(from, stop.amountToPay, taskId);
+      await sendText(from, `${mode === "upi" ? "UPI" : "Cheque"} proof photo bhejein, phir COLLECT ${shortId(taskId)} ${Number(indexText) + 1} <amount> ${mode.toUpperCase()} type karein.`, "Collection", taskId);
+    }
     return true;
   }
   if (action === "wa-settlement:list") { await sendText(from, "LIST COLLECTION type karein."); return true; }
