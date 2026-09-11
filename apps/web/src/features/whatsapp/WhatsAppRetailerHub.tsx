@@ -597,7 +597,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       await api.post("/whatsapp/setup/test-retailers", {}, { headers });
       const { data } = await api.post<{ products: unknown[] }>("/whatsapp/setup/test-products", {}, { headers });
       await refresh();
-      onMessage(`${data.products.length} test products and 10 test retailers are ready for the mock drill.`);
+      onMessage(`${data.products.length} test products and 10 retailer shells are ready. Map a real test WhatsApp number before testing chat.`);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -740,6 +740,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const deliveryOperationalRoles: UserRole[] = ["Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
+  const mockDrillChecks = [
+    ["Test products", snapshot.products.filter((product) => product.sku.startsWith("WA-TEST-")).length >= 10],
+    ["Test retailer shells", snapshot.counterparties.filter((party) => party.id.startsWith("WA-TEST-")).length >= 10],
+    ["Sales user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Sales"))],
+    ["Warehouse user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Warehouse Manager"))],
+    ["Delivery + Collection user", operationalUsers.some((user) => { const roles = user.roles || [user.role]; return roles.includes("Delivery") && roles.includes("Collection Agent"); })],
+    ["Mapped WhatsApp retailer", mappedRetailers.length > 0]
+  ] as const;
   const openTickets = (dashboard?.serviceTickets || []).filter((item) => item.status === "Open" && item.kind !== "Live Chat");
   const openServiceTickets = openTickets;
   const filteredChats = liveChat.tickets.filter((ticket) => !chatSearch.trim()
@@ -814,6 +822,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /></> : null}
 
     {whatsappAdmin && activeSection === "Retailers" ? <>
+    <Panel title="Mock drill readiness" eyebrow="Warehouse to collection"><div className="message-chip-grid">{mockDrillChecks.map(([label, ready]) => <span key={label} className={ready ? "status-pill status-approved" : "status-pill status-pending"}>{ready ? "Ready" : "Needed"}: {label}</span>)}</div><p className="helper-text">Prepare mock drill creates safe test products and retailer shells. For WhatsApp chat, map one real test number in the retailer mapping form below.</p></Panel>
     <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button" type="button" disabled={busy} onClick={() => void prepareMockDrill()}>Prepare mock drill</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
       {pendingRegistrations.length ? pendingRegistrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
     </section>
