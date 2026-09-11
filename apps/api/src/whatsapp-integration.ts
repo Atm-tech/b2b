@@ -1582,6 +1582,7 @@ async function acceptOffer(offerId: string, profile: RetailerProfile, inboundMes
 }
 
 const staffProofs = new Map<string, string>();
+const deliveryProofPending = new Map<string, { taskId: string; stopIndex: number }>();
 
 function staffHasRole(user: StaffUser, roles: string[]) {
   return user.roles.some((role) => roles.includes(role)) || roles.includes(user.role);
@@ -1606,9 +1607,34 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (["image", "document"].includes(messageType)) {
     const media = (message[messageType] as JsonObject | undefined)?.id || (message[messageType] as JsonObject | undefined)?.media_id;
     staffProofs.set(from, `WhatsApp ${messageType} ${text(media) || new Date().toISOString()}`);
+    const pending = deliveryProofPending.get(from);
+    if (pending) {
+      deliveryProofPending.delete(from);
+      const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === pending.taskId); const stop = task?.routeStops[pending.stopIndex];
+      const party = snapshot.counterparties.find((item) => item.id === stop?.supplierId) as { allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean } | undefined;
+      if (task && stop) {
+        const buttons = party?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${pending.stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${pending.stopIndex}`, title: "Collect now" }];
+        await sendButtons(from, `${stop.supplierName} delivery photo saved. Collection amount: Rs.${stop.amountToPay.toFixed(2)}`, buttons, "Delivery", task.id);
+      }
+    }
     await sendText(from, "Proof saved. Ab apna command type karein.", "StaffProof");
     return true;
   }
+  const interactive = message.interactive as JsonObject | undefined;
+  const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
+  const action = text(reply?.id);
+  if (action.startsWith("wa-delivery:task:")) {
+    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.assignedTo.toLowerCase() === user.username.toLowerCase());
+    if (!task) { await sendText(from, "Delivery task no longer active hai. READ type karein."); return true; }
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery stops", rows: task.routeStops.filter((stop) => !stop.delivered).slice(0, 10).map((stop, index) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
+  }
+  if (action.startsWith("wa-delivery:stop:")) {
+    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    if (!task || !stop) { await sendText(from, "Stop unavailable hai. READ type karein."); return true; }
+    const party = snapshot.counterparties.find((item) => item.id === stop.supplierId);
+    await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${stop.amountToPay.toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
+  }
+  if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
   if (messageType !== "text") return false;
   const command = text((message.text as JsonObject | undefined)?.body).trim();
   const normalized = command.toUpperCase().replace(/\s+/g, " ");
