@@ -29,7 +29,10 @@ const browserIsViteDevelopment = typeof window !== "undefined"
 export const browserOriginFallback = typeof window !== "undefined" && browserIsViteDevelopment
   ? `${window.location.protocol}//${window.location.hostname}:8080`
   : typeof window !== "undefined"
-    ? window.location.origin
+    // Production web is hosted on Vercel while the operational API runs on
+    // Render. Without an explicit VITE_API_BASE_URL, calling window.location
+    // sends mutations to the static Vercel host and produces a 404.
+    ? "https://b2b-v8kb.onrender.com"
     : "http://localhost:8080";
 export const API_BASE = configuredApiBase || browserOriginFallback;
 export const SESSION_KEY = "aapoorti-b2b-user";

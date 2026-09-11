@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
 import type { AppSnapshot, AppUser, PaymentMode, UserRole } from "@aapoorti-b2b/domain";
-import { api, formatDateTimeIst } from "../../app/shared";
+import { API_BASE, api, formatDateTimeIst } from "../../app/shared";
 import { SidebarVectorIcon } from "../../components/navigation";
 import { DataTable, Panel, TwoCol } from "../../components/ui";
 
@@ -41,7 +41,7 @@ Aapoorti Wholesale mein naya feature aa gaya hai: [Feature name]
 
 Madad ke liye *help* bhejein.`;
 
-const trainingPdfBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || (location.port === "5173" || location.port === "4173" ? `${location.protocol}//${location.hostname}:8080` : location.origin)).replace(/\/$/, "");
+const trainingPdfBase = API_BASE.replace(/\/$/, "");
 const teamTraining = [
   ["Admin and user registration", "01_Admin_User_Registration.pdf"],
   ["Purchase", "02_Purchase_User_Guide.pdf"],
