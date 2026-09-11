@@ -692,7 +692,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "WhatsApp: Collection buttons",
         "speech": "“Cash ka sahi record — saath mein practice karein.”",
         "narration": "पेमेंट का काम मिला है तो जितना पैसा सच में लिया या दिया उतना लिखें। हजार बाकी था और छह सौ मिला तो छह सौ दर्ज करें।",
-        "body": "Collect now/Later aur Full/Partial buttons retailer privilege ke hisaab se aate hain. Cash mein denomination gino. UPI/cheque proof photo bhejo: system amount aur cheque payee read karke bill se milata hai. Mismatch par WhatsApp Admin alert hota hai.",
+        "body": "Collect now/Later aur Full/Partial buttons retailer privilege ke hisaab se aate hain. Cash mein denomination gino. UPI/cheque proof photo bhejo, phir received amount sirf number mein type karke Confirm dabao. Mismatch, short payment ya overpayment par WhatsApp Admin alert hota hai.",
         "example": "₹1000 due · ₹600 actually received",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
