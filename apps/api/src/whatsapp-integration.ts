@@ -1591,6 +1591,7 @@ const staffProofs = new Map<string, string>();
 const deliveryProofPending = new Map<string, { taskId: string; stopIndex: number }>();
 const cashCollectionPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; step: number; counts: number[] }>();
 const paymentProofPending = new Map<string, { taskId: string; stopIndex: number; kind: "full" | "partial"; mode: "UPI" | "Cheque" }>();
+const packingPhotoPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
 function staffHasRole(user: StaffUser, roles: string[]) {
@@ -1599,6 +1600,36 @@ function staffHasRole(user: StaffUser, roles: string[]) {
 
 function shortId(value: string) {
   return value.slice(-6);
+}
+
+async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, toleranceKg: number) {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
+  if (!accessToken || !apiKey || !mediaId) return null;
+  try {
+    const meta = await fetch(`${graphBase}/${encodeURIComponent(mediaId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!meta.ok) return null;
+    const source = await meta.json() as { url?: string; mime_type?: string };
+    if (!source.url) return null;
+    const image = await fetch(source.url, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!image.ok) return null;
+    const bytes = Buffer.from(await image.arrayBuffer());
+    if (bytes.length > 8 * 1024 * 1024) return null;
+    const mime = source.mime_type || image.headers.get("content-type") || "image/jpeg";
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: process.env.OPENAI_VISION_MODEL?.trim() || "gpt-4o-mini", input: [{ role: "user", content: [
+        { type: "input_text", text: `Read the visible weighing scale in this warehouse packing photo. Expected packed weight is ${expectedKg.toFixed(3)} kg; allowed difference is ${toleranceKg.toFixed(3)} kg. Reply with only JSON: {"weightKg":number|null,"scaleVisible":boolean}. Do not guess.` },
+        { type: "input_image", image_url: `data:${mime};base64,${bytes.toString("base64")}` }
+      ] }] })
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { output_text?: string }; const raw = text(payload.output_text); const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { weightKg?: unknown; scaleVisible?: unknown }; const weightKg = numberValue(parsed.weightKg);
+    if (!Boolean(parsed.scaleVisible) || weightKg <= 0) return { visible: false, weightKg: 0, difference: 0, withinTolerance: false };
+    const difference = weightKg - expectedKg;
+    return { visible: true, weightKg, difference, withinTolerance: Math.abs(difference) <= toleranceKg };
+  } catch { return null; }
 }
 
 async function alertWhatsAppAdminForCollection(taskId: string, retailer: string, due: number, received: number, reason: string) {
@@ -1634,6 +1665,15 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (["image", "document"].includes(messageType)) {
     const media = (message[messageType] as JsonObject | undefined)?.id || (message[messageType] as JsonObject | undefined)?.media_id;
     staffProofs.set(from, `WhatsApp ${messageType} ${text(media) || new Date().toISOString()}`);
+    const packing = packingPhotoPending.get(from);
+    if (packing && messageType === "image") {
+      packingPhotoPending.delete(from);
+      const reading = await readWhatsAppWeightPhoto(text(media), packing.expectedKg, packing.toleranceKg);
+      if (!reading) await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Automatic reading unavailable; expected packed weight ${packing.expectedKg.toFixed(3)} kg. Weight scale ko manually verify karke Packed/Change select karein.`, "WarehouseWeight", packing.cartId);
+      else if (!reading.visible) await sendText(from, `Weight scale photo mein clearly read nahi hua. Expected ${packing.expectedKg.toFixed(3)} kg. Clear scale photo bhejein, phir SO ${shortId(packing.cartId)} select karke Packed/Change karein.`, "WarehouseWeight", packing.cartId);
+      else await sendText(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance - Packed select kar sakte hain." : "Tolerance se bahar - Change select karke SO verify karein."}`, "WarehouseWeight", packing.cartId);
+      return true;
+    }
     const pending = deliveryProofPending.get(from);
     if (pending) {
       deliveryProofPending.delete(from);
@@ -1673,6 +1713,9 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && ["Booked", "Ready for Dispatch"].includes(item.status));
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
+    const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
+    const toleranceKg = Math.max(0.05, lines.reduce((sum, line) => sum + numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.toleranceKg), 0));
+    packingPhotoPending.set(from, { cartId, expectedKg, toleranceKg });
     await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nPacked weight photo bhejein. Qty/product change ho to Change select karein.`, [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }, { id: `wa-so:change:${encodeURIComponent(cartId)}`, title: "Change" }], "WarehouseSO", cartId);
     return true;
   }
