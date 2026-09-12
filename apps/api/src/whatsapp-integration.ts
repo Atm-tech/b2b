@@ -8,6 +8,7 @@ import { runAssistant } from "./assistant-service.js";
 import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { sendPushToUser } from "./push-notifications.js";
+import { handleWhatsAppTestMessage, type WhatsAppTestState } from "./whatsapp-test-mode.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -1764,6 +1765,18 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
 }
 
 async function handleStaffWhatsAppMessage(message: JsonObject, from: string, user: StaffUser): Promise<boolean> {
+  const testKey = `whatsapp_test_mode:${user.id}`;
+  const savedTest = await executeDatabaseQuery<{ value_json: WhatsAppTestState }>("SELECT value_json FROM settings WHERE key=$1", [testKey]);
+  const testResult = handleWhatsAppTestMessage(savedTest.rows[0]?.value_json, message);
+  if (testResult.handled) {
+    if (testResult.state) {
+      await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [testKey, JSON.stringify(testResult.state)]);
+    } else if (savedTest.rows.length) {
+      await executeDatabaseQuery("DELETE FROM settings WHERE key=$1", [testKey]);
+    }
+    if (testResult.response) await sendGraphMessage(from, testResult.response, "StaffTestMode", String(user.id));
+    return true;
+  }
   const messageType = text(message.type);
   if (["image", "document"].includes(messageType)) {
     const media = (message[messageType] as JsonObject | undefined)?.id || (message[messageType] as JsonObject | undefined)?.media_id;
