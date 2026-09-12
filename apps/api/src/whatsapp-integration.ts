@@ -9,6 +9,7 @@ import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { sendPushToUser } from "./push-notifications.js";
 import { handleWhatsAppTestMessage, isDeliveryCollectionAgent, type TestAgent, type WhatsAppTestState } from "./whatsapp-test-mode.js";
+import { assignedTestDcos, testDeliveryReply, type TestDeliveryProgress, type TestDeliverySource } from "./whatsapp-test-delivery.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -1766,6 +1767,21 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
 }
 
 async function handleStaffWhatsAppMessage(message: JsonObject, from: string, user: StaffUser): Promise<boolean> {
+  const incomingCommand = text((message.text as JsonObject | undefined)?.body).toUpperCase();
+  const incomingInteractive = message.interactive as JsonObject | undefined;
+  const incomingAction = text(((incomingInteractive?.list_reply || incomingInteractive?.button_reply) as JsonObject | undefined)?.id);
+  if (staffHasRole(user, ["Delivery", "Out Delivery", "Collection Agent"]) && (["LIST", "TEST LIST"].includes(incomingCommand) || incomingAction.startsWith("wa-test-delivery:"))) {
+    const sources = await executeDatabaseQuery<TestDeliverySource>("SELECT key,value_json FROM settings WHERE key LIKE 'whatsapp_test_mode:%'");
+    const progressKey = `whatsapp_test_delivery:${user.id}`;
+    const savedProgress = await executeDatabaseQuery<{ value_json: TestDeliveryProgress }>("SELECT value_json FROM settings WHERE key=$1", [progressKey]);
+    const practice = testDeliveryReply(assignedTestDcos(sources.rows, user.username), savedProgress.rows[0]?.value_json || {}, message);
+    if (practice.handled) {
+      await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [progressKey, JSON.stringify(practice.progress)]);
+      await sendGraphMessage(from, practice.response!, "StaffTestDelivery", String(user.id));
+      return true;
+    }
+  }
+  if (incomingCommand === "LIVE LIST") message = { ...message, type: "text", text: { body: "LIST" } };
   const testKey = `whatsapp_test_mode:${user.id}`;
   const savedTest = await executeDatabaseQuery<{ value_json: WhatsAppTestState }>("SELECT value_json FROM settings WHERE key=$1", [testKey]);
   const testAgents = savedTest.rows.length ? await executeDatabaseQuery<TestAgent>('SELECT username,full_name AS "fullName",active,role,roles_json AS roles FROM users WHERE active=TRUE ORDER BY full_name,username') : { rows: [] };

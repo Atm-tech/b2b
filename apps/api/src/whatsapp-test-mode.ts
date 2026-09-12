@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 type Message = Record<string, unknown>;
 type TestOrder = { id: string; shop: string; product: string; quantity: number; photo: boolean; packed: boolean };
 export type TestAgent = { username: string; fullName: string; active: boolean; role: string; roles: string[] };
-type TestDco = { id: string; orderIds: string[]; assignedTo?: string; handedOver?: boolean };
+type TestDco = { id: string; orderIds: string[]; assignedTo?: string; handedOver?: boolean; handoverId?: string };
 export type WhatsAppTestState = { version: 1; orders: TestOrder[]; selected?: string; changing?: boolean; handedOver?: boolean; dcos?: TestDco[]; chosenSos?: string[]; selectedDco?: string; selectedAgent?: string };
 
 export function isDeliveryCollectionAgent(agent: TestAgent) {
@@ -130,9 +132,9 @@ export function handleWhatsAppTestMessage(current: WhatsAppTestState | undefined
       return result(buttons(`${dco.id} (${dco.orderIds.length} SO)\nAgent: ${agent.fullName}\nSend se TEST assignment confirm hoga.`, [[`dco-send:${dco.id}:${encodeURIComponent(agent.username)}`, "Send"], [`dco-handover:${dco.id}`, "Change agent"]]));
     }
     if (state.selectedAgent !== agent.username) return result(reply("Agent dobara select karein; purana Send button hai."));
-    dco.assignedTo = agent.username; dco.handedOver = true; state.dcos = dcos;
+    dco.assignedTo = agent.username; dco.handedOver = true; dco.handoverId = randomUUID(); state.dcos = dcos;
     state.selectedAgent = undefined;
-    return result(reply(`${dco.id}: ${dco.orderIds.length} SO ka simulated handover ${agent.fullName} ko complete. Live flow mein yahin agent ki delivery/collection LIST shuru hogi. Is test mein real task/message nahi bheja gaya.`));
+    return result(reply(`${dco.id}: ${dco.orderIds.length} SO ka test handover ${agent.fullName} ko complete. Agent ab LIST type karke test DCO aur retailers khol sakta hai. Real stock/payment par koi asar nahi.`));
   }
   if (action.startsWith("wa-test:order:")) {
     const order = state.orders.find((item) => item.id === action.slice("wa-test:order:".length));
