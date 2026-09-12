@@ -55,8 +55,10 @@ const graphVersion = process.env.WHATSAPP_GRAPH_VERSION || "v23.0";
 const graphBase = `https://graph.facebook.com/${graphVersion}`;
 
 let dcoFlowProvision: Promise<string> | undefined;
+let dcoFlowFailureAt = 0;
 export function ensureDcoCheckboxFlow(): Promise<string> {
-  return dcoFlowProvision ||= provisionDcoCheckboxFlow().catch((error) => { dcoFlowProvision = undefined; throw error; });
+  if (dcoFlowFailureAt && Date.now() - dcoFlowFailureAt < 5 * 60 * 1000) return Promise.reject(new Error("Meta checkbox Flow setup temporarily unavailable."));
+  return dcoFlowProvision ||= provisionDcoCheckboxFlow().catch((error) => { dcoFlowProvision = undefined; dcoFlowFailureAt = Date.now(); throw error; });
 }
 
 async function provisionDcoCheckboxFlow() {
@@ -88,7 +90,12 @@ async function provisionDcoCheckboxFlow() {
 
 async function sendDcoCheckbox(phone: string, user: StaffUser, orders: Array<{ id: string; title: string; description: string }>, testMode: boolean) {
   if (!orders.length) { await sendText(phone, "Koi packed SO available nahi hai."); return; }
-  const flowId = await ensureDcoCheckboxFlow();
+  let flowId: string;
+  try { flowId = await ensureDcoCheckboxFlow(); }
+  catch {
+    await sendGraphMessage(phone, { type: "interactive", interactive: { type: "list", body: { text: `${testMode ? "TEST MODE: " : ""}Checkbox form abhi Meta par available nahi hai. Filhal ek SO select karein; Add another se aur SO jod sakte hain.` }, action: { button: "Packed SO", sections: [{ title: "Ready for DCO", rows: orders.slice(0, 10).map((order) => ({ id: testMode ? `wa-test:dco-add:${order.id}` : `wa-dco:add:${encodeURIComponent(order.id)}`, title: compact(order.title, 24), description: compact(order.description, 72) })) }] } } }, testMode ? "StaffTestMode" : "DCOBuild");
+    return;
+  }
   const options = orders.slice(0, 20).map((order) => ({ ...order, title: compact(order.title, 30), description: compact(order.description, 300) }));
   const token = `dco-checkbox-${randomUUID()}`;
   await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb)", [token, JSON.stringify({ userId: String(user.id), testMode, allowed: options.map((order) => order.id), expiresAt: Date.now() + 30 * 60 * 1000 })]);
@@ -1844,7 +1851,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (savedTest.rows.length && ["wa-test:dco-new", "wa-test:dco-more"].includes(incomingAction)) {
     const state = savedTest.rows[0].value_json;
-    const available = state.orders.filter((order) => order.packed && !(state.dcos || []).some((dco) => dco.orderIds.includes(order.id)));
+    if (incomingAction === "wa-test:dco-new") {
+      state.chosenSos = [];
+      await executeDatabaseQuery("UPDATE settings SET value_json=$2::jsonb WHERE key=$1", [testKey, JSON.stringify(state)]);
+    }
+    const available = state.orders.filter((order) => order.packed && !(state.chosenSos || []).includes(order.id) && !(state.dcos || []).some((dco) => dco.orderIds.includes(order.id)));
+    if (!available.length && state.chosenSos?.length) { await sendGraphMessage(from, { type: "interactive", interactive: { type: "button", body: { text: "Saare available test SO selected hain. Create DCO karein." }, action: { buttons: [{ type: "reply", reply: { id: "wa-test:dco-create", title: "Create DCO" } }] } } }, "StaffTestMode"); return true; }
     await sendDcoCheckbox(from, user, available.map((order) => ({ id: order.id, title: order.shop, description: `${order.id} | ${order.product} x ${order.quantity}` })), true);
     return true;
   }
