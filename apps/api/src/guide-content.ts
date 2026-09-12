@@ -262,7 +262,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "WhatsApp: SO / DCO / HANDOVER",
         "speech": "“Packing ke baad Ready — saath mein practice karein.”",
         "narration": "सेल्स ऑर्डर के मुताबिक सही माल पैक करें। मात्रा और वेयरहाउस मिलाएं। पैकिंग पूरी होने पर डॉकिट रेडी करें। अभी डिलीवर्ड नहीं करना है।",
-        "body": "WhatsApp par SO type karo aur sales order select karo. Packing scale photo bhejo, phir scale par dikh raha actual kg type karo; system expected weight aur tolerance se compare karega. Match ho to Packed dabao. Change par product select karke nayi quantity (0 se remove) bhejo. DCO type karke multiple packed SO add karo, agent select karo, phir physical handover ke baad HANDOVER <DCO last6> type karo.",
+        "body": "WhatsApp par SO type karo aur sales order select karo. Packing scale photo bhejo; token-free local OCR reading try karega. Reading clear na ho to scale par dikh raha actual kg type karo; system expected weight aur tolerance se compare karega. Match ho to Packed dabao. Change par product select karke nayi quantity (0 se remove) bhejo. DCO type karke multiple packed SO add karo, agent select karo, phir physical handover ke baad HANDOVER <DCO last6> type karo.",
         "example": "Docket: Pending Packing → packing checked",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
@@ -692,7 +692,7 @@ export const trainingGuides: TrainingGuide[] = [
         "screen": "WhatsApp: Collection buttons",
         "speech": "“Cash ka sahi record — saath mein practice karein.”",
         "narration": "पेमेंट का काम मिला है तो जितना पैसा सच में लिया या दिया उतना लिखें। हजार बाकी था और छह सौ मिला तो छह सौ दर्ज करें।",
-        "body": "Collect now/Later aur Full/Partial buttons retailer privilege ke hisaab se aate hain. Cash mein denomination gino. UPI/cheque proof photo bhejo, phir received amount sirf number mein type karke Confirm dabao. Mismatch, short payment ya overpayment par WhatsApp Admin alert hota hai.",
+        "body": "Collect now/Later aur Full/Partial buttons retailer privilege ke hisaab se aate hain. Cash mein denomination gino. UPI/cheque proof photo bhejo; token-free local OCR clear amount read kare to confirmation button check karke dabao, warna received amount sirf number mein type karo. Mismatch, short payment ya overpayment par WhatsApp Admin alert hota hai.",
         "example": "₹1000 due · ₹600 actually received",
         "task": "Is situation mein sahi action chuno.",
         "choices": [
