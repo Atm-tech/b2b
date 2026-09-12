@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { testCollectionPrivileges, type CollectionPrivileges } from "./whatsapp-collection-utils.js";
 
 type Message = Record<string, unknown>;
-type TestOrder = { id: string; shop: string; product: string; quantity: number; photo: boolean; packed: boolean };
+type TestOrder = { id: string; shop: string; product: string; quantity: number; photo: boolean; packed: boolean; collection?: CollectionPrivileges };
 export type TestAgent = { username: string; fullName: string; active: boolean; role: string; roles: string[] };
 type TestDco = { id: string; orderIds: string[]; assignedTo?: string; handedOver?: boolean; handoverId?: string };
 export type WhatsAppTestState = { version: 1; orders: TestOrder[]; selected?: string; changing?: boolean; handedOver?: boolean; dcos?: TestDco[]; chosenSos?: string[]; selectedDco?: string; selectedAgent?: string };
@@ -16,7 +17,7 @@ export function createWhatsAppTestState(): WhatsAppTestState {
     version: 1,
     orders: [1, 2, 3].map((number) => ({
       id: `TEST-SO-${number}`, shop: `Test Shop ${number}`, product: "Dummy training pack",
-      quantity: number * 2, photo: false, packed: false
+      quantity: number * 2, photo: false, packed: false, collection: testCollectionPrivileges(`TEST-SO-${number}`)
     }))
   };
 }

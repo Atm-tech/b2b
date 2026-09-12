@@ -9,7 +9,8 @@ import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { sendPushToUser } from "./push-notifications.js";
 import { handleWhatsAppTestMessage, isDeliveryCollectionAgent, type TestAgent, type WhatsAppTestState } from "./whatsapp-test-mode.js";
-import { assignedTestDcos, testDeliveryReply, type TestDeliveryProgress, type TestDeliverySource } from "./whatsapp-test-delivery.js";
+import { activeTestCollection, assignedTestDcos, testDeliveryReply, type TestDeliveryProgress, type TestDeliverySource } from "./whatsapp-test-delivery.js";
+import { paymentOcrAmount, testCollectionPrivileges } from "./whatsapp-collection-utils.js";
 import { dcoCheckboxFlow, validateDcoCheckboxSelection } from "./whatsapp-dco-checkbox.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "./whatsapp-utils.js";
 
@@ -1753,8 +1754,8 @@ async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, tole
 async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque", expectedAmount: number) {
   const local = await readLocalWhatsAppOcr(mediaId);
   if (local) {
-    const amount = closestOcrNumber(ocrNumbers(local.raw), expectedAmount);
-    if (amount > 0) {
+    const amount = paymentOcrAmount(local.raw);
+    if (amount !== null) {
       const hasAapoortiPayee = /aapoorti/i.test(local.raw);
       return { visible: mode === "UPI" || hasAapoortiPayee, amount, payeeName: mode === "Cheque" ? (hasAapoortiPayee ? "Aapoorti" : "Unreadable") : "", transactionDate: "" };
     }
@@ -1779,7 +1780,9 @@ async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque",
       ] }] })
     });
     if (!response.ok) return null;
-    const payload = await response.json() as { output_text?: string }; const match = text(payload.output_text).match(/\{[\s\S]*\}/);
+    const payload = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
+    const outputText = payload.output_text || payload.output?.flatMap((item) => item.content || []).filter((item) => item.type === "output_text").map((item) => item.text || "").join("\n") || "";
+    const match = outputText.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as { paymentVisible?: unknown; amount?: unknown; payeeName?: unknown; transactionDate?: unknown };
     const amount = numberValue(parsed.amount);
@@ -1819,11 +1822,26 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const incomingCommand = text((message.text as JsonObject | undefined)?.body).toUpperCase();
   const incomingInteractive = message.interactive as JsonObject | undefined;
   const incomingAction = text(((incomingInteractive?.list_reply || incomingInteractive?.button_reply) as JsonObject | undefined)?.id);
-  if (staffHasRole(user, ["Delivery", "Out Delivery", "Collection Agent"]) && (["LIST", "TEST LIST"].includes(incomingCommand) || incomingAction.startsWith("wa-test-delivery:"))) {
+  if (staffHasRole(user, ["Delivery", "Out Delivery", "Collection Agent"])) {
     const sources = await executeDatabaseQuery<TestDeliverySource>("SELECT key,value_json FROM settings WHERE key LIKE 'whatsapp_test_mode:%'");
     const progressKey = `whatsapp_test_delivery:${user.id}`;
     const savedProgress = await executeDatabaseQuery<{ value_json: TestDeliveryProgress }>("SELECT value_json FROM settings WHERE key=$1", [progressKey]);
-    const practice = testDeliveryReply(assignedTestDcos(sources.rows, user.username), savedProgress.rows[0]?.value_json || {}, message);
+    const tasks = assignedTestDcos(sources.rows, user.username);
+    const progress = savedProgress.rows[0]?.value_json || {};
+    if (incomingCommand === "LIVE LIST") {
+      for (const stop of Object.values(progress)) delete stop.pending;
+      if (savedProgress.rows.length) await executeDatabaseQuery("UPDATE settings SET value_json=$2::jsonb WHERE key=$1", [progressKey, JSON.stringify(progress)]);
+    }
+    const pending = activeTestCollection(tasks, progress);
+    let reading: Awaited<ReturnType<typeof readWhatsAppPaymentProof>> | undefined;
+    if (message.type === "image" && pending?.pending.stage === "proof" && (pending.pending.mode === "UPI" || pending.pending.mode === "Cheque")) {
+      const mediaId = text((message.image as JsonObject | undefined)?.id);
+      if (mediaId) {
+        await sendText(from, "Test payment photo mil gayi. OCR se amount read kar raha hoon.", "StaffTestDelivery", String(user.id));
+        reading = await readWhatsAppPaymentProof(mediaId, pending.pending.mode, (pending.order.collection || testCollectionPrivileges(pending.order.id)).amountDue);
+      }
+    }
+    const practice = testDeliveryReply(tasks, progress, message, reading);
     if (practice.handled) {
       await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [progressKey, JSON.stringify(practice.progress)]);
       await sendGraphMessage(from, practice.response!, "StaffTestDelivery", String(user.id));
