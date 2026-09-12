@@ -741,12 +741,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const deliveryOperationalRoles: UserRole[] = ["Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
+  const mockTestRetailerCount = dashboard?.mockDrill?.testRetailers ?? dashboard?.whatsappOnlyRetailers.filter((retailer) => retailer.id.startsWith("WA-TEST-") || retailer.name.startsWith("WhatsApp Retailer ")).length ?? 0;
+  const mockTestProductCount = dashboard?.mockDrill?.testProducts ?? snapshot.products.filter((product) => product.sku.startsWith("WA-TEST-")).length;
   const mockDrillChecks = [
-    ["Test products", (dashboard?.mockDrill?.testProducts || 0) >= 10],
-    ["Test retailer shells", (dashboard?.mockDrill?.testRetailers || 0) >= 10],
+    ["Test products", mockTestProductCount >= 10],
+    ["Test retailer shells", mockTestRetailerCount >= 10],
     ["Sales user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Sales"))],
     ["Warehouse user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Warehouse Manager"))],
-    ["Delivery + Collection user", operationalUsers.some((user) => { const roles = user.roles || [user.role]; return roles.includes("Delivery") && roles.includes("Collection Agent"); })],
+    ["Delivery + Collection user", operationalUsers.some((user) => { const roles = user.roles || [user.role]; return roles.includes("Collection Agent") && roles.some((role) => deliveryOperationalRoles.includes(role)); })],
     ["Mapped WhatsApp retailer", mappedRetailers.length > 0]
   ] as const;
   const mockDrillMissing = mockDrillChecks.filter(([, ready]) => !ready).map(([label]) => label);
