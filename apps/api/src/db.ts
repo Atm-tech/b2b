@@ -3560,6 +3560,8 @@ export async function createDeliveryConsignment(payload: {
   const id = makeId("CON");
   const createdAt = operationalDate(payload.operationDate);
   await withTransaction(async (client) => {
+    const lockedDockets = await query<Record<string, unknown>>("SELECT id,status,consignment_id FROM delivery_dockets WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE", [docketIds], client);
+    if (lockedDockets.rows.length !== docketIds.length || lockedDockets.rows.some((row) => row.status !== "Ready" || row.consignment_id)) throw new Error("Selected SO is already bundled or no longer ready. Refresh the packed SO list.");
     const assignedTo = payload.assignedTo.trim()
       ? await normalizeDeliveryAssignee(payload.assignedTo, client, "Sales")
       : "";
@@ -3576,7 +3578,9 @@ export async function createDeliveryConsignment(payload: {
       [id, docketIds],
       client
     );
-    if (assignedTo) {
+    // An unassigned DCO still needs a planned task so the warehouse can select
+    // its agent later, at physical handover. Planned tasks stay out of agent LIST.
+    {
       const salesOrderIds = dockets.rows.map((row) => stringValue(row.sales_order_id)).filter(Boolean);
       const salesOrders = salesOrderIds.length > 0
         ? await query<Record<string, unknown>>(
@@ -3680,20 +3684,24 @@ export async function createDeliveryConsignment(payload: {
         ],
         client
       );
-      await query(
-        `UPDATE delivery_consignments
-         SET assigned_to = $1, status = 'Pending Pickup'
-         WHERE id = $2`,
-        [assignedTo, id],
-        client
-      );
-      await query(
-        `UPDATE delivery_dockets
-         SET status = 'Pending Pickup'
-         WHERE id = ANY($1::text[])`,
-        [docketIds],
-        client
-      );
+      if (assignedTo) {
+        await query(
+          `UPDATE delivery_consignments
+           SET assigned_to = $1, status = 'Pending Pickup'
+           WHERE id = $2`,
+          [assignedTo, id],
+          client
+        );
+        await query(
+          `UPDATE delivery_dockets
+           SET status = 'Pending Pickup'
+           WHERE id = ANY($1::text[])`,
+          [docketIds],
+          client
+        );
+      }
+      // Bundled orders leave the editable packing list even before an agent is
+      // chosen. Outbound inventory is still posted only at handover.
       await query(
         `UPDATE sales_orders
          SET status = 'Pending Pickup'
@@ -4349,6 +4357,7 @@ export async function updateReceiptCheck(grcNumber: string, payload: {
 }
 
 export async function updateDeliveryTask(taskId: string, payload: {
+  expectedStatus?: DeliveryTask["status"];
   linkedOrderIds?: string[];
   consignmentId?: string;
   assignedTo: string;
@@ -4369,8 +4378,13 @@ export async function updateDeliveryTask(taskId: string, payload: {
 }) {
   await ready;
   await withTransaction(async (client) => {
-    const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1", [taskId], client);
+    const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1 FOR UPDATE", [taskId], client);
     if (!task) throw new Error("Delivery task not found.");
+    if (payload.expectedStatus && task.status !== payload.expectedStatus) throw new Error("DCO status changed. Open a fresh DCO list before handover.");
+    if (payload.expectedStatus === "Planned" && payload.status === "Handed Over") {
+      const agent = await one<Record<string, unknown>>("SELECT id FROM users WHERE username=$1 AND active=TRUE AND (role=ANY($2::text[]) OR roles_json ?| $2::text[]) FOR SHARE", [payload.assignedTo, ["Delivery", "Out Delivery"]], client);
+      if (!agent) throw new Error("Select an active Delivery + Collection agent.");
+    }
     const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, stringValue(task.side) as DeliveryTask["side"]);
     const transportType = payload.transportType || (task.transport_type ? stringValue(task.transport_type) : "Internal");
     const vehicleNumber = payload.vehicleNumber?.trim() || (task.vehicle_number ? stringValue(task.vehicle_number) : "");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWhatsAppTestState, handleWhatsAppTestMessage } from "../src/whatsapp-test-mode.js";
+import { createWhatsAppTestState, handleWhatsAppTestMessage, isDeliveryCollectionAgent } from "../src/whatsapp-test-mode.js";
 
 const text = (body: string) => ({ type: "text", text: { body } });
 const action = (id: string) => ({ type: "interactive", interactive: { button_reply: { id } } });
@@ -42,13 +42,42 @@ test("packing practice requires selection and a new photo after changing quantit
   assert.deepEqual(original, createWhatsAppTestState());
 });
 
-test("test handover, reset and explicit exit confirmation stay within the simulator", () => {
+test("reset and explicit exit confirmation stay within the simulator", () => {
   let state = createWhatsAppTestState();
   assert.equal(handleWhatsAppTestMessage(state, action("wa-test:handover")).state?.handedOver, undefined);
-  state.orders[0].packed = true;
-  state = handleWhatsAppTestMessage(state, action("wa-test:handover")).state!;
-  assert.equal(state.handedOver, true);
   assert.deepEqual(handleWhatsAppTestMessage(state, text("TEST RESET")).state, createWhatsAppTestState());
   assert.ok(handleWhatsAppTestMessage(state, text("TEST EXIT")).state);
   assert.equal(handleWhatsAppTestMessage(state, action("wa-test:exit")).state, undefined);
+});
+
+test("multiple SO form one unassigned DCO; only confirmed Send assigns the active agent", () => {
+  const agent = { username: "driver", fullName: "Test Driver", active: true, role: "Delivery", roles: ["Delivery"] };
+  let state = createWhatsAppTestState();
+  state.orders.forEach((order) => { order.packed = true; order.photo = true; });
+  const step = (id: string) => { const result = handleWhatsAppTestMessage(state, action(`wa-test:${id}`), [agent]); state = result.state!; return result; };
+  step("dco-new"); step("dco-add:TEST-SO-1"); step("dco-more"); step("dco-add:TEST-SO-2"); step("dco-create");
+  assert.deepEqual(state.dcos, [{ id: "TEST-DCO-1", orderIds: ["TEST-SO-1", "TEST-SO-2"] }]);
+  step("dco-create"); assert.equal(state.dcos?.length, 1);
+  step("dco-new"); step("dco-add:TEST-SO-1"); assert.deepEqual(state.chosenSos, []);
+  step("dco-ready"); step("dco-open:TEST-DCO-1");
+  const list = step("dco-handover:TEST-DCO-1"); assert.match(JSON.stringify(list.response), /Test Driver/);
+  step("dco-agent:TEST-DCO-1:driver");
+  assert.equal(state.dcos?.[0].assignedTo, undefined);
+  const inactive = handleWhatsAppTestMessage(state, action("wa-test:dco-send:TEST-DCO-1:driver"), [{ ...agent, active: false }]);
+  assert.equal(inactive.state?.dcos?.[0].handedOver, undefined);
+  step("dco-send:TEST-DCO-1:driver");
+  assert.equal(state.dcos?.[0].assignedTo, "driver");
+  assert.equal(state.dcos?.[0].handedOver, true);
+  assert.equal(state.orders[2].packed, true);
+  const before = structuredClone(state.dcos);
+  step("dco-send:TEST-DCO-1:driver"); assert.deepEqual(state.dcos, before);
+});
+
+test("only active outgoing delivery agents are selectable for delivery plus collection", () => {
+  const base = { username: "agent", fullName: "Agent", active: true, role: "", roles: [] as string[] };
+  assert.equal(isDeliveryCollectionAgent({ ...base, role: "Delivery" }), true);
+  assert.equal(isDeliveryCollectionAgent({ ...base, roles: ["Out Delivery", "Collection Agent"] }), true);
+  assert.equal(isDeliveryCollectionAgent({ ...base, role: "Delivery", active: false }), false);
+  assert.equal(isDeliveryCollectionAgent({ ...base, role: "Collection Agent" }), false);
+  assert.equal(isDeliveryCollectionAgent({ ...base, role: "In Delivery" }), false);
 });

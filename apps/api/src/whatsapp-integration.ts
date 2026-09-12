@@ -8,7 +8,7 @@ import { runAssistant } from "./assistant-service.js";
 import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { sendPushToUser } from "./push-notifications.js";
-import { handleWhatsAppTestMessage, type WhatsAppTestState } from "./whatsapp-test-mode.js";
+import { handleWhatsAppTestMessage, isDeliveryCollectionAgent, type TestAgent, type WhatsAppTestState } from "./whatsapp-test-mode.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -1600,6 +1600,7 @@ const packingPhotoProofs = new Map<string, string>();
 const packingManualWeightPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number }>();
 const packingChangePending = new Map<string, { cartId: string; sku: string }>();
 const dcoBuildSessions = new Map<string, string[]>();
+const dcoHandoverSelections = new Map<string, { taskId: string; username: string; token: string }>();
 const receiptSessions = new Map<string, { cartId: string; purchaseOrderId: string; sku: string; warehouseId: string; remainingQty: number; stage: "photo" | "quantity" | "weight"; quantity?: number }>();
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
 
@@ -1758,7 +1759,7 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
   const warehouse = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const delivery = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
   const lines = ["*B CONNECT staff WhatsApp commands*"];
-  if (warehouse) lines.push("Warehouse: IN (purchase receipt), SO (packing), DCO (select packed SO), HANDOVER <DCO last6,DCO last6>");
+  if (warehouse) lines.push("Warehouse: IN (purchase receipt), SO (packing), DCO (multiple SO se DCO banayein; Handover > agent > Send).");
   if (delivery) lines.push("Delivery: LIST (DCO/retailer select), SUM, LIST COLLECTION, SETTLE. Buttons se delivery aur collection complete karein.");
   lines.push("Weight/delivery/payment photo maange jaane par bhejein; phir screen par aane wala button select karein.");
   await sendText(phone, lines.join("\n"), "StaffCommandHelp");
@@ -1767,7 +1768,8 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
 async function handleStaffWhatsAppMessage(message: JsonObject, from: string, user: StaffUser): Promise<boolean> {
   const testKey = `whatsapp_test_mode:${user.id}`;
   const savedTest = await executeDatabaseQuery<{ value_json: WhatsAppTestState }>("SELECT value_json FROM settings WHERE key=$1", [testKey]);
-  const testResult = handleWhatsAppTestMessage(savedTest.rows[0]?.value_json, message);
+  const testAgents = savedTest.rows.length ? await executeDatabaseQuery<TestAgent>('SELECT username,full_name AS "fullName",active,role,roles_json AS roles FROM users WHERE active=TRUE ORDER BY full_name,username') : { rows: [] };
+  const testResult = handleWhatsAppTestMessage(savedTest.rows[0]?.value_json, message, testAgents.rows);
   if (testResult.handled) {
     if (testResult.state) {
       await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [testKey, JSON.stringify(testResult.state)]);
@@ -1858,6 +1860,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if (action.startsWith("wa-dco:add:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-dco:add:".length)); const chosen = Array.from(new Set([...(dcoBuildSessions.get(from) || []), cartId])); dcoBuildSessions.set(from, chosen);
     await sendButtons(from, `SO ${shortId(cartId)} added. Total selected: ${chosen.length}.`, [{ id: "wa-dco:list", title: "Add another" }, { id: "wa-dco:create", title: "Create DCO" }], "DCOBuild");
     return true;
@@ -1866,22 +1869,63 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot();
     if (!chosen.length) { await sendText(from, "Pehle packed SO select karein. DCO type karein."); return true; }
-    const agents = snapshot.users.filter((item) => item.active && staffHasRole(item, ["Delivery", "Out Delivery", "Collection Agent"]));
-    if (!agents.length) { await sendText(from, "Delivery+Collection agent registered nahi hai. WhatsApp Admin se user add karein."); return true; }
-    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `${chosen.length} SO selected. Delivery + Collection agent select karein.` }, action: { button: "Select agent", sections: [{ title: "Delivery agents", rows: agents.slice(0, 10).map((agent) => ({ id: `wa-dco:agent:${encodeURIComponent(agent.username)}`, title: compact(agent.fullName, 24), description: compact(agent.mobileNumber || agent.username, 72) })) }] } } }, "DCOBuild");
-    return true;
-  }
-  if (action.startsWith("wa-dco:agent:")) {
-    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const username = decodeURIComponent(action.slice("wa-dco:agent:".length)); const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot();
     const dockets = snapshot.deliveryDockets.filter((docket) => docket.status === "Ready" && chosen.includes(snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.cartId || snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.id || ""));
-    if (!dockets.length) { await sendText(from, "Selected SO ab ready nahi hain. DCO type karke dobara select karein."); return true; }
-    const warehouseId = dockets[0].warehouseId; if (dockets.some((item) => item.warehouseId !== warehouseId)) { await sendText(from, "Ek DCO mein sirf ek warehouse ke SO select karein."); return true; }
-    await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: username }, user); dcoBuildSessions.delete(from);
-    const fresh = await getSnapshot(); const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.length === dockets.length && item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)));
-    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created for ${username}. Physical handover ke baad HANDOVER ${shortId(consignment?.id || "")} type karein.`, "DCO", consignment?.id);
+    const readyCarts = new Set(dockets.map((docket) => { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); return order?.cartId || order?.id; }));
+    if (!dockets.length || chosen.some((cartId) => !readyCarts.has(cartId))) { await sendText(from, "Selected SO ab ready nahi hain. DCO type karke dobara select karein."); return true; }
+    const warehouseId = dockets[0].warehouseId;
+    if (dockets.some((item) => item.warehouseId !== warehouseId)) { await sendText(from, "Ek DCO mein sirf ek warehouse ke SO select karein."); return true; }
+    const fresh = await createDeliveryConsignment({ docketIds: dockets.map((item) => item.id), warehouseId, assignedTo: "" }, user);
+    dcoBuildSessions.delete(from);
+    const consignment = fresh.deliveryConsignments.find((item) => item.docketIds.length === dockets.length && item.docketIds.every((docketId) => dockets.some((docket) => docket.id === docketId)));
+    await sendText(from, `DCO ${shortId(consignment?.id || "created")} created with ${chosen.length} SO. Agent abhi assign nahi hua. Physical handover ke liye DCO type karein > Handover DCO > DCO select > Handover > agent > Send.`, "DCO", consignment?.id);
     return true;
   }
+  if (action === "wa-dco:ready" || action.startsWith("wa-dco:ready:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const snapshot = await getSnapshot();
+    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.consignmentId && task.status === "Planned");
+    const page = Math.max(0, Number(action.split(":")[2]) || 0); const rows = tasks.slice(page * 9, page * 9 + 9).map((task) => ({ id: `wa-dco:open:${encodeURIComponent(task.id)}`, title: `DCO ${shortId(task.consignmentId!)}`, description: compact(`${task.linkedOrderIds.length} SO - ${task.routeStops.map((stop) => stop.supplierName).join(", ")}`, 72) }));
+    if (!rows.length) { await sendText(from, "Handover ke liye DCO nahi mila. DCO > Create DCO se packed SO bundle karein."); return true; }
+    if (tasks.length > page * 9 + 9) rows.push({ id: `wa-dco:ready:${page + 1}`, title: "Next DCOs", description: "Aur ready DCO dekhein" });
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Handover ke liye DCO select karein." }, action: { button: "Ready DCO", sections: [{ title: "Awaiting handover", rows }] } } }, "DCO");
+    return true;
+  }
+  if (action.startsWith("wa-dco:open:") || action.startsWith("wa-dco:handover:") || action.startsWith("wa-dco:pick:") || action.startsWith("wa-dco:send:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const parts = action.split(":"); const selection = dcoHandoverSelections.get(from);
+    const taskId = parts[1] === "send" ? selection?.taskId : decodeURIComponent(parts[2] || "");
+    const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.side === "Sales" && item.consignmentId && item.status === "Planned");
+    if (!task) { await sendText(from, "DCO ab handover ke liye available nahi hai. DCO type karke fresh list dekhein."); return true; }
+    if (parts[1] === "open") {
+      await sendButtons(from, `DCO ${shortId(task.consignmentId!)}: ${task.linkedOrderIds.length} SO\n${task.routeStops.map((stop) => stop.supplierName).join("\n")}`, [{ id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Handover" }], "DCO", task.consignmentId); return true;
+    }
+    const agents = snapshot.users.filter(isDeliveryCollectionAgent);
+    if (parts[1] === "handover") {
+      dcoHandoverSelections.delete(from);
+      const page = Math.max(0, Number(parts[3]) || 0);
+      const rows = agents.slice(page * 9, page * 9 + 9).map((agent) => ({ id: `wa-dco:pick:${encodeURIComponent(task.id)}:${encodeURIComponent(agent.username)}`, title: compact(agent.fullName, 24), description: compact(agent.username, 72) }));
+      if (!rows.length) { await sendText(from, "Active Delivery + Collection agent nahi mila."); return true; }
+      if (agents.length > page * 9 + 9) rows.push({ id: `wa-dco:handover:${encodeURIComponent(task.id)}:${page + 1}`, title: "Next agents", description: "Aur active agents dekhein" });
+      await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId!)}: active Delivery + Collection agent select karein. Send ke baad assignment hoga.` }, action: { button: "Select agent", sections: [{ title: "Delivery + Collection", rows }] } } }, "DCO", task.consignmentId); return true;
+    }
+    const username = parts[1] === "send" ? selection?.username : decodeURIComponent(parts[3] || "");
+    const agent = agents.find((item) => item.username === username);
+    if (!agent) { await sendText(from, "Agent ab active nahi hai. DCO se agent dobara select karein."); return true; }
+    if (parts[1] === "pick") {
+      const token = randomUUID(); dcoHandoverSelections.set(from, { taskId: task.id, username: agent.username, token });
+      await sendButtons(from, `DCO ${shortId(task.consignmentId!)} (${task.linkedOrderIds.length} SO)\nAgent: ${agent.fullName} (${agent.username})\nPhysical handover confirm karke Send dabayein.`, [{ id: `wa-dco:send:${token}`, title: "Send" }, { id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Change agent" }], "DCO", task.consignmentId); return true;
+    }
+    if (!selection || parts[2] !== selection.token) { await sendText(from, "Purana Send button hai. DCO se agent dobara select karein."); return true; }
+    await updateDeliveryTask(task.id, { ...task, assignedTo: agent.username, status: "Handed Over", expectedStatus: "Planned" });
+    dcoHandoverSelections.delete(from);
+    let notification = "Agent apni LIST mein DCO dekh sakta hai.";
+    if (agent.mobileNumber) {
+      try { await sendText(agent.mobileNumber, `*New DCO handed over*\nDCO ${shortId(task.consignmentId!)}: ${task.linkedOrderIds.length} SO\nLIST type karke delivery aur collection shuru karein.`, "DCOHandover", task.consignmentId); notification = "Agent ko WhatsApp notification bhej diya."; }
+      catch { notification = "Assignment saved; WhatsApp notification nahi ja saka. Agent LIST type karke DCO khol sakta hai."; }
+    }
+    await sendText(from, `DCO ${shortId(task.consignmentId!)} handed over and assigned to ${agent.fullName}. ${notification}`, "DCO", task.consignmentId); return true;
+  }
+  if (action.startsWith("wa-dco:agent:")) { await sendText(from, "Yeh purana DCO button hai. DCO type karke naya flow use karein."); return true; }
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     packingChangePending.delete(from); packingManualWeightPending.delete(from);
@@ -2219,26 +2263,9 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendButtons(from, `SO ${shortId(cartId)} added. Total selected: ${chosen.length}.`, [{ id: "wa-dco:list", title: "Add another" }, { id: "wa-dco:create", title: "Create DCO" }], "DCOBuild");
     return true;
   }
-  if (warehouseUser && normalized === "DCO") {
+  if (warehouseUser && (normalized === "DCO" || normalized === "HANDOVER" || normalized.startsWith("HANDOVER "))) {
     dcoBuildSessions.set(from, []);
-    const carts = new Map<string, typeof snapshot.salesOrders>();
-    for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); if (order) { const key = order.cartId || order.id; carts.set(key, [...(carts.get(key) || []), order]); } }
-    const rows = [...carts.entries()].slice(0, 10);
-    if (!rows.length) await sendText(from, "Koi packed SO available nahi hai.");
-    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "DCO ke liye packed SO select karein." }, action: { button: "Packed SO", sections: [{ title: "Ready for DCO", rows: rows.map(([cartId, lines]) => ({ id: `wa-dco:add:${encodeURIComponent(cartId)}`, title: `SO ${shortId(cartId)}`, description: compact(`${lines[0].shopName} - ${lines.length} product(s)`, 72) })) }] } } }, "DCOBuild");
-    return true;
-  }
-  if (warehouseUser && normalized.startsWith("HANDOVER ")) {
-    const suffixes = normalized.slice(9).split(",").map((item) => item.trim()).filter(Boolean);
-    const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.status === "Planned" && suffixes.some((suffix) => matchSuffix(task.consignmentId || task.id, suffix)));
-    if (!tasks.length) { await sendText(from, "Ready-to-handover DCO nahi mila. DCO command ke reply mein mila last 6 digit check karein."); return true; }
-    for (const task of tasks) await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: task.routeStops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: "Handed Over" });
-    const assignees = Array.from(new Set(tasks.map((task) => task.assignedTo.toLowerCase())));
-    for (const assignee of assignees) {
-      const agent = snapshot.users.find((item) => item.username.toLowerCase() === assignee || item.fullName.toLowerCase() === assignee);
-      if (agent?.mobileNumber) await sendText(agent.mobileNumber, `*New DCO handed over.* ${tasks.filter((task) => task.assignedTo.toLowerCase() === assignee).map((task) => shortId(task.consignmentId || task.id)).join(", ")}\nLIST type karke DCO aur retailer select karein.`, "DCOHandover");
-    }
-    await sendText(from, `${tasks.length} DCO handover recorded. Delivery+Collection agent ko WhatsApp task mil gaya.`, "DCO");
+    await sendButtons(from, "DCO: multiple packed SO jodkar Create DCO karein. Ready DCO ke liye Handover DCO > DCO > Handover > agent > Send.", [{ id: "wa-dco:list", title: "Create DCO" }, { id: "wa-dco:ready", title: "Handover DCO" }], "DCO");
     return true;
   }
   if (deliveryUser && normalized === "LIST") {
