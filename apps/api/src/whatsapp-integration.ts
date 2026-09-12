@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createWorker } from "tesseract.js";
 import { prepareTrainingBroadcast, trainingBroadcastMessage, trainingLinkReply, trainingUrl } from "./training-links.js";
 import type { AppUser, DeliveryRouteStop, DeliveryTask, GstRate, PaymentMode, ProductMaster, TaxMode } from "@aapoorti-b2b/domain";
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
@@ -1617,7 +1618,56 @@ function whatsappVisionEnabled() {
   return text(process.env.WHATSAPP_VISION_ENABLED).toLowerCase() === "true";
 }
 
+function whatsappLocalOcrEnabled() {
+  return text(process.env.WHATSAPP_LOCAL_OCR_ENABLED).toLowerCase() !== "false";
+}
+
+type LocalOcrReading = { raw: string; confidence: number };
+
+async function readLocalWhatsAppOcr(mediaId: string): Promise<LocalOcrReading | null> {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
+  if (!whatsappLocalOcrEnabled() || !accessToken || !mediaId) return null;
+  try {
+    const meta = await fetch(`${graphBase}/${encodeURIComponent(mediaId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!meta.ok) return null;
+    const source = await meta.json() as { url?: string };
+    if (!source.url) return null;
+    const image = await fetch(source.url, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (!image.ok) return null;
+    const bytes = Buffer.from(await image.arrayBuffer());
+    if (!bytes.length || bytes.length > 8 * 1024 * 1024) return null;
+    const worker = await createWorker("eng", 1, { logger: () => undefined });
+    try {
+      const result = await worker.recognize(bytes);
+      const raw = text(result.data.text).replace(/\s+/g, " ").trim();
+      const confidence = numberValue(result.data.confidence);
+      return raw && confidence >= 25 ? { raw, confidence } : null;
+    } finally {
+      await worker.terminate();
+    }
+  } catch { return null; }
+}
+
+function ocrNumbers(raw: string) {
+  return Array.from(raw.matchAll(/(?:₹|rs\.?|inr)?\s*(\d{1,7}(?:,\d{2,3})*(?:\.\d{1,3})?)/gi))
+    .map((match) => numberValue(match[1].replace(/,/g, "")))
+    .filter((value) => value > 0 && value <= 10_000_000);
+}
+
+function closestOcrNumber(values: number[], expected: number) {
+  return values.sort((left, right) => Math.abs(left - expected) - Math.abs(right - expected))[0] || 0;
+}
+
 async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, toleranceKg: number) {
+  const local = await readLocalWhatsAppOcr(mediaId);
+  if (local) {
+    const scaleValues = Array.from(local.raw.matchAll(/(\d+(?:\.\d{1,3})?)\s*(?:kg|kgs|kilograms?)/gi)).map((match) => numberValue(match[1]));
+    const weightKg = closestOcrNumber(scaleValues.length ? scaleValues : ocrNumbers(local.raw), expectedKg);
+    if (weightKg > 0) {
+      const difference = weightKg - expectedKg;
+      return { visible: true, weightKg, difference, withinTolerance: Math.abs(difference) <= toleranceKg };
+    }
+  }
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
   if (!whatsappVisionEnabled() || !accessToken || !apiKey || !mediaId) return null;
   try {
@@ -1647,7 +1697,15 @@ async function readWhatsAppWeightPhoto(mediaId: string, expectedKg: number, tole
   } catch { return null; }
 }
 
-async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque") {
+async function readWhatsAppPaymentProof(mediaId: string, mode: "UPI" | "Cheque", expectedAmount: number) {
+  const local = await readLocalWhatsAppOcr(mediaId);
+  if (local) {
+    const amount = closestOcrNumber(ocrNumbers(local.raw), expectedAmount);
+    if (amount > 0) {
+      const hasAapoortiPayee = /aapoorti/i.test(local.raw);
+      return { visible: mode === "UPI" || hasAapoortiPayee, amount, payeeName: mode === "Cheque" ? (hasAapoortiPayee ? "Aapoorti" : "Unreadable") : "", transactionDate: "" };
+    }
+  }
   const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN); const apiKey = text(process.env.OPENAI_API_KEY);
   if (!whatsappVisionEnabled() || !accessToken || !apiKey || !mediaId) return null;
   try {
@@ -1750,7 +1808,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       paymentProofPending.delete(from);
       const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === paymentPending.taskId); const stop = task?.routeStops[paymentPending.stopIndex];
       if (task && stop) {
-        const reading = messageType === "image" ? await readWhatsAppPaymentProof(text(media), paymentPending.mode) : null;
+        const reading = messageType === "image" ? await readWhatsAppPaymentProof(text(media), paymentPending.mode, stop.amountToPay) : null;
         const party = snapshot.counterparties.find((item) => item.id === stop.supplierId) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
         const tolerance = numberValue(party?.collectionTolerance);
         if (reading?.visible) {
