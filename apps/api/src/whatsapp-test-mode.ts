@@ -31,9 +31,11 @@ function buttons(body: string, choices: Array<[string, string]>): Message {
 }
 
 function orderList(state: WhatsAppTestState): Message {
+  const pending = state.orders.filter((order) => !order.packed);
+  if (!pending.length) return buttons("Saare test SO packed hain. DCO se inhe bundle karein.", [["dco", "Test DCO"]]);
   return { type: "interactive", interactive: {
     type: "list", body: { text: "TEST MODE: Test Shop 1, 2, 3 ke dummy SO. Real stock/accounts par koi asar nahi. SO/LIST se yeh list; TEST RESET se dobara practice." },
-    action: { button: "View test SO", sections: [{ title: "Test orders only", rows: state.orders.map((order) => ({
+    action: { button: "View test SO", sections: [{ title: "Pending packing", rows: pending.map((order) => ({
       id: `wa-test:order:${order.id}`, title: order.shop,
       description: `${order.id} | ${order.quantity} dummy packs | ${order.packed ? "Packed" : "Pending"}`
     })) }] }
@@ -135,6 +137,7 @@ export function handleWhatsAppTestMessage(current: WhatsAppTestState | undefined
   if (action.startsWith("wa-test:order:")) {
     const order = state.orders.find((item) => item.id === action.slice("wa-test:order:".length));
     if (!order) return result(reply("Test SO nahi mila. SO type karein."));
+    if (order.packed) return result(reply("Yeh test SO already packed hai. DCO type karke bundle karein."));
     state.selected = order.id;
     state.changing = false;
     return result(orderButtons(order));

@@ -1,5 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+export function unpackedWhatsAppSalesOrders<T extends { id: string; cartId?: string; status: string; deliveryMode: string }>(orders: T[], dockets: Array<{ salesOrderId: string; status: string }>): T[] {
+  const cartByOrder = new Map(orders.map((order) => [order.id, order.cartId || order.id]));
+  const packedCarts = new Set(dockets.filter((docket) => docket.status !== "Pending Packing").map((docket) => cartByOrder.get(docket.salesOrderId)));
+  return orders.filter((order) => order.status === "Booked" && order.deliveryMode === "Delivery" && !packedCarts.has(order.cartId || order.id));
+}
+
 function text(value: unknown) {
   return String(value ?? "").trim();
 }

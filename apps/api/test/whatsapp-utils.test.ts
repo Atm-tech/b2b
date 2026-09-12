@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, prepareWhatsAppListMessage, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
+import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "../src/whatsapp-utils.js";
+
+test("packing lists exclude packed carts even while sales status remains Booked", () => {
+  const orders = [1, 2, 3].map((n) => ({ id: `SO${n}`, cartId: `C${n}`, status: "Booked", deliveryMode: "Delivery" }));
+  const dockets = [{ salesOrderId: "SO1", status: "Ready" }, { salesOrderId: "SO2", status: "Pending Packing" }];
+  assert.deepEqual(unpackedWhatsAppSalesOrders(orders, dockets).map((order) => order.id), ["SO2", "SO3"]);
+  for (const status of ["Tagged", "Pending Pickup", "Out for Delivery", "Delivered"]) {
+    assert.equal(unpackedWhatsAppSalesOrders(orders.slice(0, 1), [{ salesOrderId: "SO1", status }]).length, 0);
+  }
+});
 
 test("prevents Meta section-title rejection for SO, delivery and supplier menus without changing actions", () => {
   const titles = ["Dispatch-ready sales orders", "Delivery / pending collection", "A VERY LONG SUPPLIER BUSINESS NAME", "Ready for DCO"];

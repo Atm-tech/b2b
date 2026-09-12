@@ -5,6 +5,19 @@ import { createWhatsAppTestState, handleWhatsAppTestMessage, isDeliveryCollectio
 const text = (body: string) => ({ type: "text", text: { body } });
 const action = (id: string) => ({ type: "interactive", interactive: { button_reply: { id } } });
 
+test("packed test SOs disappear from SO/LIST and remain available for DCO", () => {
+  const state = createWhatsAppTestState(); state.orders[0].packed = true;
+  for (const command of ["SO", "LIST"]) {
+    const response = JSON.stringify(handleWhatsAppTestMessage(state, text(command)).response);
+    assert.doesNotMatch(response, /wa-test:order:TEST-SO-1/);
+    assert.match(response, /wa-test:order:TEST-SO-2/);
+  }
+  assert.match(JSON.stringify(handleWhatsAppTestMessage(state, action("wa-test:dco-new")).response), /wa-test:dco-add:TEST-SO-1/);
+  assert.match(JSON.stringify(handleWhatsAppTestMessage(state, action("wa-test:order:TEST-SO-1")).response), /already packed/);
+  state.orders.forEach((order) => { order.packed = true; });
+  assert.match(JSON.stringify(handleWhatsAppTestMessage(state, text("SO")).response), /Saare test SO packed/);
+});
+
 test("test sessions contain exactly the three requested dummy shops and no live action IDs", () => {
   const result = handleWhatsAppTestMessage(undefined, text("test"));
   assert.deepEqual(result.state?.orders.map((order) => order.shop), ["Test Shop 1", "Test Shop 2", "Test Shop 3"]);

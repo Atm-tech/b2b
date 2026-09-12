@@ -9,7 +9,7 @@ import { downloadAndCompressCatalogImage } from "./catalog-images.js";
 import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.js";
 import { sendPushToUser } from "./push-notifications.js";
 import { handleWhatsAppTestMessage, isDeliveryCollectionAgent, type TestAgent, type WhatsAppTestState } from "./whatsapp-test-mode.js";
-import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery } from "./whatsapp-utils.js";
+import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
 type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles">;
@@ -1850,6 +1850,15 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const interactive = message.interactive as JsonObject | undefined;
   const reply = (interactive?.button_reply || interactive?.list_reply) as JsonObject | undefined;
   const action = text(reply?.id);
+  if (action.startsWith("wa-so:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.split(":")[2] || "");
+    const snapshot = await getSnapshot();
+    if (!unpackedWhatsAppSalesOrders(snapshot.salesOrders, snapshot.deliveryDockets).some((order) => (order.cartId || order.id) === cartId)) {
+      await sendText(from, "Yeh SO packed hai ya packing ke liye available nahi hai. Packed SO ke liye DCO type karein; pending packing ke liye SO.", "WarehouseSO", cartId);
+      return true;
+    }
+  }
   if (action === "wa-dco:list") {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const snapshot = await getSnapshot(); const carts = new Map<string, typeof snapshot.salesOrders>();
@@ -2165,12 +2174,12 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
     const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
-    for (const order of snapshot.salesOrders.filter((item) => item.status === "Booked" && item.deliveryMode === "Delivery")) {
+    for (const order of unpackedWhatsAppSalesOrders(snapshot.salesOrders, snapshot.deliveryDockets)) {
       const key = order.cartId || order.id;
       if (!suffix || matchSuffix(key, suffix) || matchSuffix(order.id, suffix)) carts.set(key, [...(carts.get(key) || []), order]);
     }
     const rows = [...carts.entries()].slice(0, 10);
-    if (!rows.length) await sendText(from, "Koi dispatch-ready SO nahi mila. SO <last 4 digits> try karein.");
+    if (!rows.length) await sendText(from, "Koi pending-packing SO nahi mila. Packed SO se DCO banane ke liye DCO type karein.");
     else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Sales order select karein. Weight photo, Packed ya Change next aayega." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready SO", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
     return true;
   }
@@ -2363,11 +2372,17 @@ async function handleInboundMessage(message: JsonObject) {
   const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
     FROM users WHERE active=TRUE AND regexp_replace(COALESCE(mobile_number,''),'[^0-9]','','g') IN ($1,$2,$3)`,
     [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
-  // Staff numbers take command precedence. A shared/ambiguous number stays out of
-  // the command path so permissions can never be accidentally combined.
+  // Staff numbers never fall through to retailer onboarding, including voice
+  // notes and unsupported messages. Shared numbers cannot combine permissions.
   if (staff.rows.length === 1) {
     await sendFirstStaffTraining(from, staff.rows[0]);
     if (await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
+    await sendText(from, messageType === "audio" ? "Staff voice commands abhi supported nahi hain. Delivery/collection ke liye LIST type karein; apne commands ke liye HELP." : "Yeh staff account hai. Apne available commands ke liye HELP type karein.", "StaffCommandHelp");
+    return;
+  }
+  if (staff.rows.length > 1) {
+    await sendText(from, "Is WhatsApp number par multiple staff accounts mapped hain. Admin se ek staff account ki mapping karwayein.", "StaffMappingHelp");
+    return;
   }
   const profile = await getRetailerByPhone(from);
   if (!profile) {
