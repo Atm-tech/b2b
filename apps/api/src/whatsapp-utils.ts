@@ -4,6 +4,28 @@ function text(value: unknown) {
   return String(value ?? "").trim();
 }
 
+// Meta rejects the entire list when any section title exceeds 24 characters.
+// Apply this at the send boundary, including headings sourced from party names.
+export function prepareWhatsAppListMessage(message: Record<string, unknown>): Record<string, unknown> {
+  const interactive = message.interactive as Record<string, unknown> | undefined;
+  if (message.type !== "interactive" || interactive?.type !== "list") return message;
+  const action = interactive.action as Record<string, unknown> | undefined;
+  if (!Array.isArray(action?.sections)) return message;
+  return {
+    ...message,
+    interactive: {
+      ...interactive,
+      action: {
+        ...action,
+        sections: action.sections.map((section: Record<string, unknown>) => ({
+          ...section,
+          ...(typeof section.title === "string" ? { title: section.title.trim().slice(0, 24) } : {})
+        }))
+      }
+    }
+  };
+}
+
 function normalizeProductSearch(value: unknown) {
   return String(value ?? "")
     .normalize("NFKD")

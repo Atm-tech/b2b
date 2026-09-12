@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
+import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, parseWhatsAppAction, prepareWhatsAppListMessage, scoreWhatsAppProductQuery } from "../src/whatsapp-utils.js";
+
+test("prevents Meta section-title rejection for SO, delivery and supplier menus without changing actions", () => {
+  const titles = ["Dispatch-ready sales orders", "Delivery / pending collection", "A VERY LONG SUPPLIER BUSINESS NAME", "Ready for DCO"];
+  const rows = [{ id: "wa-so:order:SCART-1789195005-792", title: "SO 05-792", description: "Order for packing" }];
+  const message = { type: "interactive", interactive: { type: "list", body: { text: "Select an order" }, action: { button: "View SO", sections: titles.map((title) => ({ title, rows })) } } };
+  const result = prepareWhatsAppListMessage(message) as typeof message;
+  assert.deepEqual(result.interactive.action.sections.map((section) => section.title), ["Dispatch-ready sales ord", "Delivery / pending colle", "A VERY LONG SUPPLIER BUS", "Ready for DCO"]);
+  assert.deepEqual(result.interactive.body, message.interactive.body);
+  assert.equal(result.interactive.action.button, "View SO");
+  for (const section of result.interactive.action.sections) assert.deepEqual(section.rows, rows);
+  assert.deepEqual(message.interactive.action.sections.map((section) => section.title), titles);
+});
+
+test("leaves non-list messages and optional section titles unchanged", () => {
+  for (const message of [{ type: "text", text: { body: "SO" } }, { type: "interactive", interactive: { type: "button", action: { buttons: [] } } }]) {
+    assert.equal(prepareWhatsAppListMessage(message), message);
+  }
+  const message = { type: "interactive", interactive: { type: "list", action: { sections: [{ rows: [{ id: "1", title: "Order" }] }] } } };
+  assert.deepEqual(prepareWhatsAppListMessage(message), message);
+});
 
 test("normalizes Indian local and international WhatsApp numbers", () => {
   assert.equal(normalizeWhatsAppPhone("98765 43210"), "919876543210");
