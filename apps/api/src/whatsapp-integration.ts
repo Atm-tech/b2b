@@ -67,10 +67,15 @@ async function provisionDcoCheckboxFlow() {
   const saved = await executeDatabaseQuery<{ value_json: { id?: string; published?: boolean } }>("SELECT value_json FROM settings WHERE key=$1", [key]);
   if (saved.rows[0]?.value_json.published && saved.rows[0].value_json.id) return saved.rows[0].value_json.id;
   if (!process.env.WHATSAPP_ACCESS_TOKEN || !process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) throw new Error("WhatsApp Flow credentials missing.");
+  await ensureWhatsAppFlowsWebhook();
   const call = async (path: string, body: BodyInit) => {
     const response = await fetch(`${graphBase}/${path}`, { method: "POST", headers: { authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` }, body });
-    const result = await response.json() as { id?: string; success?: boolean; validation_errors?: unknown[]; error?: { message?: string } };
-    if (!response.ok || result.validation_errors?.length) throw new Error(result.error?.message || JSON.stringify(result.validation_errors) || "Meta Flow request failed");
+    const result = await response.json() as { id?: string; success?: boolean; validation_errors?: unknown[]; error?: { message?: string; code?: number; error_subcode?: number; error_user_title?: string; error_user_msg?: string; fbtrace_id?: string } };
+    if (!response.ok || result.validation_errors?.length) {
+      const details = { step: path.split("/").at(-1), httpStatus: response.status, error: result.error, validationErrors: result.validation_errors, at: new Date().toISOString() };
+      await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [`${key}_error`, JSON.stringify(details)]);
+      throw new Error(`${details.step}: ${result.error?.message || JSON.stringify(result.validation_errors) || "Meta Flow request failed"}${result.error?.error_user_msg ? ` - ${result.error.error_user_msg}` : ""}`);
+    }
     return result;
   };
   let flowId = saved.rows[0]?.value_json.id;
@@ -87,6 +92,28 @@ async function provisionDcoCheckboxFlow() {
   await executeDatabaseQuery("UPDATE settings SET value_json=$2::jsonb WHERE key=$1", [key, JSON.stringify({ id: flowId, published: true })]);
   console.log("WhatsApp DCO checkbox Flow published", flowId);
   return flowId;
+}
+
+async function ensureWhatsAppFlowsWebhook() {
+  const accessToken = text(process.env.WHATSAPP_ACCESS_TOKEN);
+  const appSecret = text(process.env.WHATSAPP_APP_SECRET);
+  const verifyToken = text(process.env.WHATSAPP_VERIFY_TOKEN);
+  if (!accessToken || !appSecret || !verifyToken) throw new Error("App credentials required for Flows webhook subscription.");
+  const debugResponse = await fetch(`${graphBase}/debug_token?input_token=${encodeURIComponent(accessToken)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+  const debug = await debugResponse.json() as { data?: { app_id?: string } };
+  const appId = debug.data?.app_id;
+  if (!debugResponse.ok || !appId) throw new Error("Unable to inspect WhatsApp app for Flows subscription.");
+  const authorization = `Bearer ${appId}|${appSecret}`;
+  const response = await fetch(`${graphBase}/${appId}/subscriptions`, { headers: { authorization } });
+  const body = await response.json() as { data?: Array<{ object: string; callback_url: string; active: boolean; fields: Array<{ name: string }> }> };
+  const existing = body.data?.find((subscription) => subscription.object === "whatsapp_business_account");
+  if (!response.ok || !existing?.active || !existing.callback_url) throw new Error("Existing WhatsApp webhook unavailable; refusing to replace it.");
+  const fields = existing.fields.map((field) => field.name);
+  if (fields.includes("flows")) return;
+  const update = await fetch(`${graphBase}/${appId}/subscriptions`, { method: "POST", headers: { authorization }, body: new URLSearchParams({ object: "whatsapp_business_account", callback_url: existing.callback_url, verify_token: verifyToken, fields: [...fields, "flows"].join(","), include_values: "true" }) });
+  const result = await update.json() as { success?: boolean; error?: { message?: string } };
+  if (!update.ok || result.success !== true) throw new Error(`Flows webhook subscription failed: ${result.error?.message || "Meta rejected the update"}`);
+  console.log("WhatsApp Flows webhook subscribed; existing webhook fields preserved.");
 }
 
 async function sendDcoCheckbox(phone: string, user: StaffUser, orders: Array<{ id: string; title: string; description: string }>, testMode: boolean) {
@@ -3199,7 +3226,15 @@ export async function getWhatsAppMetaDiagnostics() {
       ? { ok: true, body }
       : { ok: false, error: text((body.error as JsonObject | undefined)?.message) || `HTTP ${response.status}` };
   }
+  const storedFlow = await executeDatabaseQuery<{ key: string; value_json: JsonObject }>("SELECT key,value_json FROM settings WHERE key IN ('whatsapp_dco_checkbox_flow_v1','whatsapp_dco_checkbox_flow_v1_error')");
+  const flow = storedFlow.rows.find((row) => row.key === "whatsapp_dco_checkbox_flow_v1")?.value_json;
+  const flowHealth = flow?.id ? await graphGet(`${text(flow.id)}?fields=id,name,status,validation_errors,health_status`) : { ok: false, error: "Flow not created." };
+  const ownerId = businessAccount.ok ? text((businessAccount.body?.owner_business_info as JsonObject | undefined)?.id) : "";
+  const businessVerification = ownerId ? await graphGet(`${ownerId}?fields=id,name,verification_status`) : { ok: false, error: "Owner business not found." };
   return {
+    flowHealth,
+    businessVerification,
+    flowLastError: storedFlow.rows.find((row) => row.key === "whatsapp_dco_checkbox_flow_v1_error")?.value_json,
     phone,
     businessAccount,
     catalogAsset,
