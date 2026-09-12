@@ -65,6 +65,7 @@ import { savePushSubscription, webPushPublicKey } from "./push-notifications.js"
 import { transcribeLocalAudio, warmLocalSpeechModel } from "./local-speech.js";
 import {
   approveWhatsAppRegistration,
+  ensureDcoCheckboxFlow,
   autoCloseInactiveWhatsAppLiveChats,
   clearWhatsAppOrderDrafts,
   clearWhatsAppTestActivity,
@@ -1663,6 +1664,9 @@ app.post("/assistant/query", async (req, res) => wrap(res, async () => {
 app.listen(port, () => {
   console.log(`API listening on port ${port} (${process.env.NODE_ENV || "development"}); proof storage: ${r2Enabled ? "Cloudflare R2" : "local filesystem"}`);
   warmLocalSpeechModel();
+  if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) {
+    void ensureDcoCheckboxFlow().catch((error) => console.error("DCO checkbox Flow setup failed:", error instanceof Error ? error.message : "Unknown error"));
+  }
   void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));
   setInterval(() => {
     void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));

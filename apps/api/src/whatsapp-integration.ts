@@ -10,6 +10,7 @@ import { getCatalogImageObject, putCatalogImageObject } from "./object-storage.j
 import { sendPushToUser } from "./push-notifications.js";
 import { handleWhatsAppTestMessage, isDeliveryCollectionAgent, type TestAgent, type WhatsAppTestState } from "./whatsapp-test-mode.js";
 import { assignedTestDcos, testDeliveryReply, type TestDeliveryProgress, type TestDeliverySource } from "./whatsapp-test-delivery.js";
+import { dcoCheckboxFlow, validateDcoCheckboxSelection } from "./whatsapp-dco-checkbox.js";
 import { discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
@@ -52,6 +53,47 @@ type CartSession = {
 
 const graphVersion = process.env.WHATSAPP_GRAPH_VERSION || "v23.0";
 const graphBase = `https://graph.facebook.com/${graphVersion}`;
+
+let dcoFlowProvision: Promise<string> | undefined;
+export function ensureDcoCheckboxFlow(): Promise<string> {
+  return dcoFlowProvision ||= provisionDcoCheckboxFlow().catch((error) => { dcoFlowProvision = undefined; throw error; });
+}
+
+async function provisionDcoCheckboxFlow() {
+  const key = "whatsapp_dco_checkbox_flow_v1";
+  const saved = await executeDatabaseQuery<{ value_json: { id?: string; published?: boolean } }>("SELECT value_json FROM settings WHERE key=$1", [key]);
+  if (saved.rows[0]?.value_json.published && saved.rows[0].value_json.id) return saved.rows[0].value_json.id;
+  if (!process.env.WHATSAPP_ACCESS_TOKEN || !process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) throw new Error("WhatsApp Flow credentials missing.");
+  const call = async (path: string, body: BodyInit) => {
+    const response = await fetch(`${graphBase}/${path}`, { method: "POST", headers: { authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` }, body });
+    const result = await response.json() as { id?: string; success?: boolean; validation_errors?: unknown[]; error?: { message?: string } };
+    if (!response.ok || result.validation_errors?.length) throw new Error(result.error?.message || JSON.stringify(result.validation_errors) || "Meta Flow request failed");
+    return result;
+  };
+  let flowId = saved.rows[0]?.value_json.id;
+  if (!flowId) {
+    const created = await call(`${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}/flows`, new URLSearchParams({ name: "B CONNECT DCO Checkbox Selection v1", categories: '["OTHER"]' }));
+    flowId = created.id;
+    if (!flowId) throw new Error("Meta did not return a Flow ID.");
+    await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value_json=EXCLUDED.value_json", [key, JSON.stringify({ id: flowId, published: false })]);
+  }
+  const asset = new FormData(); asset.set("name", "flow.json"); asset.set("asset_type", "FLOW_JSON");
+  asset.set("file", new Blob([JSON.stringify(dcoCheckboxFlow)], { type: "application/json" }), "flow.json");
+  await call(`${flowId}/assets`, asset);
+  await call(`${flowId}/publish`, new URLSearchParams());
+  await executeDatabaseQuery("UPDATE settings SET value_json=$2::jsonb WHERE key=$1", [key, JSON.stringify({ id: flowId, published: true })]);
+  console.log("WhatsApp DCO checkbox Flow published", flowId);
+  return flowId;
+}
+
+async function sendDcoCheckbox(phone: string, user: StaffUser, orders: Array<{ id: string; title: string; description: string }>, testMode: boolean) {
+  if (!orders.length) { await sendText(phone, "Koi packed SO available nahi hai."); return; }
+  const flowId = await ensureDcoCheckboxFlow();
+  const options = orders.slice(0, 20).map((order) => ({ ...order, title: compact(order.title, 30), description: compact(order.description, 300) }));
+  const token = `dco-checkbox-${randomUUID()}`;
+  await executeDatabaseQuery("INSERT INTO settings (key,value_json) VALUES ($1,$2::jsonb)", [token, JSON.stringify({ userId: String(user.id), testMode, allowed: options.map((order) => order.id), expiresAt: Date.now() + 30 * 60 * 1000 })]);
+  await sendGraphMessage(phone, { type: "interactive", interactive: { type: "flow", body: { text: `${testMode ? "TEST MODE: " : ""}Packed SO ke checkboxes tick karke Create DCO karein.${orders.length > 20 ? " Pehle 20 ready SO dikhaye gaye hain." : ""}` }, action: { name: "flow", parameters: { flow_message_version: "3", flow_token: token, flow_id: flowId, flow_cta: "Select SOs", flow_action: "navigate", flow_action_payload: { screen: "SELECT_SO", data: { orders: options, heading: `${testMode ? "TEST MODE - practice only. " : ""}Ek DCO ke liye multiple packed SO select karein.` } } } } } }, testMode ? "StaffTestMode" : "DCOBuild");
+}
 
 function id(prefix: string) {
   return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -1784,6 +1826,28 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (incomingCommand === "LIVE LIST") message = { ...message, type: "text", text: { body: "LIST" } };
   const testKey = `whatsapp_test_mode:${user.id}`;
   const savedTest = await executeDatabaseQuery<{ value_json: WhatsAppTestState }>("SELECT value_json FROM settings WHERE key=$1", [testKey]);
+  const flowReply = incomingInteractive?.nfm_reply as JsonObject | undefined;
+  if (flowReply?.response_json) {
+    let response: JsonObject;
+    try { response = JSON.parse(text(flowReply.response_json)) as JsonObject; } catch { await sendText(from, "Form reply invalid hai. DCO se dobara kholein."); return true; }
+    if (response.kind === "dco_checkbox" || text(response.flow_token).startsWith("dco-checkbox-")) {
+      if (!savedTest.rows.length && !staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+      const session = await executeDatabaseQuery<{ value_json: { allowed: string[]; expiresAt: number; testMode: boolean } }>("DELETE FROM settings WHERE key=$1 AND value_json->>'userId'=$2 RETURNING value_json", [text(response.flow_token), String(user.id)]);
+      const data = session.rows[0]?.value_json;
+      if (!data || data.expiresAt < Date.now() || data.testMode !== Boolean(savedTest.rows.length)) { await sendText(from, "Form expired ya already submitted hai. DCO se fresh form kholein."); return true; }
+      let selected: string[];
+      try { selected = validateDcoCheckboxSelection(response.selected_sos, data.allowed); } catch { await sendText(from, "SO selection invalid hai. DCO se fresh form kholein."); return true; }
+      if (data.testMode) savedTest.rows[0].value_json.chosenSos = selected;
+      else dcoBuildSessions.set(from, selected);
+      message = { type: "interactive", interactive: { button_reply: { id: data.testMode ? "wa-test:dco-create" : "wa-dco:create" } } };
+    }
+  }
+  if (savedTest.rows.length && ["wa-test:dco-new", "wa-test:dco-more"].includes(incomingAction)) {
+    const state = savedTest.rows[0].value_json;
+    const available = state.orders.filter((order) => order.packed && !(state.dcos || []).some((dco) => dco.orderIds.includes(order.id)));
+    await sendDcoCheckbox(from, user, available.map((order) => ({ id: order.id, title: order.shop, description: `${order.id} | ${order.product} x ${order.quantity}` })), true);
+    return true;
+  }
   const testAgents = savedTest.rows.length ? await executeDatabaseQuery<TestAgent>('SELECT username,full_name AS "fullName",active,role,roles_json AS roles FROM users WHERE active=TRUE ORDER BY full_name,username') : { rows: [] };
   const testResult = handleWhatsAppTestMessage(savedTest.rows[0]?.value_json, message, testAgents.rows);
   if (testResult.handled) {
@@ -1879,9 +1943,9 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const snapshot = await getSnapshot(); const carts = new Map<string, typeof snapshot.salesOrders>();
     for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); if (order) { const key = order.cartId || order.id; carts.set(key, [...(carts.get(key) || []), order]); } }
-    const chosen = dcoBuildSessions.get(from) || []; const rows = [...carts.entries()].filter(([key]) => !chosen.includes(key)).slice(0, 10);
+    const chosen = dcoBuildSessions.get(from) || []; const rows = [...carts.entries()].filter(([key]) => !chosen.includes(key));
     if (!rows.length) { await sendText(from, chosen.length ? "Aur packed SO available nahi hai. Create DCO dabayein." : "Koi packed SO available nahi hai."); return true; }
-    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ke liye packed SO select karein. Selected: ${chosen.length}` }, action: { button: "Packed SO", sections: [{ title: "Ready for DCO", rows: rows.map(([cartId, lines]) => ({ id: `wa-dco:add:${encodeURIComponent(cartId)}`, title: `SO ${shortId(cartId)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "DCOBuild");
+    await sendDcoCheckbox(from, user, rows.map(([cartId, lines]) => ({ id: cartId, title: `SO ${shortId(cartId)}`, description: `${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}` })), false);
     return true;
   }
   if (action.startsWith("wa-dco:add:")) {
