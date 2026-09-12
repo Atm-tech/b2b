@@ -1421,9 +1421,9 @@ app.post("/whatsapp/broadcasts", async (req, res) => wrap(res, async () => {
   }, currentUser);
 }));
 
-app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, async () => {
+const saveWhatsAppRetailerPreferences = async (req: express.Request, res: express.Response) => wrap(res, async () => {
   const currentUser = await requireWhatsAppAdmin(req);
-  return updateWhatsAppRetailerPreferences(req.params.id, {
+  return updateWhatsAppRetailerPreferences(String(req.params.id), {
     marketingOptIn: req.body?.marketingOptIn !== false,
     tags: Array.isArray(req.body?.tags) ? req.body.tags.map((item: unknown) => String(item ?? "")) : [],
     allowLaterCollection: req.body?.allowLaterCollection === undefined ? undefined : Boolean(req.body.allowLaterCollection),
@@ -1431,7 +1431,11 @@ app.patch("/whatsapp/retailers/:id/preferences", async (req, res) => wrap(res, a
     allowChequeCollection: req.body?.allowChequeCollection === undefined ? undefined : Boolean(req.body.allowChequeCollection),
     collectionTolerance: req.body?.collectionTolerance === undefined ? undefined : optionalNumber(req.body.collectionTolerance)
   }, currentUser);
-}));
+});
+// The operational UI uses its common POST submit helper. Keep PATCH for API clients,
+// and accept POST too so retailer privilege controls never land on a missing route.
+app.patch("/whatsapp/retailers/:id/preferences", saveWhatsAppRetailerPreferences);
+app.post("/whatsapp/retailers/:id/preferences", saveWhatsAppRetailerPreferences);
 
 app.get("/whatsapp/settlements", async (req, res) => wrap(res, async () => {
   await requireWhatsAppAdmin(req);
