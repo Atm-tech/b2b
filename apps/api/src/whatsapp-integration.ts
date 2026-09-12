@@ -3449,8 +3449,6 @@ export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
          ('WA-TEST-DETERGENT-6','WA TEST DETERGENT 1KG','Home Care','Laundry','Pack',1.00,6,60,108,120),
          ('WA-TEST-CHOCOLATE-20','WA TEST CHOCOLATE 25G','Confectionery','Chocolate','Piece',0.03,20,200,9,10),
          ('WA-TEST-ATTA-3','WA TEST ATTA 5KG','Grocery','Flour','Bag',5.00,3,30,360,400)
-     ), hidden_catalogue AS (
-       UPDATE products SET whatsapp_catalog_enabled=FALSE WHERE sku NOT LIKE 'WA-TEST-%' RETURNING sku
      ), products_upserted AS (
        INSERT INTO products (
          sku,name,division,department,section_name,category,sub_category,unit,
