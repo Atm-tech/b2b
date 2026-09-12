@@ -119,6 +119,7 @@ type Dashboard = {
   campaigns: Array<Record<string, unknown>>;
   analytics: { outbound: number; inbound: number; sent: number; delivered: number; read: number; failed: number; conversations: number; completedOrders: number };
   catalogImageStats: { selected: number; eligible: number; withImage: number };
+  mockDrill?: { testRetailers: number; testProducts: number };
   catalogProducts: Array<{ sku: string; name: string; brand: string; size: string; mrp: number; sellingRate: number; minimumOrderQuantity: number; imageUrl: string }>;
   catalogFeedUrl: string;
   retailerEntryLink: string;
@@ -741,8 +742,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const deliveryOperationalRoles: UserRole[] = ["Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
   const mockDrillChecks = [
-    ["Test products", snapshot.products.filter((product) => product.sku.startsWith("WA-TEST-")).length >= 10],
-    ["Test retailer shells", snapshot.counterparties.filter((party) => party.id.startsWith("WA-TEST-")).length >= 10],
+    ["Test products", (dashboard?.mockDrill?.testProducts || 0) >= 10],
+    ["Test retailer shells", (dashboard?.mockDrill?.testRetailers || 0) >= 10],
     ["Sales user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Sales"))],
     ["Warehouse user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Warehouse Manager"))],
     ["Delivery + Collection user", operationalUsers.some((user) => { const roles = user.roles || [user.role]; return roles.includes("Delivery") && roles.includes("Collection Agent"); })],

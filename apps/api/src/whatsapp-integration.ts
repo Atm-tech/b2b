@@ -2997,7 +2997,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
   const isAdmin = isWhatsAppAdminUser(currentUser);
   const filter = isAdmin ? "" : "WHERE wr.salesman_id = $1";
   const params = isAdmin ? [] : [currentUser.id];
-  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats, catalogProducts, tickets, orderEvents, campaigns, analytics] = await Promise.all([
+  const [retailers, whatsappOnlyRetailers, rules, offers, drafts, lines, wishlists, registrations, messages, imageStats, catalogProducts, tickets, orderEvents, campaigns, analytics, mockDrill] = await Promise.all([
     executeDatabaseQuery<Record<string, unknown>>(
       `SELECT wr.*, c.name AS retailer_name, c.allow_later_collection, c.allow_partial_collection, c.allow_cheque_collection, c.collection_tolerance, u.full_name AS salesman_name FROM whatsapp_retailers wr JOIN counterparties c ON c.id = wr.counterparty_id JOIN users u ON u.id = wr.salesman_id ${filter} ORDER BY c.name`, params),
     executeDatabaseQuery<Record<string, unknown>>(
@@ -3084,7 +3084,11 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
          COUNT(*) FILTER (WHERE direction='Outbound' AND LOWER(status)='read')::int AS read,
          COUNT(*) FILTER (WHERE direction='Outbound' AND LOWER(status)='failed')::int AS failed,
          COUNT(DISTINCT phone_e164)::int AS conversations
-       FROM whatsapp_messages WHERE created_at>=NOW()-INTERVAL '30 days'`)
+       FROM whatsapp_messages WHERE created_at>=NOW()-INTERVAL '30 days'`),
+    executeDatabaseQuery<Record<string, unknown>>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM counterparties WHERE channel_scope='WhatsApp' AND id LIKE 'WA-TEST-%') AS test_retailers,
+         (SELECT COUNT(*)::int FROM products WHERE sku LIKE 'WA-TEST-%') AS test_products`)
   ]);
   const visibleDraftIds = new Set(drafts.rows.map((row) => text(row.id)));
   const catalogToken = text(process.env.WHATSAPP_CATALOG_FEED_TOKEN);
@@ -3133,6 +3137,10 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       selected: isAdmin ? numberValue(imageStats.rows[0]?.selected) : 0,
       eligible: isAdmin ? numberValue(imageStats.rows[0]?.eligible) : 0,
       withImage: isAdmin ? numberValue(imageStats.rows[0]?.with_image) : 0
+    },
+    mockDrill: {
+      testRetailers: isAdmin ? numberValue(mockDrill.rows[0]?.test_retailers) : 0,
+      testProducts: isAdmin ? numberValue(mockDrill.rows[0]?.test_products) : 0
     },
     catalogProducts: isAdmin ? catalogProducts.rows.map((row) => ({
       sku: text(row.sku),
