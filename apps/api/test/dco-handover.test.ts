@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isDeliveryCollectionAgent } from "../src/whatsapp-utils.js";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
@@ -62,4 +63,16 @@ test("handover rejects a repeated Send or deactivated agent before changing stoc
     const update = loadFunction("updateDeliveryTask", { ready: Promise.resolve(), withTransaction: (work: Function) => work({}), one: async (sql: string) => sql.includes("FROM delivery_tasks") ? { status } : null });
     await assert.rejects(update("TASK1", { assignedTo: "inactive", expectedStatus: "Planned", status: "Handed Over" }), status === "Planned" ? /active Delivery/ : /status changed/);
   }
+});
+
+test("handover excludes missing/invalid mobile numbers and accepts registered BCA", () => {
+  const user = {active:true,role:"Out Delivery",roles:["Out Delivery","Collection Agent"]};
+  for (const mobileNumber of [undefined, "", "123", "not a phone", "000000000000"]) assert.equal(isDeliveryCollectionAgent({...user,mobileNumber}),false);
+  assert.equal(isDeliveryCollectionAgent({...user,mobileNumber:"919999999999"}),true);
+  assert.equal(isDeliveryCollectionAgent({...user,active:false,mobileNumber:"919999999999"}),false);
+});
+
+test("Send revalidates agent mobile under transaction before dispatch", async () => {
+  const update = loadFunction("updateDeliveryTask", {ready:Promise.resolve(),withTransaction:(work:Function)=>work({}),isDeliveryCollectionAgent,one:async(sql:string)=>sql.includes("FROM delivery_tasks")?{status:"Planned"}:{active:true,role:"Out Delivery",roles:["Out Delivery"],mobileNumber:""}});
+  await assert.rejects(update("TASK1",{assignedTo:"out",expectedStatus:"Planned",status:"Handed Over"}),/valid WhatsApp number/);
 });

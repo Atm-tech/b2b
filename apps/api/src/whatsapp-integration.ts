@@ -2011,17 +2011,17 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (parts[1] === "handover") {
       dcoHandoverSelections.delete(from);
       const page = Math.max(0, Number(parts[3]) || 0);
-      const rows = agents.slice(page * 9, page * 9 + 9).map((agent) => ({ id: `wa-dco:pick:${encodeURIComponent(task.id)}:${encodeURIComponent(agent.username)}`, title: compact(agent.fullName, 24), description: compact(agent.username, 72) }));
-      if (!rows.length) { await sendText(from, "Active Delivery + Collection agent nahi mila."); return true; }
+      const rows = agents.slice(page * 9, page * 9 + 9).map((agent) => ({ id: `wa-dco:pick:${encodeURIComponent(task.id)}:${encodeURIComponent(agent.username)}`, title: compact(agent.fullName, 24), description: compact(`${agent.username} | ${normalizeWhatsAppPhone(agent.mobileNumber || "")}`, 72) }));
+      if (!rows.length) { await sendButtons(from, "No user found. Valid WhatsApp number wala Delivery + Collection agent register karke try again.", [{ id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Try again" }], "DCO", task.consignmentId); return true; }
       if (agents.length > page * 9 + 9) rows.push({ id: `wa-dco:handover:${encodeURIComponent(task.id)}:${page + 1}`, title: "Next agents", description: "Aur active agents dekhein" });
       await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId!)}: active Delivery + Collection agent select karein. Send ke baad assignment hoga.` }, action: { button: "Select agent", sections: [{ title: "Delivery + Collection", rows }] } } }, "DCO", task.consignmentId); return true;
     }
     const username = parts[1] === "send" ? selection?.username : decodeURIComponent(parts[3] || "");
     const agent = agents.find((item) => item.username === username);
-    if (!agent) { await sendText(from, "Agent ab active nahi hai. DCO se agent dobara select karein."); return true; }
+    if (!agent) { dcoHandoverSelections.delete(from); await sendButtons(from, "No user found. Agent active aur valid WhatsApp number ke saath registered hona chahiye. Try again.", [{ id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Try again" }], "DCO", task.consignmentId); return true; }
     if (parts[1] === "pick") {
       const token = randomUUID(); dcoHandoverSelections.set(from, { taskId: task.id, username: agent.username, token });
-      await sendButtons(from, `DCO ${shortId(task.consignmentId!)} (${task.linkedOrderIds.length} SO)\nAgent: ${agent.fullName} (${agent.username})\nPhysical handover confirm karke Send dabayein.`, [{ id: `wa-dco:send:${token}`, title: "Send" }, { id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Change agent" }], "DCO", task.consignmentId); return true;
+      await sendButtons(from, `DCO ${shortId(task.consignmentId!)} (${task.linkedOrderIds.length} SO)\nAgent: ${agent.fullName} (${agent.username})\nWhatsApp: ${normalizeWhatsAppPhone(agent.mobileNumber || "")}\nPhysical handover confirm karke Send dabayein.`, [{ id: `wa-dco:send:${token}`, title: "Send" }, { id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Change agent" }], "DCO", task.consignmentId); return true;
     }
     if (!selection || parts[2] !== selection.token) { await sendText(from, "Purana Send button hai. DCO se agent dobara select karein."); return true; }
     await updateDeliveryTask(task.id, { ...task, assignedTo: agent.username, status: "Handed Over", expectedStatus: "Planned" });

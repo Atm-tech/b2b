@@ -123,6 +123,9 @@ export function parseWhatsAppAction(value: string) {
   return match ? { action: match[1] as "confirm" | "change" | "offer" | "ignore", entityId: match[2] } : null;
 }
 
-export function isDeliveryCollectionAgent(agent: { active: boolean; role: string; roles: string[] }) {
-  return agent.active && [agent.role, ...agent.roles].some((role) => role === "Delivery" || role === "Out Delivery");
+export function isDeliveryCollectionAgent(agent: { active: boolean; role: string; roles: string[]; mobileNumber?: string }) {
+  if (!agent.active || ![agent.role, ...agent.roles].some((role) => role === "Delivery" || role === "Out Delivery")) return false;
+  if (!/[1-9]/.test(agent.mobileNumber || "")) return false;
+  try { return /^[1-9]\d{9,14}$/.test(normalizeWhatsAppPhone(agent.mobileNumber || "")); }
+  catch { return false; }
 }

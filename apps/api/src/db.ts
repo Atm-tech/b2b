@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { isDeliveryCollectionAgent } from "./whatsapp-utils.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -4382,8 +4383,8 @@ export async function updateDeliveryTask(taskId: string, payload: {
     if (!task) throw new Error("Delivery task not found.");
     if (payload.expectedStatus && task.status !== payload.expectedStatus) throw new Error("DCO status changed. Open a fresh DCO list before handover.");
     if (payload.expectedStatus === "Planned" && payload.status === "Handed Over") {
-      const agent = await one<Record<string, unknown>>("SELECT id FROM users WHERE username=$1 AND active=TRUE AND (role=ANY($2::text[]) OR roles_json ?| $2::text[]) FOR SHARE", [payload.assignedTo, ["Delivery", "Out Delivery"]], client);
-      if (!agent) throw new Error("Select an active Delivery + Collection agent.");
+      const agent = await one<{ active: boolean; role: string; roles: string[]; mobileNumber: string }>('SELECT active,role,roles_json AS roles,mobile_number AS "mobileNumber" FROM users WHERE username=$1 AND active=TRUE AND (role=ANY($2::text[]) OR roles_json ?| $2::text[]) FOR SHARE', [payload.assignedTo, ["Delivery", "Out Delivery"]], client);
+      if (!agent || !isDeliveryCollectionAgent(agent)) throw new Error("Select an active Delivery + Collection agent with a valid WhatsApp number.");
     }
     const assignedTo = await normalizeDeliveryAssignee(payload.assignedTo, client, stringValue(task.side) as DeliveryTask["side"]);
     const transportType = payload.transportType || (task.transport_type ? stringValue(task.transport_type) : "Internal");
