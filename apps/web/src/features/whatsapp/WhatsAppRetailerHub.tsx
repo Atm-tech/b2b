@@ -595,15 +595,25 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   async function prepareMockDrill() {
     setBusy(true); onError("");
     try {
-      await api.post("/whatsapp/setup/test-retailers", {}, { headers });
       const { data } = await api.post<{ products: unknown[] }>("/whatsapp/setup/test-products", {}, { headers });
       await refresh();
-      onMessage(`${data.products.length} test products and 10 retailer shells are ready. Map a real test WhatsApp number before testing chat.`);
+      onMessage(`${data.products.length} test products are ready. Register your retailer number through WhatsApp, then approve and map it here.`);
     } catch (error) {
       onError(errorMessage(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function removeStaffUser(userId: number, name: string) {
+    if (!window.confirm(`Remove ${name}? Login access and WhatsApp number mapping will be removed. Order and payment history will remain. The number can register again.`)) return;
+    setBusy(true); onError("");
+    try {
+      const { data } = await api.delete<AppSnapshot>(`/whatsapp/staff-users/${userId}`, { headers });
+      onSnapshot(data);
+      onMessage("User removed. Their WhatsApp number can register again.");
+    } catch (error) { onError(errorMessage(error)); }
+    finally { setBusy(false); }
   }
 
   async function createWhatsAppStaff(event: FormEvent<HTMLFormElement>) {
@@ -740,12 +750,10 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
   const pendingRegistrations = (dashboard?.registrations || []).filter((item) => item.status === "Pending");
   const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
   const deliveryOperationalRoles: UserRole[] = ["Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
-  const operationalUsers = snapshot.users.filter((user) => user.active && (user.roles || [user.role]).some((role) => operationalRoles.includes(role)));
-  const mockTestRetailerCount = dashboard?.mockDrill?.testRetailers ?? dashboard?.whatsappOnlyRetailers.filter((retailer) => retailer.id.startsWith("WA-TEST-") || retailer.name.startsWith("WhatsApp Retailer ")).length ?? 0;
+  const operationalUsers = snapshot.users.filter((user) => user.active && ((user.roles || [user.role]).some((role) => operationalRoles.includes(role)) || Boolean(user.mobileNumber)));
   const mockTestProductCount = dashboard?.mockDrill?.testProducts ?? snapshot.products.filter((product) => product.sku.startsWith("WA-TEST-")).length;
   const mockDrillChecks = [
-    ["Test products", mockTestProductCount >= 10],
-    ["Test retailer shells", mockTestRetailerCount >= 10],
+    ["Test products", mockTestProductCount >= 3],
     ["Sales user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Sales"))],
     ["Warehouse user", operationalUsers.some((user) => (user.roles || [user.role]).includes("Warehouse Manager"))],
     ["Delivery + Collection user", operationalUsers.some((user) => { const roles = user.roles || [user.role]; return roles.includes("Collection Agent") && roles.some((role) => deliveryOperationalRoles.includes(role)); })],
@@ -823,11 +831,11 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <label>Warehouse<select value={staffForm.warehouseId} onChange={(event) => setStaffForm((current) => ({ ...current, warehouseId: event.target.value }))}><option value="">No warehouse scope</option>{snapshot.warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select></label>
       <label>Temporary password<input required value={staffForm.password} onChange={(event) => setStaffForm((current) => ({ ...current, password: event.target.value }))} /></label>
       <button className="primary-button wide-field" disabled={busy}>Create operational user</button>
-    </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><DataTable headers={["Name", "Role", "WhatsApp", "Warehouse"]} rows={operationalUsers.map((user) => [user.fullName, (user.roles || [user.role]).join(", "), user.mobileNumber || "Missing", (user.warehouseIds || []).join(", ") || "All"])}/></Panel>} /></> : null}
+    </form></Panel>} right={<Panel title="Operational WhatsApp directory" eyebrow="Mobile numbers and assignments"><div className="table-wrap"><table><thead><tr>{["Name", "Role", "WhatsApp", "Warehouse", "Action"].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{operationalUsers.map((user) => <tr key={user.id}><td>{user.fullName}</td><td>{(user.roles || [user.role]).join(", ") || "Unassigned"}</td><td>{user.mobileNumber || "Missing"}</td><td>{(user.warehouseIds || []).join(", ") || "All"}</td><td><button className="ghost-button danger-button" disabled={busy} onClick={() => void removeStaffUser(user.id, user.fullName)}>Remove user</button></td></tr>)}</tbody></table></div></Panel>} /></> : null}
 
     {whatsappAdmin && activeSection === "Retailers" ? <>
-    <Panel title="Mock drill readiness" eyebrow="Warehouse to collection"><div className="message-chip-grid">{mockDrillChecks.map(([label, ready]) => <span key={label} className={ready ? "status-pill status-approved" : "status-pill status-pending"}>{ready ? "Ready" : "Needed"}: {label}</span>)}</div><p className="helper-text">{mockDrillMissing.length ? `Next setup: ${mockDrillMissing.join(" · ")}.` : "All mock-drill prerequisites are ready."}</p><p className="helper-text">Run order: prepare test data → map one real test number below → retailer sends <strong>guide</strong> → Sales confirms SO → Warehouse packs and creates DCO → Delivery completes collection.</p></Panel>
-    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button" type="button" disabled={busy} onClick={() => void prepareMockDrill()}>Prepare mock drill</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
+    <Panel title="Full order cycle readiness" eyebrow="Warehouse to collection"><div className="message-chip-grid">{mockDrillChecks.map(([label, ready]) => <span key={label} className={ready ? "status-pill status-approved" : "status-pill status-pending"}>{ready ? "Ready" : "Needed"}: {label}</span>)}</div><p className="helper-text">{mockDrillMissing.length ? `Next setup: ${mockDrillMissing.join(" · ")}.` : "All order-cycle prerequisites are ready."}</p><p className="helper-text">Run order: retailer self-registers → admin approves mapping and collection privileges → retailer orders test products → warehouse packs SO, creates DCO and hands over → delivery and collection agent completes delivery, collection and settlement.</p></Panel>
+    <section className="stacked-sections"><div className="section-heading"><div><span className="eyebrow">Self-registration</span><h2>Retailers waiting for mapping</h2></div><div className="payment-card-actions"><button className="ghost-button" type="button" disabled={busy} onClick={() => void prepareMockDrill()}>Prepare 3 test products</button><button className="ghost-button danger-button" type="button" disabled={busy} onClick={() => void clearPilotActivity()}>Clear test chats & orders</button><button className="ghost-button" type="button" onClick={() => void refresh()}>Refresh</button></div></div>
       {pendingRegistrations.length ? pendingRegistrations.map((registration) => <RegistrationReviewCard key={String(registration.id)} registration={registration} salespeople={salespeople} snapshot={snapshot} busy={busy} onApprove={async (body) => submit(`/whatsapp/registrations/${encodeURIComponent(String(registration.id))}/approve`, body, "Retailer approved and mapped to salesperson.")} />) : <Panel title="No pending registrations" eyebrow="Queue clear"><p>New WhatsApp retailer registrations will appear here automatically.</p></Panel>}
     </section>
 

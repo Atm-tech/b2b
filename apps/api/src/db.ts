@@ -1228,7 +1228,7 @@ async function reconcileRetrospectiveDeliveryCashCollections(client?: DbClient) 
   );
   for (const task of tasks.rows) {
     const routeStops = Array.isArray(task.route_json) ? (task.route_json as DeliveryTask["routeStops"]) : [];
-    const completedCashStops = routeStops.filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0);
+    const completedCashStops = routeStops.filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0 && !stop.collectionMode);
     for (const stop of completedCashStops) {
       const existingPayment = await one<Record<string, unknown>>(
         `SELECT *
@@ -4531,7 +4531,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
         client
       );
       const completedCashStops = (payload.routeStops || [])
-        .filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0);
+        .filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0 && !stop.collectionMode);
       if (completedCashStops.length > 0) {
         for (const stop of completedCashStops) {
           const existingPayment = await one<Record<string, unknown>>(

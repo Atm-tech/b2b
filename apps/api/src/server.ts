@@ -85,6 +85,7 @@ import {
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
   removeWhatsAppRetailer,
+  removeWhatsAppStaffUser,
   reviewWhatsAppDraft,
   replyWhatsAppServiceTicket,
   resolveWhatsAppWishlist,
@@ -781,6 +782,13 @@ app.post("/whatsapp/staff-users", async (req, res) => wrap(res, async () => {
     warehouseIds: Array.isArray(req.body?.warehouseIds) ? req.body.warehouseIds.map((item: unknown) => String(item)) : [],
     password: optionalString(req.body?.password)
   });
+}));
+
+app.delete("/whatsapp/staff-users/:id", async (req, res) => wrap(res, async () => {
+  const currentUser = await requireWhatsAppAdmin(req);
+  const userId = Number(req.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("Valid user ID required.");
+  return removeWhatsAppStaffUser(userId, currentUser);
 }));
 
 app.post("/sales-orders/reset-operational", async (_req, res) => wrap(res, async () => {
