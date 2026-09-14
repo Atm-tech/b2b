@@ -2152,7 +2152,7 @@ export function DeliveryJobsView({
           const cashTotal = Object.entries(draftCollection.denominations).reduce((sum, [denomination, count]) => sum + (Number(denomination === "coins" ? 1 : denomination) * Number(count || 0)), 0);
           const amount = draftCollection.mode === "Cash" ? cashTotal : Number(draftCollection.amount || 0);
           const tolerance = customer?.collectionTolerance ?? 5;
-          const canFinish = amount > 0 && (customer?.allowPartialCollection || Math.abs(amount - expectedAmount) <= tolerance) && (draftCollection.mode !== "UPI" || Boolean(draftCollection.proofName));
+          const canFinish = amount > 0 && (customer?.allowPartialCollection || Math.abs(amount - expectedAmount) <= tolerance);
           return <article className="list-card top-gap">
             <strong>Collection - {nextStop.supplierName}</strong>
             <p>Due {expectedAmount.toFixed(2)}. Select collection now or, only for allowed retailers, collection later.</p>
@@ -2163,7 +2163,7 @@ export function DeliveryJobsView({
             <div className="form-grid top-gap">
               <label>Mode<select value={draftCollection.mode} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { mode: e.target.value as PaymentMode })}><option>UPI</option><option>Cash</option>{customer?.allowChequeCollection ? <option>Cheque</option> : null}</select></label>
               {draftCollection.mode !== "Cash" ? <label>Amount<input type="number" min="0" step="0.01" value={draftCollection.amount} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { amount: e.target.value })} /></label> : <div><span className="small-label">Cash total</span><strong>{cashTotal.toFixed(2)}</strong></div>}
-              {draftCollection.mode === "UPI" ? <label>UPI screenshot<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) updateCollectionDraft(task.id, nextStop.orderId, { proofName: String((uploaded as { fileName: string }).fileName) }); }} /></label> : null}
+              {draftCollection.mode === "UPI" ? <label>UPI screenshot (optional)<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; const uploaded = await onUploadProof(file); if (uploaded && typeof uploaded === "object" && "fileName" in uploaded) updateCollectionDraft(task.id, nextStop.orderId, { proofName: String((uploaded as { fileName: string }).fileName) }); }} /></label> : null}
               {draftCollection.mode !== "Cash" ? <label>Reference / cheque no.<input value={draftCollection.reference} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { reference: e.target.value })} /></label> : null}
               {draftCollection.mode === "Cash" ? <div className="wide-field form-grid">{["500", "200", "100", "50", "20", "10", "coins"].map((denomination) => <label key={denomination}>{denomination === "coins" ? "Coins value" : `Rs ${denomination} notes`}<input type="number" min="0" value={draftCollection.denominations[denomination] || ""} onChange={(e) => updateCollectionDraft(task.id, nextStop.orderId, { denominations: { ...draftCollection.denominations, [denomination]: e.target.value } })} /></label>)}</div> : null}
             </div>

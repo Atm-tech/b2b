@@ -1,3 +1,4 @@
+export const WHATSAPP_COLLECTION_TOLERANCE = 5;
 export const collectionDenominations = [500, 200, 100, 50, 20, 10] as const;
 export function paymentOcrAmount(raw: string): number | null {
   // Use a currency/amount label, never whichever number happens to be closest
