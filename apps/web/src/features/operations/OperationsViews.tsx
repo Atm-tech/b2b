@@ -2151,7 +2151,7 @@ export function DeliveryJobsView({
           const draftCollection = collectionDraft(task.id, nextStop.orderId, expectedAmount);
           const cashTotal = Object.entries(draftCollection.denominations).reduce((sum, [denomination, count]) => sum + (Number(denomination === "coins" ? 1 : denomination) * Number(count || 0)), 0);
           const amount = draftCollection.mode === "Cash" ? cashTotal : Number(draftCollection.amount || 0);
-          const tolerance = customer?.collectionTolerance || 0;
+          const tolerance = customer?.collectionTolerance ?? 5;
           const canFinish = amount > 0 && (customer?.allowPartialCollection || Math.abs(amount - expectedAmount) <= tolerance) && (draftCollection.mode !== "UPI" || Boolean(draftCollection.proofName));
           return <article className="list-card top-gap">
             <strong>Collection - {nextStop.supplierName}</strong>

@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS counterparties (
   allow_later_collection BOOLEAN NOT NULL DEFAULT FALSE,
   allow_partial_collection BOOLEAN NOT NULL DEFAULT FALSE,
   allow_cheque_collection BOOLEAN NOT NULL DEFAULT FALSE,
-  collection_tolerance DOUBLE PRECISION NOT NULL DEFAULT 0,
+  collection_tolerance DOUBLE PRECISION NOT NULL DEFAULT 5,
   channel_scope TEXT NOT NULL DEFAULT 'All',
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

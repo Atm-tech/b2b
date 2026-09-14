@@ -279,7 +279,8 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_later_collection BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_partial_collection BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS allow_cheque_collection BOOLEAN NOT NULL DEFAULT FALSE;
-    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS collection_tolerance DOUBLE PRECISION NOT NULL DEFAULT 0;
+    ALTER TABLE counterparties ADD COLUMN IF NOT EXISTS collection_tolerance DOUBLE PRECISION NOT NULL DEFAULT 5;
+    ALTER TABLE counterparties ALTER COLUMN collection_tolerance SET DEFAULT 5;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ;
     ALTER TABLE whatsapp_retailers ADD COLUMN IF NOT EXISTS tags_json JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -2062,7 +2063,7 @@ export async function createCounterparty(payload: Omit<Counterparty, "id" | "cre
   await query(
     `INSERT INTO counterparties (id, type, name, gst_number, bank_name, bank_account_number, ifsc_code, mobile_number, address, city, delivery_address, delivery_city, contact_person, latitude, longitude, location_label, allow_later_collection, allow_partial_collection, allow_cheque_collection, collection_tolerance, created_by, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
-    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), deliveryPayload.deliveryAddress?.trim() || payload.address.trim(), deliveryPayload.deliveryCity?.trim() || payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), Math.max(0, Number(payload.collectionTolerance || 0)), currentUser.username, now()]
+    [makeId(payload.type === "Supplier" ? "SUP" : "SHP"), payload.type, name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), deliveryPayload.deliveryAddress?.trim() || payload.address.trim(), deliveryPayload.deliveryCity?.trim() || payload.city.trim(), payload.contactPerson.trim(), payload.latitude ?? null, payload.longitude ?? null, payload.locationLabel?.trim() || null, Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), payload.collectionTolerance === undefined ? 5 : Math.max(0, Number(payload.collectionTolerance)), currentUser.username, now()]
   );
   return getSnapshot();
 }
@@ -3873,7 +3874,7 @@ export async function updateCounterparty(counterpartyId: string, payload: {
        SET name = $1, gst_number = $2, bank_name = $3, bank_account_number = $4, ifsc_code = $5, mobile_number = $6, address = $7, city = $8, delivery_address = $9, delivery_city = $10, contact_person = $11,
            allow_later_collection = $12, allow_partial_collection = $13, allow_cheque_collection = $14, collection_tolerance = $15
        WHERE id = $16`,
-      [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.deliveryAddress?.trim() || "", payload.deliveryCity?.trim() || "", payload.contactPerson.trim(), Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), Math.max(0, Number(payload.collectionTolerance || 0)), counterpartyId]
+      [name, gstNumber, bankName, bankAccountNumber, ifscCode, payload.mobileNumber.trim(), payload.address.trim(), payload.city.trim(), payload.deliveryAddress?.trim() || "", payload.deliveryCity?.trim() || "", payload.contactPerson.trim(), Boolean(payload.allowLaterCollection), Boolean(payload.allowPartialCollection), Boolean(payload.allowChequeCollection), payload.collectionTolerance === undefined ? Math.max(0, numberValue(existing.collection_tolerance)) : Math.max(0, Number(payload.collectionTolerance)), counterpartyId]
     );
   return getSnapshot();
 }

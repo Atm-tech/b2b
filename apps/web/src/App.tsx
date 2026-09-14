@@ -197,7 +197,7 @@ function App() {
   const [receiptEditForm, setReceiptEditForm] = useState({ grcNumber: "", note: "", flagged: false });
   const [deliveryForm, setDeliveryForm] = useState({ side: "Purchase" as DeliveryTask["side"], linkedOrderIdsText: "", mode: "Dealer Delivery" as DeliveryTask["mode"], transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", from: "", to: "", assignedTo: "", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
   const [deliveryEditForm, setDeliveryEditForm] = useState({ id: "", linkedOrderIdsText: "", assignedTo: "", transportType: "Internal" as DeliveryTask["transportType"], vehicleNumber: "", freightAmount: "0", pickupAt: "", dropAt: "", routeHint: "", paymentAction: "None" as DeliveryTask["paymentAction"], cashCollectionRequired: false, cashHandoverMarked: false, weightProofName: "", cashProofName: "", status: "Planned" as DeliveryTask["status"] });
-  const [partyEditForm, setPartyEditForm] = useState({ id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "", allowLaterCollection: false, allowPartialCollection: false, allowChequeCollection: false, collectionTolerance: "0" });
+  const [partyEditForm, setPartyEditForm] = useState({ id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "", allowLaterCollection: false, allowPartialCollection: false, allowChequeCollection: false, collectionTolerance: "5" });
   const [noteForm, setNoteForm] = useState({ entityType: "Purchase Order" as NoteRecord["entityType"], entityId: "", note: "", visibility: "Operational" as NoteRecord["visibility"] });
   const [openPartyPanel, setOpenPartyPanel] = useState("register");
   const [accountsPartySearch, setAccountsPartySearch] = useState("");
@@ -230,7 +230,7 @@ function App() {
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
   });
   const emptyPartyCreateForm = { type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "" };
-  const emptyPartyEditForm = { id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "", allowLaterCollection: false, allowPartialCollection: false, allowChequeCollection: false, collectionTolerance: "0" };
+  const emptyPartyEditForm = { id: "", type: "Supplier" as "Supplier" | "Shop", name: "", gstNumber: "", bankName: "", bankAccountNumber: "", ifscCode: "", mobileNumber: "", address: "", city: "Bhopal", contactPerson: "", allowLaterCollection: false, allowPartialCollection: false, allowChequeCollection: false, collectionTolerance: "5" };
 
   useEffect(() => {
     const shouldLockLogin = !currentUser || !snapshot;
@@ -1093,7 +1093,7 @@ function App() {
       allowLaterCollection: Boolean(item.allowLaterCollection),
       allowPartialCollection: Boolean(item.allowPartialCollection),
       allowChequeCollection: Boolean(item.allowChequeCollection),
-      collectionTolerance: String(item.collectionTolerance || 0)
+      collectionTolerance: String(item.collectionTolerance ?? 5)
     };
   }
 
@@ -1421,7 +1421,7 @@ function App() {
       </CollapsiblePanel>
       <CollapsiblePanel title={`Update ${partyRoleLabel}`} eyebrow="Edit details" open={openPartyPanel === "update"} onToggle={() => setOpenPartyPanel((current) => current === "update" ? "" : "update")}>
         <form className="form-grid" onSubmit={(e) => { e.preventDefault(); void patch(`/counterparties/${partyEditForm.id}`, partyEditForm, "Party updated.", () => setPartyEditForm(emptyPartyEditForm)); }}>
-          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = filteredPartyItems.find((c) => c.id === e.target.value) || partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, type: item.type, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson, allowLaterCollection: Boolean(item.allowLaterCollection), allowPartialCollection: Boolean(item.allowPartialCollection), allowChequeCollection: Boolean(item.allowChequeCollection), collectionTolerance: String(item.collectionTolerance || 0) } : emptyPartyEditForm); }}>{renderOptions(filteredPartyItems)}</select></label>
+          <label>Party<select value={partyEditForm.id} onChange={(e) => { const item = filteredPartyItems.find((c) => c.id === e.target.value) || partyItems.find((c) => c.id === e.target.value); setPartyEditForm(item ? { id: item.id, type: item.type, name: item.name, gstNumber: item.gstNumber, bankName: item.bankName, bankAccountNumber: item.bankAccountNumber, ifscCode: item.ifscCode, mobileNumber: item.mobileNumber, address: item.address, city: item.city, contactPerson: item.contactPerson, allowLaterCollection: Boolean(item.allowLaterCollection), allowPartialCollection: Boolean(item.allowPartialCollection), allowChequeCollection: Boolean(item.allowChequeCollection), collectionTolerance: String(item.collectionTolerance ?? 5) } : emptyPartyEditForm); }}>{renderOptions(filteredPartyItems)}</select></label>
           <label>Name<input value={partyEditForm.name} onChange={(e) => setPartyEditForm((c) => ({ ...c, name: e.target.value }))} /></label>
           <label>GST<input value={partyEditForm.gstNumber} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.value }))} placeholder="GST number or N/A" /></label>
           <label className="checkbox-line"><input type="checkbox" checked={partyEditFormGstNa} onChange={(e) => setPartyEditForm((c) => ({ ...c, gstNumber: e.target.checked ? "N/A" : "" }))} />GST N/A</label>
