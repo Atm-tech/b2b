@@ -1,3 +1,4 @@
+import {royalRangersRouter} from './royal-rangers-routes.js';
 import cors from "cors";
 import compression from "compression";
 import express from "express";
@@ -233,6 +234,7 @@ app.use((_req, res, next) => {
   }
   next();
 });
+app.use("/royal-rangers", royalRangersRouter);
 app.use(cors({
   origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
     if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isLocalDevelopmentOrigin(origin)) {
