@@ -449,7 +449,7 @@ async function verifyPassword(password, hash) {
 }
 async function rateLimit(key, limit = 5, windowMs = 15 * 6e4) {
   const db = database(), now = Date.now();
-  await db.prepare("INSERT INTO access_attempts (id, attempts, reset_at) VALUES (?, 0, ?) ON CONFLICT(id) DO UPDATE SET attempts = CASE WHEN reset_at < ? THEN 0 ELSE attempts END, reset_at = CASE WHEN reset_at < ? THEN excluded.reset_at ELSE reset_at END").bind(key, now + windowMs, now, now).run();
+  await db.prepare("INSERT INTO access_attempts (id, attempts, reset_at) VALUES (?, 0, ?) ON CONFLICT(id) DO UPDATE SET attempts = CASE WHEN access_attempts.reset_at < ? THEN 0 ELSE access_attempts.attempts END, reset_at = CASE WHEN access_attempts.reset_at < ? THEN excluded.reset_at ELSE access_attempts.reset_at END").bind(key, now + windowMs, now, now).run();
   const attempt = await db.prepare("UPDATE access_attempts SET attempts = attempts + 1 WHERE id = ? AND attempts < ? RETURNING attempts").bind(key, limit).first();
   if (!attempt) throw new AccessError("Too many attempts. Please try again later.", 429);
 }
