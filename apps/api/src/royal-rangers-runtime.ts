@@ -6,33 +6,6 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// app/api/push/route.ts
-var route_exports = {};
-__export(route_exports, {
-  GET: () => GET,
-  POST: () => POST
-});
-
-// server/render/env.ts
-var env = { get COMMITTEE_CODE_HASH() {
-  return process.env.RR_COMMITTEE_CODE_HASH;
-} };
-
-// server/backend.ts
-async function renderBackend(req) {
-  const base = env.RR_RENDER_BACKEND;
-  if (!base) return null;
-  try {
-    const h = new Headers(req.headers);
-    h.delete("host");
-    h.delete("content-length");
-    const r = await fetch(base + new URL(req.url).pathname, { method: req.method, headers: h, ...["GET", "HEAD"].includes(req.method) ? {} : { body: await req.text() }, redirect: "manual" });
-    return new Response(r.body, { status: r.status, headers: r.headers });
-  } catch {
-    return Response.json({ error: "Scores are temporarily unavailable. Please retry." }, { status: 503 });
-  }
-}
-
 // server/render/postgres.ts
 import pg from "pg";
 var tables = { push_settings: "id TEXT PRIMARY KEY,data TEXT NOT NULL", push_subscriptions: "endpoint TEXT PRIMARY KEY,user_id TEXT NOT NULL,player_id TEXT NOT NULL,data TEXT NOT NULL,updated_at BIGINT NOT NULL", push_deliveries: "id TEXT PRIMARY KEY,created_at BIGINT NOT NULL", tournaments: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", seasons: "id TEXT PRIMARY KEY,data TEXT NOT NULL", members: "id TEXT PRIMARY KEY,name TEXT NOT NULL,player_id TEXT,created_at BIGINT NOT NULL", committee_seats: "name TEXT PRIMARY KEY,user_id TEXT UNIQUE", committee_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,committee_name TEXT,expires BIGINT NOT NULL", access_attempts: "id TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at BIGINT NOT NULL", private_ratings: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", audit_log: "id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,season TEXT,created_at BIGINT NOT NULL", credentials: "user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at BIGINT NOT NULL", member_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires BIGINT NOT NULL", approved_players: "id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL", player_registrations: "player_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL" };
@@ -159,76 +132,50 @@ async function importSnapshot(snapshot) {
     c.release();
   }
 }
-
-// server/access.ts
-var AccessError = class extends Error {
-  constructor(message, status = 403) {
-    super(message);
-    this.status = status;
+async function resetAttendanceOnce(seasonId, marker) {
+  await init();
+  const c = await getPool().connect();
+  try {
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock(82644193)");
+    await c.query("SET LOCAL search_path TO royal_rangers");
+    const done = await c.query("SELECT data FROM push_settings WHERE id=$1", [marker]);
+    if (done.rowCount) {
+      await c.query("COMMIT");
+      return { applied: false, count: JSON.parse(done.rows[0].data).count };
+    }
+    const row = await c.query("SELECT data FROM seasons WHERE id=$1", [seasonId]);
+    if (!row.rowCount) throw Error("Attendance season not found");
+    const season = JSON.parse(row.rows[0].data);
+    if (season.availabilityClosed || season.squadsPublishedAt || season.publishedAt || season.squadsPublished || season.published || season.matches.some((m) => m.started)) throw Error("Attendance reset requires an open season");
+    const players = await c.query("SELECT id FROM approved_players");
+    const ids = [.../* @__PURE__ */ new Set([...players.rows.map((p) => p.id), ...season.players.map((p) => p.id)])];
+    const now = Date.now();
+    const backup = { count: ids.length, seasonId, at: now, previous: season.availability || {} };
+    season.availability = Object.fromEntries(ids.map((id) => [id, "unavailable"]));
+    await c.query("UPDATE seasons SET data=$1 WHERE id=$2", [JSON.stringify(season), seasonId]);
+    await c.query("UPDATE tournaments SET revision=revision+1 WHERE id=$1", ["royal-rangers"]);
+    await c.query("INSERT INTO push_settings (id,data) VALUES ($1,$2)", [marker, JSON.stringify(backup)]);
+    await c.query("INSERT INTO audit_log (id,actor,action,season,created_at) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), "Alpha", "Set all players absent: attendance reminder rollout", seasonId, now]);
+    await c.query("COMMIT");
+    return { applied: true, count: ids.length };
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
   }
-};
-function sameOrigin(req) {
-  const origin = req.headers.get("origin");
-  const allowed = [new URL(req.url).origin, "https://royal-rangers.vercel.app", "https://royal-rangers-saturday-cricket.advancedtradingmart.chatgpt.site"];
-  if (origin && !allowed.includes(origin)) throw new AccessError("Invalid request origin.");
-  if (!origin && req.headers.get("sec-fetch-site") === "cross-site") throw new AccessError("Invalid request origin.");
 }
-var cookieValue = (req, name) => req.headers.get("cookie")?.split(";").map((x) => x.trim()).find((x) => x.startsWith(name + "="))?.slice(name.length + 1);
-function sessionCookie(req, name, value, age) {
-  return `${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${new URL(req.url).protocol === "https:" ? "; Secure" : ""}`;
+
+// lib/attendance.ts
+var ATTENDANCE_REMINDER_MS = 60 * 60 * 1e3;
+function attendanceOpen(season, now = Date.now()) {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return season.date >= today && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
 }
-async function passwordHash(password, salt = crypto.randomUUID()) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
-  return salt + ":" + [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function verifyPassword(password, hash) {
-  const [salt, expected] = hash.split(":");
-  if (!salt || !expected) return false;
-  const actual = (await passwordHash(password, salt)).split(":")[1];
-  let mismatch = actual.length ^ expected.length;
-  for (let i = 0; i < actual.length; i++) mismatch |= actual.charCodeAt(i) ^ (expected.charCodeAt(i) || 0);
-  return mismatch === 0;
-}
-async function rateLimit(key, limit = 5, windowMs = 15 * 6e4) {
-  const db = database(), now = Date.now();
-  await db.prepare("INSERT INTO access_attempts (id, attempts, reset_at) VALUES (?, 0, ?) ON CONFLICT(id) DO UPDATE SET attempts = CASE WHEN access_attempts.reset_at < ? THEN 0 ELSE access_attempts.attempts END, reset_at = CASE WHEN access_attempts.reset_at < ? THEN excluded.reset_at ELSE access_attempts.reset_at END").bind(key, now + windowMs, now, now).run();
-  const attempt = await db.prepare("UPDATE access_attempts SET attempts = attempts + 1 WHERE id = ? AND attempts < ? RETURNING attempts").bind(key, limit).first();
-  if (!attempt) throw new AccessError("Too many attempts. Please try again later.", 429);
-}
-async function digest(s) {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function actor(req) {
-  const token = cookieValue(req, "rr_member");
-  const member = token ? await database().prepare("SELECT m.id,m.name,m.player_id FROM member_sessions s JOIN members m ON m.id=s.user_id WHERE s.token=? AND s.expires>? AND (m.id=? OR EXISTS (SELECT 1 FROM player_registrations r JOIN approved_players p ON p.id=r.player_id WHERE r.user_id=m.id AND r.player_id=m.player_id))").bind(await digest(token), Date.now(), "committee-alpha").first() : null;
-  if (!member) return { user: null, member: null, committee: null };
-  const user = { userId: member.id, displayName: member.name };
-  const committeeToken = cookieValue(req, "rr_committee");
-  const seat = committeeToken ? await database().prepare("SELECT COALESCE(s.committee_name,c.name) AS name FROM committee_sessions s LEFT JOIN committee_seats c ON c.user_id = s.user_id WHERE s.token = ? AND s.user_id = ? AND s.expires > ?").bind(await digest(committeeToken), user.userId, Date.now()).first() : null;
-  return { user, member, committee: member.id === "committee-alpha" && seat ? "Alpha" : null };
-}
-async function committee(req) {
-  sameOrigin(req);
-  const a = await actor(req);
-  if (!a.user) throw new AccessError("Log in to Royal Rangers first.", 401);
-  if (a.user.userId !== "committee-alpha" || a.committee !== "Alpha") throw new AccessError("Only the core committee can manage the league.");
-  return a;
-}
-async function codeMatches(code) {
-  const value = env.COMMITTEE_CODE_HASH;
-  if (!value) throw new AccessError("Committee access is not configured yet.", 503);
-  const [salt, expected] = value.split(":");
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveBits"]);
-  const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
-  const actual = [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  let mismatch = actual.length ^ expected.length;
-  for (let i = 0; i < actual.length; i++) mismatch |= actual.charCodeAt(i) ^ (expected.charCodeAt(i) || 0);
-  return mismatch === 0;
-}
-function failure(e) {
-  console.error(e instanceof Error ? e.message : "Request failed");
-  return Response.json({ error: e instanceof Error ? e.message : "Request failed." }, { status: e instanceof AccessError ? e.status : 400, headers: { "Cache-Control": "no-store" } });
+function attendanceReminder(season, playerId, now = Date.now()) {
+  if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
+  return { type: "attendance", title: "Royal Rangers: mark your attendance", body: `Playing on ${season.date}? Mark Present for Season ${season.number}. Reminders stop once you mark Present.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
 }
 
 // lib/cricket.ts
@@ -535,6 +482,157 @@ async function notifySquads(s) {
   };
   for (let i = 0; i < rows.results.length; i += 4) await Promise.all(rows.results.slice(i, i + 4).map(send));
   return { sent, failed };
+}
+async function notifyAttendance(now = Date.now()) {
+  const db = database();
+  const records = await db.prepare("SELECT data FROM seasons").all();
+  const season = records.results.map((r) => JSON.parse(r.data)).sort((a, b) => (b.number || 0) - (a.number || 0) || b.date.localeCompare(a.date))[0];
+  if (!season) return { sent: 0, failed: 0, eligible: 0 };
+  const rows = await db.prepare("SELECT s.endpoint,s.player_id,s.data FROM push_subscriptions s JOIN player_registrations r ON r.player_id=s.player_id AND r.user_id=s.user_id JOIN approved_players p ON p.id=r.player_id").all();
+  let sent = 0, failed = 0, eligible = 0;
+  const wp = await provider(), vapid = await keys();
+  for (const row of rows.results) {
+    const fresh = await db.prepare("SELECT data FROM seasons WHERE id=?").bind(season.id).first();
+    if (!fresh) continue;
+    const message = attendanceReminder(JSON.parse(fresh.data), row.player_id, now);
+    if (!message) continue;
+    eligible++;
+    const id = `attendance:${season.id}:${row.endpoint}`;
+    const claim = await db.prepare("INSERT INTO push_deliveries (id,created_at) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET created_at=excluded.created_at WHERE push_deliveries.created_at<=? RETURNING id").bind(id, now, now - ATTENDANCE_REMINDER_MS).first();
+    if (!claim) continue;
+    try {
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify(message), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 3600, timeout: 5e3 });
+      sent++;
+    } catch (e) {
+      failed++;
+      if (e.statusCode === 404 || e.statusCode === 410) await db.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
+    }
+  }
+  return { sent, failed, eligible };
+}
+
+// server/render/attendance-worker.ts
+var timer;
+var running = false;
+var attendanceWorkerStatus = { lastRun: null, sent: 0, failed: 0, eligible: 0, resetCount: null, error: false };
+function startAttendanceReminders() {
+  if (timer) return;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      if (!await migrationStatus()) return;
+      const reset = await resetAttendanceOnce("rr-season-3", "attendance-reset-2026-09-16-v1");
+      attendanceWorkerStatus.resetCount = reset.count;
+      Object.assign(attendanceWorkerStatus, await notifyAttendance(), { lastRun: Date.now(), error: false });
+    } catch (e) {
+      attendanceWorkerStatus.error = true;
+      console.error("Royal Rangers attendance reminders:", e instanceof Error ? e.message : "failed");
+    } finally {
+      running = false;
+    }
+  };
+  timer = setInterval(() => void tick(), 6e4);
+  timer.unref();
+  void tick();
+}
+
+// app/api/push/route.ts
+var route_exports = {};
+__export(route_exports, {
+  GET: () => GET,
+  POST: () => POST
+});
+
+// server/render/env.ts
+var env = { get COMMITTEE_CODE_HASH() {
+  return process.env.RR_COMMITTEE_CODE_HASH;
+} };
+
+// server/backend.ts
+async function renderBackend(req) {
+  const base = env.RR_RENDER_BACKEND;
+  if (!base) return null;
+  try {
+    const h = new Headers(req.headers);
+    h.delete("host");
+    h.delete("content-length");
+    const r = await fetch(base + new URL(req.url).pathname, { method: req.method, headers: h, ...["GET", "HEAD"].includes(req.method) ? {} : { body: await req.text() }, redirect: "manual" });
+    return new Response(r.body, { status: r.status, headers: r.headers });
+  } catch {
+    return Response.json({ error: "Scores are temporarily unavailable. Please retry." }, { status: 503 });
+  }
+}
+
+// server/access.ts
+var AccessError = class extends Error {
+  constructor(message, status = 403) {
+    super(message);
+    this.status = status;
+  }
+};
+function sameOrigin(req) {
+  const origin = req.headers.get("origin");
+  const allowed = [new URL(req.url).origin, "https://royal-rangers.vercel.app", "https://royal-rangers-saturday-cricket.advancedtradingmart.chatgpt.site"];
+  if (origin && !allowed.includes(origin)) throw new AccessError("Invalid request origin.");
+  if (!origin && req.headers.get("sec-fetch-site") === "cross-site") throw new AccessError("Invalid request origin.");
+}
+var cookieValue = (req, name) => req.headers.get("cookie")?.split(";").map((x) => x.trim()).find((x) => x.startsWith(name + "="))?.slice(name.length + 1);
+function sessionCookie(req, name, value, age) {
+  return `${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${new URL(req.url).protocol === "https:" ? "; Secure" : ""}`;
+}
+async function passwordHash(password, salt = crypto.randomUUID()) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
+  return salt + ":" + [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function verifyPassword(password, hash) {
+  const [salt, expected] = hash.split(":");
+  if (!salt || !expected) return false;
+  const actual = (await passwordHash(password, salt)).split(":")[1];
+  let mismatch = actual.length ^ expected.length;
+  for (let i = 0; i < actual.length; i++) mismatch |= actual.charCodeAt(i) ^ (expected.charCodeAt(i) || 0);
+  return mismatch === 0;
+}
+async function rateLimit(key, limit = 5, windowMs = 15 * 6e4) {
+  const db = database(), now = Date.now();
+  await db.prepare("INSERT INTO access_attempts (id, attempts, reset_at) VALUES (?, 0, ?) ON CONFLICT(id) DO UPDATE SET attempts = CASE WHEN access_attempts.reset_at < ? THEN 0 ELSE access_attempts.attempts END, reset_at = CASE WHEN access_attempts.reset_at < ? THEN excluded.reset_at ELSE access_attempts.reset_at END").bind(key, now + windowMs, now, now).run();
+  const attempt = await db.prepare("UPDATE access_attempts SET attempts = attempts + 1 WHERE id = ? AND attempts < ? RETURNING attempts").bind(key, limit).first();
+  if (!attempt) throw new AccessError("Too many attempts. Please try again later.", 429);
+}
+async function digest(s) {
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function actor(req) {
+  const token = cookieValue(req, "rr_member");
+  const member = token ? await database().prepare("SELECT m.id,m.name,m.player_id FROM member_sessions s JOIN members m ON m.id=s.user_id WHERE s.token=? AND s.expires>? AND (m.id=? OR EXISTS (SELECT 1 FROM player_registrations r JOIN approved_players p ON p.id=r.player_id WHERE r.user_id=m.id AND r.player_id=m.player_id))").bind(await digest(token), Date.now(), "committee-alpha").first() : null;
+  if (!member) return { user: null, member: null, committee: null };
+  const user = { userId: member.id, displayName: member.name };
+  const committeeToken = cookieValue(req, "rr_committee");
+  const seat = committeeToken ? await database().prepare("SELECT COALESCE(s.committee_name,c.name) AS name FROM committee_sessions s LEFT JOIN committee_seats c ON c.user_id = s.user_id WHERE s.token = ? AND s.user_id = ? AND s.expires > ?").bind(await digest(committeeToken), user.userId, Date.now()).first() : null;
+  return { user, member, committee: member.id === "committee-alpha" && seat ? "Alpha" : null };
+}
+async function committee(req) {
+  sameOrigin(req);
+  const a = await actor(req);
+  if (!a.user) throw new AccessError("Log in to Royal Rangers first.", 401);
+  if (a.user.userId !== "committee-alpha" || a.committee !== "Alpha") throw new AccessError("Only the core committee can manage the league.");
+  return a;
+}
+async function codeMatches(code) {
+  const value = env.COMMITTEE_CODE_HASH;
+  if (!value) throw new AccessError("Committee access is not configured yet.", 503);
+  const [salt, expected] = value.split(":");
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveBits"]);
+  const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
+  const actual = [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  let mismatch = actual.length ^ expected.length;
+  for (let i = 0; i < actual.length; i++) mismatch |= actual.charCodeAt(i) ^ (expected.charCodeAt(i) || 0);
+  return mismatch === 0;
+}
+function failure(e) {
+  console.error(e instanceof Error ? e.message : "Request failed");
+  return Response.json({ error: e instanceof Error ? e.message : "Request failed." }, { status: e instanceof AccessError ? e.status : 400, headers: { "Cache-Control": "no-store" } });
 }
 
 // app/api/push/route.ts
@@ -976,7 +1074,7 @@ async function handleRoyalRangers(req) {
   if (path === "health") {
     try {
       const ready2 = await migrationStatus();
-      return Response.json({ ok: ready2, service: "royal-rangers", storage: "postgres" }, { status: ready2 ? 200 : 503 });
+      return Response.json({ ok: ready2, service: "royal-rangers", storage: "postgres", attendance: attendanceWorkerStatus }, { status: ready2 ? 200 : 503 });
     } catch {
       return Response.json({ error: "Storage unavailable" }, { status: 503 });
     }
@@ -999,5 +1097,6 @@ async function handleRoyalRangers(req) {
   return handler(req);
 }
 export {
-  handleRoyalRangers
+  handleRoyalRangers,
+  startAttendanceReminders
 };
