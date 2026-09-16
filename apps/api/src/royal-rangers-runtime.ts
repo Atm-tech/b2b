@@ -173,9 +173,11 @@ function attendanceOpen(season, now = Date.now()) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
   return season.date >= today && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
 }
-function attendanceReminder(season, playerId, now = Date.now()) {
+function attendanceReminder(season, playerId, now = Date.now(), name) {
   if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
-  return { type: "attendance", title: "Royal Rangers: mark your attendance", body: `Playing on ${season.date}? Mark Present for Season ${season.number}. Reminders stop once you mark Present.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
+  const firstName = name?.trim().split(/\s+/)[0] || "Ranger";
+  const date = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(/* @__PURE__ */ new Date(season.date + "T12:00:00+05:30"));
+  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers are getting set for ${date}. Joining us at the ground? Tap to make your match-day call.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
 }
 
 // lib/cricket.ts
@@ -472,7 +474,7 @@ async function notifySquads(s) {
     try {
       const exists = await db.prepare("SELECT id FROM push_deliveries WHERE id=?").bind(id).first();
       if (exists) return;
-      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: `Your squad: ${TEAM_INFO[player.team].name}`, body: `${player.name}, you're with ${TEAM_INFO[player.team].name} for Season ${s.number}. Open your pavilion and meet your squad.`, tag, url: "/", icon: TEAM_INFO[player.team].crest }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: `Your colours are here: ${TEAM_INFO[player.team].name} \u{1F3CF}`, body: `Welcome to the ${TEAM_INFO[player.team].name} dressing room, ${player.name}. Season ${s.number} awaits. Tap to meet your squad.`, tag, url: "/", icon: TEAM_INFO[player.team].crest }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
       await db.prepare("INSERT OR IGNORE INTO push_deliveries (id,created_at) VALUES (?,?)").bind(id, Date.now()).run();
       sent++;
     } catch (e) {
@@ -488,13 +490,13 @@ async function notifyAttendance(now = Date.now()) {
   const records = await db.prepare("SELECT data FROM seasons").all();
   const season = records.results.map((r) => JSON.parse(r.data)).sort((a, b) => (b.number || 0) - (a.number || 0) || b.date.localeCompare(a.date))[0];
   if (!season) return { sent: 0, failed: 0, eligible: 0 };
-  const rows = await db.prepare("SELECT s.endpoint,s.player_id,s.data FROM push_subscriptions s JOIN player_registrations r ON r.player_id=s.player_id AND r.user_id=s.user_id JOIN approved_players p ON p.id=r.player_id").all();
+  const rows = await db.prepare("SELECT s.endpoint,s.player_id,s.data,p.name FROM push_subscriptions s JOIN player_registrations r ON r.player_id=s.player_id AND r.user_id=s.user_id JOIN approved_players p ON p.id=r.player_id").all();
   let sent = 0, failed = 0, eligible = 0;
   const wp = await provider(), vapid = await keys();
   for (const row of rows.results) {
     const fresh = await db.prepare("SELECT data FROM seasons WHERE id=?").bind(season.id).first();
     if (!fresh) continue;
-    const message = attendanceReminder(JSON.parse(fresh.data), row.player_id, now);
+    const message = attendanceReminder(JSON.parse(fresh.data), row.player_id, now, row.name);
     if (!message) continue;
     eligible++;
     const id = `attendance:${season.id}:${row.endpoint}`;
