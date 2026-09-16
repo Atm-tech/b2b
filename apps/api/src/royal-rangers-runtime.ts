@@ -248,6 +248,10 @@ function noBall(b) {
 function legal(b) {
   return !wide(b) && !noBall(b);
 }
+var MAX_BOWLER_BALLS = 12;
+function bowlerBalls(m, id) {
+  return m.innings.flat().filter((b) => b.bowler === id && legal(b)).length;
+}
 function total(b) {
   return b.runs + (wide(b) || noBall(b) ? 1 : 0);
 }
@@ -293,6 +297,7 @@ function validateBall(s, m, b) {
   check(!pair.striker || pair.striker === b.striker, "The striker has changed.");
   check(!pair.partner || pair.partner === b.partner, "The non-striker has changed.");
   check(s.players.some((p) => p.id === b.bowler && p.team === batting(m, 1 - i)), "Choose a bowler from the fielding team.");
+  check(bowlerBalls(m, b.bowler) < MAX_BOWLER_BALLS, "This bowler has completed the maximum 2 overs for this match. Choose another bowler.");
   if (pair.bowler) check(pair.bowler === b.bowler, "Keep the same bowler until the over ends.");
   else if (events.length) check(events.at(-1)?.bowler !== b.bowler, "Choose a different bowler for the new over.");
   if (b.kind === "wicket") {
