@@ -375,6 +375,13 @@ function apply(state, c) {
     return next;
   }
   check(s, "Season not found.");
+  if (c.type === "availability") {
+    check(!s.availabilityClosed && !s.squadsPublishedAt && !s.publishedAt && !s.squadsPublished && !s.published && !s.matches.some((m) => m.started), "Squads are already published. Contact Alpha to arrange any change.");
+    check(c.status === "available" || c.status === "unavailable", "Choose Available or Not available.");
+    check(typeof c.playerId === "string" && c.playerId.length > 0, "Player not found.");
+    s.availability = { ...s.availability, [c.playerId]: c.status };
+    return next;
+  }
   if (["player", "assign", "remove"].includes(c.type)) {
     s.published = false;
     s.squadsPublished = false;
@@ -390,6 +397,8 @@ function apply(state, c) {
     s.fixturesPublishedAt = Date.now();
   } else if (c.type === "publish-squads" || c.type === "publish") {
     check(TEAMS.every((t) => s.players.filter((p) => p.team === t).length >= 2), "Select at least two players per squad before publishing.");
+    check(s.availabilityClosed || !!s.squadsPublishedAt || !!s.publishedAt || s.players.every((p) => s.availability?.[p.id] === "available"), "Confirm availability for every selected player before publishing.");
+    s.availabilityClosed = true;
     s.squadsPublished = true;
     s.squadsPublishedAt = Date.now();
     if (c.type === "publish") {
@@ -404,6 +413,7 @@ function apply(state, c) {
     check(s.players.filter((p) => p.team === c.team).length < 11, "Each squad supports up to 11 players.");
     s.players.push({ id: crypto.randomUUID(), name: c.name.trim(), team: c.team });
   } else if (c.type === "assign") {
+    check(c.team === "unassigned" || s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || s.availability?.[c.player?.id] === "available", "Only confirmed available players can be assigned before publication.");
     check(!s.matches.some((m) => m.started), "Teams are locked after play starts.");
     check(TEAMS.includes(c.team) || c.team === "unassigned", "Choose a valid team.");
     check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
@@ -575,7 +585,7 @@ function visibleTournament(state, viewer) {
     const historical = index > 0 && s.published === void 0 && s.squadsPublished === void 0 && s.matches.some((m) => m.started);
     const squads = privileged || historical || seasonPublished(s);
     const fixtures = squads && (privileged || historical || (s.fixturesPublished ?? s.published === true));
-    return { id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
+    return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
   }) };
 }
 
@@ -763,11 +773,22 @@ async function POST2(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
-    const a = await committee(req);
+    sameOrigin(req);
     const raw = await req.text();
     if (raw.length > 2e4) return Response.json({ error: "Request too large." }, { status: 413 });
     const { command, revision } = JSON.parse(raw);
     if (!command || !Number.isInteger(revision)) throw new Error("Invalid request.");
+    const a = command.type === "availability" ? await actor(req) : await committee(req);
+    if (command.type === "availability") {
+      if (!a.user) throw new AccessError("Log in to record your availability.", 401);
+      if (a.committee !== "Alpha") {
+        if (!a.member?.player_id) throw new AccessError("A registered player account is required.");
+        command.playerId = a.member.player_id;
+      } else {
+        const ratings = await readRatings();
+        if (!ratings.players.some((p) => p.id === command.playerId)) throw new Error("Player not found.");
+      }
+    }
     await initialize2();
     const db = database();
     const current = await read();
@@ -791,6 +812,8 @@ async function POST2(req) {
       if (!Array.isArray(command.playerIds) || command.playerIds.length > 33 || command.playerIds.some((id) => typeof id !== "string")) throw new Error("Choose the available players.");
       const ratings = await readRatings();
       if (command.ratingsRevision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the committee room before balancing." }, { status: 409 });
+      if (season.availabilityClosed || season.squadsPublishedAt || season.publishedAt || season.squadsPublished || season.published) throw new Error("Squads have been published. Make replacements manually.");
+      if (command.playerIds.some((id) => season.availability?.[id] !== "available")) throw new Error("Only confirmed available players can be balanced. Reload availability before selecting.");
       const players = balancedSquads(ratings.players, command.playerIds);
       state = structuredClone(current.state);
       state.seasons.find((s) => s.id === command.season).players = players;
@@ -801,9 +824,9 @@ async function POST2(req) {
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
     const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
     if (!saved[1].meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
-    await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee, command.type, changed.id, Date.now()).run();
+    await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee || a.member.name, command.type === "availability" ? `availability: ${command.playerId} ${command.status}` : command.type, changed.id, Date.now()).run();
     const pushDelivery = ["publish-squads", "publish"].includes(command.type) ? await notifySquads(changed).catch(() => ({ sent: 0, failed: 1 })) : void 0;
-    return Response.json({ state, revision: revision + 1, pushDelivery }, { headers: headers2 });
+    return Response.json({ state: visibleTournament(state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }), revision: revision + 1, pushDelivery }, { headers: headers2 });
   } catch (e) {
     return failure(e);
   }
