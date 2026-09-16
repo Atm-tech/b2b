@@ -177,7 +177,7 @@ function attendanceReminder(season, playerId, now = Date.now(), name) {
   if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
   const firstName = name?.trim().split(/\s+/)[0] || "Ranger";
   const date = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(/* @__PURE__ */ new Date(season.date + "T12:00:00+05:30"));
-  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers are getting set for ${date}. Joining us at the ground? Tap to make your match-day call.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
+  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers take the field on ${date}. Let the skipper know if you\u2019re joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
 }
 
 // lib/cricket.ts
@@ -474,7 +474,7 @@ async function notifySquads(s) {
     try {
       const exists = await db.prepare("SELECT id FROM push_deliveries WHERE id=?").bind(id).first();
       if (exists) return;
-      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: `Your colours are here: ${TEAM_INFO[player.team].name} \u{1F3CF}`, body: `Welcome to the ${TEAM_INFO[player.team].name} dressing room, ${player.name}. Season ${s.number} awaits. Tap to meet your squad.`, tag, url: "/", icon: TEAM_INFO[player.team].crest }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: `Your squad is ready, ${player.name.trim().split(/\s+/)[0]} \u{1F3CF}`, body: `You\u2019re with ${TEAM_INFO[player.team].name} for Season ${s.number}. Step into the pavilion and meet your teammates.`, tag, url: "/", icon: TEAM_INFO[player.team].crest }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
       await db.prepare("INSERT OR IGNORE INTO push_deliveries (id,created_at) VALUES (?,?)").bind(id, Date.now()).run();
       sent++;
     } catch (e) {
