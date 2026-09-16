@@ -14,26 +14,6 @@ __export(route_exports, {
   dynamic: () => dynamic
 });
 
-// server/render/env.ts
-var env = { get COMMITTEE_CODE_HASH() {
-  return process.env.RR_COMMITTEE_CODE_HASH;
-} };
-
-// server/backend.ts
-async function renderBackend(req) {
-  const base = env.RR_RENDER_BACKEND;
-  if (!base) return null;
-  try {
-    const h = new Headers(req.headers);
-    h.delete("host");
-    h.delete("content-length");
-    const r = await fetch(base + new URL(req.url).pathname, { method: req.method, headers: h, ...["GET", "HEAD"].includes(req.method) ? {} : { body: await req.text() }, redirect: "manual" });
-    return new Response(r.body, { status: r.status, headers: r.headers });
-  } catch {
-    return Response.json({ error: "Scores are temporarily unavailable. Please retry." }, { status: 503 });
-  }
-}
-
 // lib/cricket.ts
 var TEAMS = ["White", "Black", "Blue"];
 var defaultPoints = { run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
@@ -168,11 +148,16 @@ function apply(state, c) {
     check(!next.seasons.some((x) => x.date === c.date), "A season already exists for this Saturday.");
     check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
     const prev = next.seasons[0];
-    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...prev.points } : { ...defaultPoints }, matches: [] });
+    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...prev.points } : { ...defaultPoints }, matches: [] });
     return next;
   }
   check(s, "Season not found.");
-  if (c.type === "player") {
+  if (["player", "assign", "remove", "fixtures"].includes(c.type)) s.published = false;
+  if (c.type === "publish") {
+    check(TEAMS.every((t) => s.players.filter((p) => p.team === t).length >= 2), "Select at least two players per squad before publishing.");
+    s.published = true;
+    s.publishedAt = Date.now();
+  } else if (c.type === "player") {
     check(TEAMS.includes(c.team) && typeof c.name === "string" && c.name.trim().length > 0 && c.name.trim().length <= 50, "Enter a player name (up to 50 characters).");
     check(!s.matches.some((m) => m.started), "Squads are locked after the first match starts.");
     check(!s.players.some((p) => p.name.toLowerCase() === c.name.trim().toLowerCase()), "This player is already in the season.");
@@ -243,6 +228,35 @@ function apply(state, c) {
   }
   syncFinal(s);
   return next;
+}
+
+// server/publication.ts
+function seasonPublished(s) {
+  return s.published === true;
+}
+function visibleTournament(state, viewer) {
+  const privileged = viewer.userId === "committee-alpha" && viewer.committee === "Alpha" || !!viewer.userId && captains.some((p) => p.id === viewer.playerId);
+  return { seasons: state.seasons.map((s, index) => privileged || seasonPublished(s) || index > 0 && s.published === void 0 && s.matches.some((m) => m.started) ? { ...s, publicationHidden: false } : { id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: false, publicationHidden: true, players: [], matches: [] }) };
+}
+
+// server/render/env.ts
+var env = { get COMMITTEE_CODE_HASH() {
+  return process.env.RR_COMMITTEE_CODE_HASH;
+} };
+
+// server/backend.ts
+async function renderBackend(req) {
+  const base = env.RR_RENDER_BACKEND;
+  if (!base) return null;
+  try {
+    const h = new Headers(req.headers);
+    h.delete("host");
+    h.delete("content-length");
+    const r = await fetch(base + new URL(req.url).pathname, { method: req.method, headers: h, ...["GET", "HEAD"].includes(req.method) ? {} : { body: await req.text() }, redirect: "manual" });
+    return new Response(r.body, { status: r.status, headers: r.headers });
+  } catch {
+    return Response.json({ error: "Scores are temporarily unavailable. Please retry." }, { status: 503 });
+  }
 }
 
 // server/balance.ts
@@ -582,7 +596,7 @@ async function readRatings() {
 
 // app/api/tournament/route.ts
 var dynamic = "force-dynamic";
-var headers = { "Cache-Control": "no-store" };
+var headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 async function read() {
   const db = database();
   const [meta, records] = await db.batch([db.prepare("SELECT revision FROM tournaments WHERE id = ?").bind("royal-rangers"), db.prepare("SELECT data FROM seasons")]);
@@ -598,7 +612,8 @@ async function GET(req) {
   if (remote) return remote;
   try {
     await initialize2();
-    return Response.json(await read(), { headers });
+    const snapshot = await read(), a = await actor(req);
+    return Response.json({ ...snapshot, state: visibleTournament(snapshot.state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }) }, { headers });
   } catch (e) {
     console.error(e);
     return Response.json({ error: "Unable to load scores. Please retry." }, { status: 503, headers });
@@ -639,6 +654,7 @@ async function POST(req) {
       const players = balancedSquads(ratings.players, command.playerIds);
       state = structuredClone(current.state);
       state.seasons.find((s) => s.id === command.season).players = players;
+      state.seasons.find((s) => s.id === command.season).published = false;
     } else state = apply(current.state, command);
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
     const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
