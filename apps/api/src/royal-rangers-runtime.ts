@@ -809,7 +809,7 @@ function visibleTournament(state, viewer) {
 }
 
 // server/balance.ts
-var attrs = ["batting", "bowling", "fielding", "attitude"];
+var attrs = ["batting", "bowling", "fielding"];
 function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
   const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
   if (selected.length < 6 || selected.length > 33) throw new Error("Select 6 to 33 available players, including the three captains.");
@@ -925,7 +925,7 @@ async function unregisterPlayer(playerId, expectedUserId) {
 }
 
 // server/ratings.ts
-var ATTRIBUTES = ["batting", "bowling", "fielding", "attitude"];
+var ATTRIBUTES = ["batting", "bowling", "fielding"];
 var aliases2 = { saad: { id: "captain-saad", name: "Saad" }, muddi: { id: "captain-mudassar", name: "Mudassar" }, guddu: { id: "captain-javed", name: "Javed" } };
 var reviewers = { "SAAD": "Saad", "MUDDI": "Mudassar", "GUDDU BHAI": "Javed" };
 async function readRatings() {
@@ -935,7 +935,7 @@ async function readRatings() {
   if (!row) throw new Error("Ratings are unavailable.");
   let data = JSON.parse(row.data), revision = row.revision;
   if (data.source.version !== ratings_source_default.version) {
-    const refreshed = { source: ratings_source_default, overrides: {}, previousImport: { source: data.source, overrides: data.overrides } };
+    const refreshed = { source: ratings_source_default, overrides: { ...data.overrides }, previousImport: { source: data.source, overrides: data.overrides } };
     const updated = await db.prepare("UPDATE private_ratings SET data = ?, revision = revision + 1 WHERE id = ? AND revision = ?").bind(JSON.stringify(refreshed), "roster", revision).run();
     if (!updated.meta.changes) return readRatings();
     data = refreshed;
@@ -955,7 +955,10 @@ async function readRatings() {
       return { reviewer, values, original, cells: r?.cells || null };
     });
     const averages = Object.fromEntries(ATTRIBUTES.map((attr) => {
-      const values = reviews.map((r) => r.values[attr]).filter((v) => typeof v === "number" && v >= 0 && v <= 3);
+      const finalKey = `${identity.id}:Alpha:${attr}`;
+      if (Object.hasOwn(data.overrides, finalKey)) return [attr, data.overrides[finalKey]];
+      const edited = reviews.filter((r) => Object.hasOwn(data.overrides, `${identity.id}:${r.reviewer}:${attr}`));
+      const values = (edited.length ? edited : reviews).map((r) => r.values[attr]).filter((v) => typeof v === "number" && v >= 0 && v <= 3);
       return [attr, values.length ? values.reduce((a, b) => a + b, 0) / values.length : null];
     }));
     return { ...identity, sourceName: p.name, reviews, averages, total: ATTRIBUTES.every((a) => averages[a] !== null) ? ATTRIBUTES.reduce((sum, a) => sum + averages[a], 0) : null };
