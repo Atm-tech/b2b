@@ -1076,7 +1076,7 @@ async function handleRoyalRangers(req) {
   if (path === "health") {
     try {
       const ready2 = await migrationStatus();
-      return Response.json({ ok: ready2, service: "royal-rangers", storage: "postgres", attendance: attendanceWorkerStatus }, { status: ready2 ? 200 : 503 });
+      return Response.json({ ok: ready2, service: "royal-rangers", storage: "postgres", release: process.env.RENDER_GIT_COMMIT || null, attendance: attendanceWorkerStatus }, { status: ready2 ? 200 : 503 });
     } catch {
       return Response.json({ error: "Storage unavailable" }, { status: 503 });
     }
