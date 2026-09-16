@@ -380,6 +380,25 @@ function apply(state, c) {
     for (const team of TEAMS) check(s.players.filter((p) => p.team === team).length >= 2, "Add at least two players to each squad first.");
     s.drawOrder = shuffled([...TEAMS]);
     s.matches = shuffled([[TEAMS[0], TEAMS[1]], [TEAMS[1], TEAMS[2]], [TEAMS[2], TEAMS[0]]]).map(([home, away], i) => ({ id: crypto.randomUUID(), home, away, first: home, overs: s.overs, label: `League ${i + 1}`, started: false, innings: [[], []] }));
+  } else if (c.type === "edit-fixtures") {
+    check(Array.isArray(c.fixtures) && c.fixtures.length === s.matches.length, "Include every fixture exactly once.");
+    const ids = c.fixtures.map((f) => f?.id);
+    check(new Set(ids).size === ids.length && ids.every((id) => typeof id === "string" && s.matches.some((m) => m.id === id)), "Invalid fixture list.");
+    const reordered = c.fixtures.map((f, index) => {
+      const match = s.matches.find((m) => m.id === f.id);
+      check(Number.isInteger(f.overs) && f.overs >= 1 && f.overs <= 50, "Choose 1?50 overs.");
+      if (match.started || match.innings.some((i) => i.length)) {
+        check(s.matches[index]?.id === match.id && f.overs === match.overs, "Started matches cannot be moved or edited.");
+      }
+      if (match.label === "Final") check(index === s.matches.length - 1, "The final must stay last.");
+      return { ...match, overs: f.overs, label: match.label === "Final" ? "Final" : `League ${index + 1}` };
+    });
+    let upcoming = false;
+    for (const match of reordered) {
+      if (!match.started) upcoming = true;
+      else check(!upcoming, "Upcoming fixtures must follow started matches.");
+    }
+    s.matches = reordered;
   } else if (c.type === "final") {
     check(!s.matches.some((m) => m.label === "Final"), "Final already exists.");
     check(s.matches.length >= 3 && s.matches.every((m) => phase(s, m) === 2), "Complete the league matches first.");
