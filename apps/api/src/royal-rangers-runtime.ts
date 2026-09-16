@@ -270,7 +270,7 @@ function validateBall(s, m, b) {
     if (["Caught", "Run out", "Stumped"].includes(b.dismissal)) check(s.players.some((p) => p.id === b.fielder && p.team === batting(m, 1 - i)), "Choose the fielder to award points.");
   } else check(!b.out && !b.dismissal && !b.fielder && !b.extra, "Invalid delivery fields.");
 }
-var TEAM_INFO = { White: { name: "Frost Dragon", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimera", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reaper", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "/teams/azure-reaper-refined.webp", color: "#6397ff" } };
+var TEAM_INFO = { White: { name: "Frost Dragons", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimeras", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reapers", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "/teams/azure-reaper-refined.webp", color: "#6397ff" } };
 var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
 function shuffled(items) {
   const a = [...items];
