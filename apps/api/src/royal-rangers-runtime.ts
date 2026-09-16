@@ -87,6 +87,7 @@ function check(ok, msg) {
 function validateBall(s, m, b) {
   const i = phase(s, m);
   check(i === 0 || i === 1, "This innings is already complete.");
+  check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
   check(["run", "wide", "nb", "bye", "legbye", "wicket"].includes(b.kind), "Invalid delivery.");
   check(Number.isInteger(b.runs) && b.runs >= 0 && b.runs <= (b.overthrow ? 20 : 6), "Use Overthrow for totals above six (maximum 20).");
   check(b.overthrow === void 0 || typeof b.overthrow === "boolean", "Invalid overthrow flag.");
@@ -216,12 +217,18 @@ function apply(state, c) {
       m.first = c.first;
       m.overs = c.overs;
       m.started = true;
+      m.pauseBetweenInnings = c.pauseBetweenInnings === true;
+      m.secondInningsStarted = false;
+    } else if (c.type === "next-innings") {
+      check(phase(s, m) === 1 && !m.innings[1].length && !m.secondInningsStarted, "Next innings is not awaiting a start.");
+      m.secondInningsStarted = true;
     } else if (c.type === "ball") {
       validateBall(s, m, c.ball);
       m.innings[phase(s, m)].push(c.ball);
     } else if (c.type === "dead") {
       const i = phase(s, m);
       check(i === 0 || i === 1, "Start a live innings first.");
+      check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
       (m.deadBalls ??= []).push({ innings: i, afterBall: m.innings[i].length });
     } else if (c.type === "undo") {
       check(!s.matches.some((o) => o.id !== m.id && o.started && s.matches.indexOf(o) > s.matches.indexOf(m)), "Cannot undo after the next match has started.");
@@ -231,6 +238,7 @@ function apply(state, c) {
         check(m.innings[i].length, "No deliveries to undo.");
         m.innings[i].pop();
       }
+      if (phase(s, m) === 0) m.secondInningsStarted = false;
     } else throw new Error("Unknown action.");
   }
   syncFinal(s);
@@ -609,7 +617,7 @@ async function POST(req) {
     const db = database();
     const current = await read();
     if (current.revision !== revision) return Response.json({ error: "Scores changed in another tab. Reload the latest scores before continuing." }, { status: 409 });
-    if (["start", "ball", "undo", "dead"].includes(command.type)) {
+    if (["start", "next-innings", "ball", "undo", "dead"].includes(command.type)) {
       const match = current.state.seasons.find((s) => s.id === command.season)?.matches.find((m) => m.id === command.match);
       if (!match) throw new Error("Match not found.");
       if (!scoringAllowed(a.user.userId, a.committee, match)) throw new AccessError("Only alpha can start, score or undo this match.");
