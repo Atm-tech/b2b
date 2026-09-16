@@ -618,12 +618,12 @@ async function committee(req) {
   sameOrigin(req);
   const a = await actor(req);
   if (!a.user) throw new AccessError("Log in to Royal Rangers first.", 401);
-  if (a.user.userId !== "committee-alpha" || a.committee !== "Alpha") throw new AccessError("Only the core committee can manage the league.");
+  if (a.user.userId !== "committee-alpha" || a.committee !== "Alpha") throw new AccessError("Only Alpha can manage the league.");
   return a;
 }
 async function codeMatches(code) {
   const value = env.COMMITTEE_CODE_HASH;
-  if (!value) throw new AccessError("Committee access is not configured yet.", 503);
+  if (!value) throw new AccessError("Pavilion access is not configured yet.", 503);
   const [salt, expected] = value.split(":");
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveBits"]);
   const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
@@ -975,7 +975,7 @@ async function POST3(req) {
     const db = database();
     if (c.type === "committee-login") {
       await rateLimit("committee-login:" + (req.headers.get("cf-connecting-ip") || "local"), 30);
-      if (c.username?.trim().toLowerCase() !== "alpha" || typeof c.password !== "string" || c.password.length > 128 || !await codeMatches(c.password)) throw new AccessError("Incorrect committee username or password.", 401);
+      if (c.username?.trim().toLowerCase() !== "alpha" || typeof c.password !== "string" || c.password.length > 128 || !await codeMatches(c.password)) throw new AccessError("Incorrect Alpha username or password.", 401);
       const userId = "committee-alpha", memberToken = crypto.randomUUID() + crypto.randomUUID(), committeeToken = crypto.randomUUID() + crypto.randomUUID();
       await db.batch([db.prepare("INSERT OR IGNORE INTO members (id,name,created_at) VALUES (?,?,?)").bind(userId, "Alpha", Date.now()), db.prepare("DELETE FROM committee_sessions WHERE user_id=?").bind(userId), db.prepare("DELETE FROM member_sessions WHERE user_id=?").bind(userId), db.prepare("INSERT INTO member_sessions (token,user_id,expires) VALUES (?,?,?)").bind(await digest(memberToken), userId, Date.now() + 432e5), db.prepare("INSERT INTO committee_sessions (token,user_id,committee_name,expires) VALUES (?,?,?,?)").bind(await digest(committeeToken), userId, "Alpha", Date.now() + 432e5)]);
       const h = new Headers();
@@ -986,7 +986,7 @@ async function POST3(req) {
     if (c.type === "signup" || c.type === "login") {
       const username = c.username?.trim().toLowerCase();
       if (!username || !/^[-a-z0-9_]{3,30}$/.test(username)) throw new Error("Enter a valid username.");
-      if (username === "alpha") throw new Error("Use Committee access for alpha.");
+      if (username === "alpha") throw new Error("Use Pavilion access for Alpha.");
       if (typeof c.password !== "string" || !c.password || c.password.length > 128) throw new Error("Enter your password.");
       await rateLimit("login:" + username, 10);
       await rateLimit("auth-ip:" + (req.headers.get("cf-connecting-ip") || "local"), 100);
@@ -1013,7 +1013,7 @@ async function POST3(req) {
       await db.prepare("DELETE FROM committee_sessions WHERE token=?").bind(await digest(cookieValue(req, "rr_committee") || "")).run();
       return response({ ok: true }, { "Set-Cookie": sessionCookie(req, "rr_committee", "", 0) });
     }
-    throw new AccessError("Player identities cannot be changed after registration. Contact the committee.");
+    throw new AccessError("Player identities cannot be changed after registration. Contact Alpha.");
   } catch (e) {
     return failure(e);
   }
