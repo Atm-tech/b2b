@@ -6,238 +6,12 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// app/api/tournament/route.ts
+// app/api/push/route.ts
 var route_exports = {};
 __export(route_exports, {
   GET: () => GET,
-  POST: () => POST,
-  dynamic: () => dynamic
+  POST: () => POST
 });
-
-// lib/cricket.ts
-var TEAMS = ["White", "Black", "Blue"];
-var defaultPoints = { run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
-function saturday() {
-  const d = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  d.setDate(d.getDate() + (6 - d.getDay() + 7) % 7);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function wide(b) {
-  return b.kind === "wide" || b.kind === "wicket" && b.extra === "wide";
-}
-function noBall(b) {
-  return b.kind === "nb" || b.kind === "wicket" && b.extra === "nb";
-}
-function legal(b) {
-  return !wide(b) && !noBall(b);
-}
-function total(b) {
-  return b.runs + (wide(b) || noBall(b) ? 1 : 0);
-}
-function summary(e) {
-  return { runs: e.reduce((n, b) => n + total(b), 0), wickets: e.filter((b) => b.kind === "wicket").length, balls: e.filter(legal).length };
-}
-function batting(m, i) {
-  return i === 0 ? m.first : m.first === m.home ? m.away : m.home;
-}
-function inningsDone(s, m, i) {
-  const x = summary(m.innings[i]);
-  return x.balls >= m.overs * 6 || x.wickets >= Math.max(1, s.players.filter((p) => p.team === batting(m, i)).length - 1) || i === 1 && x.runs > summary(m.innings[0]).runs;
-}
-function phase(s, m) {
-  return !m.started ? -1 : !inningsDone(s, m, 0) ? 0 : !inningsDone(s, m, 1) ? 1 : 2;
-}
-function nextPair(events) {
-  const b = events.at(-1);
-  if (!b) return { striker: "", partner: "", bowler: "", freeHit: false };
-  let striker = b.striker, partner = b.partner;
-  if (b.runs % 2) [striker, partner] = [partner, striker];
-  if (b.kind === "wicket") {
-    if (striker === b.out) striker = "";
-    if (partner === b.out) partner = "";
-  }
-  const x = summary(events);
-  if (legal(b) && x.balls % 6 === 0) [striker, partner] = [partner, striker];
-  const freeHit = false;
-  return { striker, partner, bowler: legal(b) && x.balls % 6 === 0 ? "" : b.bowler, freeHit };
-}
-function check(ok, msg) {
-  if (!ok) throw new Error(msg);
-}
-function validateBall(s, m, b) {
-  const i = phase(s, m);
-  check(i === 0 || i === 1, "This innings is already complete.");
-  check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
-  check(["run", "wide", "nb", "bye", "legbye", "wicket"].includes(b.kind), "Invalid delivery.");
-  check(Number.isInteger(b.runs) && b.runs >= 0 && b.runs <= (b.overthrow ? 20 : 6), "Use Overthrow for totals above six (maximum 20).");
-  check(b.overthrow === void 0 || typeof b.overthrow === "boolean", "Invalid overthrow flag.");
-  const events = m.innings[i], pair = nextPair(events), available = s.players.filter((p) => p.team === batting(m, i) && !events.some((e) => e.out === p.id));
-  check(b.striker !== b.partner && available.some((p) => p.id === b.striker) && available.some((p) => p.id === b.partner), "Choose two different available batters.");
-  check(!pair.striker || pair.striker === b.striker, "The striker has changed.");
-  check(!pair.partner || pair.partner === b.partner, "The non-striker has changed.");
-  check(s.players.some((p) => p.id === b.bowler && p.team === batting(m, 1 - i)), "Choose a bowler from the fielding team.");
-  if (pair.bowler) check(pair.bowler === b.bowler, "Keep the same bowler until the over ends.");
-  else if (events.length) check(events.at(-1)?.bowler !== b.bowler, "Choose a different bowler for the new over.");
-  if (b.kind === "wicket") {
-    check(["Bowled", "Caught", "Stumped", "Run out", "Hit wicket"].includes(b.dismissal || ""), "Choose a dismissal.");
-    check(["legal", "wide", "nb"].includes(b.extra || "legal"), "Invalid extra.");
-    check(b.out === b.striker || b.out === b.partner, "Choose the dismissed batter.");
-    if (b.dismissal !== "Run out") {
-      check(b.out === b.striker, "Only the striker can be dismissed this way.");
-      check(b.runs === 0, "Use zero completed runs for this dismissal.");
-      check(!noBall(b), "Only run-outs are supported on the no-ball itself.");
-      if (wide(b)) check(b.dismissal === "Stumped" || b.dismissal === "Hit wicket", "That dismissal is not valid on a wide.");
-    }
-    if (["Caught", "Run out", "Stumped"].includes(b.dismissal)) check(s.players.some((p) => p.id === b.fielder && p.team === batting(m, 1 - i)), "Choose the fielder to award points.");
-  } else check(!b.out && !b.dismissal && !b.fielder && !b.extra, "Invalid delivery fields.");
-}
-var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
-function shuffled(items) {
-  const a = [...items];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296 * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-function standings(s) {
-  return TEAMS.map((team) => {
-    let played = 0, won = 0, tied = 0, runsFor = 0, runsAgainst = 0, ballsFor = 0, ballsAgainst = 0;
-    for (const m of s.matches.filter((m2) => m2.label !== "Final" && (m2.home === team || m2.away === team) && phase(s, m2) === 2)) {
-      played++;
-      const a = summary(m.innings[0]).runs, b = summary(m.innings[1]).runs;
-      if (a === b) tied++;
-      else if (batting(m, a > b ? 0 : 1) === team) won++;
-      for (const i of [0, 1]) {
-        const x = summary(m.innings[i]), bat = batting(m, i), allOut = x.wickets >= Math.max(1, s.players.filter((p) => p.team === bat).length - 1), balls = allOut ? m.overs * 6 : x.balls;
-        if (bat === team) {
-          runsFor += x.runs;
-          ballsFor += balls;
-        } else {
-          runsAgainst += x.runs;
-          ballsAgainst += balls;
-        }
-      }
-    }
-    const nrr = (ballsFor ? runsFor * 6 / ballsFor : 0) - (ballsAgainst ? runsAgainst * 6 / ballsAgainst : 0);
-    return { team, played, won, lost: played - won - tied, points: won * 2 + tied, nrr };
-  }).sort((a, b) => b.points - a.points || (Math.abs(b.nrr - a.nrr) > 1e-9 ? b.nrr - a.nrr : 0) || (s.drawOrder || TEAMS).indexOf(a.team) - (s.drawOrder || TEAMS).indexOf(b.team));
-}
-function syncFinal(s) {
-  const league = s.matches.filter((m) => m.label !== "Final"), final = s.matches.find((m) => m.label === "Final");
-  if (final?.started) return;
-  if (league.length < 3 || !league.every((m) => phase(s, m) === 2)) {
-    s.matches = s.matches.filter((m) => m.label !== "Final");
-    return;
-  }
-  if (!s.drawOrder) s.drawOrder = shuffled([...TEAMS]);
-  const [a, b] = standings(s);
-  if (final) {
-    final.home = a.team;
-    final.away = b.team;
-    final.first = a.team;
-    return;
-  }
-  s.matches.push({ id: crypto.randomUUID(), home: a.team, away: b.team, first: a.team, overs: s.overs, label: "Final", started: false, innings: [[], []] });
-}
-function apply(state, c) {
-  const next = structuredClone(state);
-  const s = next.seasons.find((x) => x.id === c.season);
-  if (c.type === "season") {
-    check(/^\d{4}-\d{2}-\d{2}$/.test(c.date) && (/* @__PURE__ */ new Date(c.date + "T12:00:00Z")).getUTCDay() === 6, "Choose a Saturday.");
-    check(!next.seasons.some((x) => x.date === c.date), "A season already exists for this Saturday.");
-    check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
-    const prev = next.seasons[0];
-    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...prev.points } : { ...defaultPoints }, matches: [] });
-    return next;
-  }
-  check(s, "Season not found.");
-  if (["player", "assign", "remove", "fixtures"].includes(c.type)) s.published = false;
-  if (c.type === "publish") {
-    check(TEAMS.every((t) => s.players.filter((p) => p.team === t).length >= 2), "Select at least two players per squad before publishing.");
-    s.published = true;
-    s.publishedAt = Date.now();
-  } else if (c.type === "player") {
-    check(TEAMS.includes(c.team) && typeof c.name === "string" && c.name.trim().length > 0 && c.name.trim().length <= 50, "Enter a player name (up to 50 characters).");
-    check(!s.matches.some((m) => m.started), "Squads are locked after the first match starts.");
-    check(!s.players.some((p) => p.name.toLowerCase() === c.name.trim().toLowerCase()), "This player is already in the season.");
-    check(s.players.filter((p) => p.team === c.team).length < 11, "Each squad supports up to 11 players.");
-    s.players.push({ id: crypto.randomUUID(), name: c.name.trim(), team: c.team });
-  } else if (c.type === "assign") {
-    check(!s.matches.some((m) => m.started), "Teams are locked after play starts.");
-    check(TEAMS.includes(c.team) || c.team === "unassigned", "Choose a valid team.");
-    check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
-    check(!captains.some((p) => p.id === c.player.id), "Captains stay with their own teams.");
-    check(c.team === "unassigned" || s.players.filter((p) => p.team === c.team && p.id !== c.player.id).length < 11, "A squad can have at most 11 players.");
-    s.players = s.players.filter((p) => p.id !== c.player.id);
-    if (c.team !== "unassigned") s.players.push({ id: c.player.id, name: c.player.name, team: c.team });
-  } else if (c.type === "remove") {
-    check(!s.matches.some((m) => m.started), "Squads are locked after play starts.");
-    check(!captains.some((p) => p.id === c.player), "Captains stay with their own teams.");
-    check(!s.matches.length, "Squads are locked after fixtures are created.");
-    s.players = s.players.filter((p) => p.id !== c.player);
-  } else if (c.type === "fixtures") {
-    check(!s.matches.length, "Fixtures already exist.");
-    for (const team of TEAMS) check(s.players.filter((p) => p.team === team).length >= 2, "Add at least two players to each squad first.");
-    s.drawOrder = shuffled([...TEAMS]);
-    s.matches = shuffled([[TEAMS[0], TEAMS[1]], [TEAMS[1], TEAMS[2]], [TEAMS[2], TEAMS[0]]]).map(([home, away], i) => ({ id: crypto.randomUUID(), home, away, first: home, overs: s.overs, label: `League ${i + 1}`, started: false, innings: [[], []] }));
-  } else if (c.type === "final") {
-    check(!s.matches.some((m) => m.label === "Final"), "Final already exists.");
-    check(s.matches.length >= 3 && s.matches.every((m) => phase(s, m) === 2), "Complete the league matches first.");
-    syncFinal(s);
-  } else if (c.type === "points") {
-    for (const k of Object.keys(defaultPoints)) check(Number.isInteger(c.points[k]) && c.points[k] >= (k === "economyExpensive" ? -100 : 0) && c.points[k] <= 100, "Check the point values. Bonuses must be 0\u2013100; the high-economy penalty may be negative.");
-    check(c.points.economyMinOvers >= 1 && c.points.economyMinOvers <= 10, "Economy qualification must be 1\u201310 overs.");
-    s.points = c.points;
-  } else {
-    const m = s.matches.find((m2) => m2.id === c.match);
-    check(m, "Match not found.");
-    if (c.type === "start") {
-      check(!m.started, "Match has already started.");
-      check(s.matches.slice(0, s.matches.indexOf(m)).every((x) => phase(s, x) === 2), "Play the fixtures in their drawn order.");
-      check(c.first === m.home || c.first === m.away, "Choose the batting team.");
-      check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
-      check(!s.matches.some((o) => o.id !== m.id && phase(s, o) >= 0 && phase(s, o) < 2), "Finish the live match first.");
-      for (const t of [m.home, m.away]) check(s.players.filter((p) => p.team === t).length >= 2, "Each team needs at least two players.");
-      m.first = c.first;
-      m.overs = c.overs;
-      m.started = true;
-      m.pauseBetweenInnings = c.pauseBetweenInnings === true;
-      m.secondInningsStarted = false;
-    } else if (c.type === "next-innings") {
-      check(phase(s, m) === 1 && !m.innings[1].length && !m.secondInningsStarted, "Next innings is not awaiting a start.");
-      m.secondInningsStarted = true;
-    } else if (c.type === "ball") {
-      validateBall(s, m, c.ball);
-      m.innings[phase(s, m)].push(c.ball);
-    } else if (c.type === "dead") {
-      const i = phase(s, m);
-      check(i === 0 || i === 1, "Start a live innings first.");
-      check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
-      (m.deadBalls ??= []).push({ innings: i, afterBall: m.innings[i].length });
-    } else if (c.type === "undo") {
-      check(!s.matches.some((o) => o.id !== m.id && o.started && s.matches.indexOf(o) > s.matches.indexOf(m)), "Cannot undo after the next match has started.");
-      const i = m.innings[1].length ? 1 : 0, d = m.deadBalls?.at(-1);
-      if (d && (d.innings > i || d.innings === i && d.afterBall === m.innings[i].length)) m.deadBalls.pop();
-      else {
-        check(m.innings[i].length, "No deliveries to undo.");
-        m.innings[i].pop();
-      }
-      if (phase(s, m) === 0) m.secondInningsStarted = false;
-    } else throw new Error("Unknown action.");
-  }
-  syncFinal(s);
-  return next;
-}
-
-// server/publication.ts
-function seasonPublished(s) {
-  return s.published === true;
-}
-function visibleTournament(state, viewer) {
-  const privileged = viewer.userId === "committee-alpha" && viewer.committee === "Alpha" || !!viewer.userId && captains.some((p) => p.id === viewer.playerId);
-  return { seasons: state.seasons.map((s, index) => privileged || seasonPublished(s) || index > 0 && s.published === void 0 && s.matches.some((m) => m.started) ? { ...s, publicationHidden: false } : { id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: false, publicationHidden: true, players: [], matches: [] }) };
-}
 
 // server/render/env.ts
 var env = { get COMMITTEE_CODE_HASH() {
@@ -259,57 +33,9 @@ async function renderBackend(req) {
   }
 }
 
-// server/balance.ts
-var attrs = ["batting", "bowling", "fielding", "attitude"];
-function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
-  const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
-  if (selected.length < 6 || selected.length > 33) throw new Error("Select 6 to 33 available players, including the three captains.");
-  if (selected.some((id) => !pool2.some((p) => p.id === id))) throw new Error("A selected player is not in the current ratings pool. Reload the committee room.");
-  const players = selected.map((id) => pool2.find((p) => p.id === id));
-  const means = attrs.map((a) => {
-    const v = pool2.map((p) => p.averages[a]).filter((n) => n !== null);
-    return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 1.5;
-  });
-  const vectors = new Map(players.map((p) => [p.id, attrs.map((a, i) => p.averages[a] ?? means[i])]));
-  const targets = attrs.map((_, i) => players.reduce((s, p) => s + vectors.get(p.id)[i], 0) / 3);
-  const shuffle = (a) => {
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  };
-  const loose = players.filter((p) => !captains.some((c) => c.id === p.id));
-  let best = [], bestLoss = Infinity;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const order = shuffle([...TEAMS]), sizes = Object.fromEntries(TEAMS.map((t) => [t, Math.floor(players.length / 3)]));
-    for (let i = 0; i < players.length % 3; i++) sizes[order[i]]++;
-    const slots = shuffle(TEAMS.flatMap((t) => Array.from({ length: sizes[t] - 1 }, () => t)));
-    const deal = [...captains.map((p) => ({ ...p })), ...shuffle([...loose]).map((p, i) => ({ id: p.id, name: p.name, team: slots[i] }))];
-    const loss = () => {
-      const totals = TEAMS.map((t) => attrs.map((_, i) => deal.filter((p) => p.team === t).reduce((s, p) => s + vectors.get(p.id)[i], 0)));
-      return totals.reduce((sum, v) => sum + v.reduce((s, n, i) => s + ((n - targets[i]) / Math.max(1, targets[i])) ** 2, 0), 0);
-    };
-    let score = loss();
-    for (let step = 0; step < 160; step++) {
-      const i = 3 + Math.floor(random() * (deal.length - 3)), j = 3 + Math.floor(random() * (deal.length - 3));
-      if (deal[i].team === deal[j].team) continue;
-      [deal[i].team, deal[j].team] = [deal[j].team, deal[i].team];
-      const next = loss();
-      if (next <= score) score = next;
-      else [deal[i].team, deal[j].team] = [deal[j].team, deal[i].team];
-    }
-    if (score < bestLoss) {
-      bestLoss = score;
-      best = deal;
-    }
-  }
-  return best;
-}
-
 // server/render/postgres.ts
 import pg from "pg";
-var tables = { tournaments: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", seasons: "id TEXT PRIMARY KEY,data TEXT NOT NULL", members: "id TEXT PRIMARY KEY,name TEXT NOT NULL,player_id TEXT,created_at BIGINT NOT NULL", committee_seats: "name TEXT PRIMARY KEY,user_id TEXT UNIQUE", committee_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,committee_name TEXT,expires BIGINT NOT NULL", access_attempts: "id TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at BIGINT NOT NULL", private_ratings: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", audit_log: "id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,season TEXT,created_at BIGINT NOT NULL", credentials: "user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at BIGINT NOT NULL", member_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires BIGINT NOT NULL", approved_players: "id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL", player_registrations: "player_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL" };
+var tables = { push_settings: "id TEXT PRIMARY KEY,data TEXT NOT NULL", push_subscriptions: "endpoint TEXT PRIMARY KEY,user_id TEXT NOT NULL,player_id TEXT NOT NULL,data TEXT NOT NULL,updated_at BIGINT NOT NULL", push_deliveries: "id TEXT PRIMARY KEY,created_at BIGINT NOT NULL", tournaments: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", seasons: "id TEXT PRIMARY KEY,data TEXT NOT NULL", members: "id TEXT PRIMARY KEY,name TEXT NOT NULL,player_id TEXT,created_at BIGINT NOT NULL", committee_seats: "name TEXT PRIMARY KEY,user_id TEXT UNIQUE", committee_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,committee_name TEXT,expires BIGINT NOT NULL", access_attempts: "id TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at BIGINT NOT NULL", private_ratings: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", audit_log: "id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,season TEXT,created_at BIGINT NOT NULL", credentials: "user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at BIGINT NOT NULL", member_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires BIGINT NOT NULL", approved_players: "id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL", player_registrations: "player_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL" };
 var pool;
 var ready;
 function getPool() {
@@ -434,11 +160,6 @@ async function importSnapshot(snapshot) {
   }
 }
 
-// lib/scoring-access.ts
-function scoringAllowed(userId, name, _match) {
-  return userId === "committee-alpha" && name === "Alpha";
-}
-
 // server/access.ts
 var AccessError = class extends Error {
   constructor(message, status = 403) {
@@ -508,6 +229,402 @@ async function codeMatches(code) {
 function failure(e) {
   console.error(e instanceof Error ? e.message : "Request failed");
   return Response.json({ error: e instanceof Error ? e.message : "Request failed." }, { status: e instanceof AccessError ? e.status : 400, headers: { "Cache-Control": "no-store" } });
+}
+
+// lib/cricket.ts
+var TEAMS = ["White", "Black", "Blue"];
+var defaultPoints = { run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
+function saturday() {
+  const d = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  d.setDate(d.getDate() + (6 - d.getDay() + 7) % 7);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function wide(b) {
+  return b.kind === "wide" || b.kind === "wicket" && b.extra === "wide";
+}
+function noBall(b) {
+  return b.kind === "nb" || b.kind === "wicket" && b.extra === "nb";
+}
+function legal(b) {
+  return !wide(b) && !noBall(b);
+}
+function total(b) {
+  return b.runs + (wide(b) || noBall(b) ? 1 : 0);
+}
+function summary(e) {
+  return { runs: e.reduce((n, b) => n + total(b), 0), wickets: e.filter((b) => b.kind === "wicket").length, balls: e.filter(legal).length };
+}
+function batting(m, i) {
+  return i === 0 ? m.first : m.first === m.home ? m.away : m.home;
+}
+function inningsDone(s, m, i) {
+  const x = summary(m.innings[i]);
+  return x.balls >= m.overs * 6 || x.wickets >= Math.max(1, s.players.filter((p) => p.team === batting(m, i)).length - 1) || i === 1 && x.runs > summary(m.innings[0]).runs;
+}
+function phase(s, m) {
+  return !m.started ? -1 : !inningsDone(s, m, 0) ? 0 : !inningsDone(s, m, 1) ? 1 : 2;
+}
+function nextPair(events) {
+  const b = events.at(-1);
+  if (!b) return { striker: "", partner: "", bowler: "", freeHit: false };
+  let striker = b.striker, partner = b.partner;
+  if (b.runs % 2) [striker, partner] = [partner, striker];
+  if (b.kind === "wicket") {
+    if (striker === b.out) striker = "";
+    if (partner === b.out) partner = "";
+  }
+  const x = summary(events);
+  if (legal(b) && x.balls % 6 === 0) [striker, partner] = [partner, striker];
+  const freeHit = false;
+  return { striker, partner, bowler: legal(b) && x.balls % 6 === 0 ? "" : b.bowler, freeHit };
+}
+function check(ok, msg) {
+  if (!ok) throw new Error(msg);
+}
+function validateBall(s, m, b) {
+  const i = phase(s, m);
+  check(i === 0 || i === 1, "This innings is already complete.");
+  check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
+  check(["run", "wide", "nb", "bye", "legbye", "wicket"].includes(b.kind), "Invalid delivery.");
+  check(Number.isInteger(b.runs) && b.runs >= 0 && b.runs <= (b.overthrow ? 20 : 6), "Use Overthrow for totals above six (maximum 20).");
+  check(b.overthrow === void 0 || typeof b.overthrow === "boolean", "Invalid overthrow flag.");
+  const events = m.innings[i], pair = nextPair(events), available = s.players.filter((p) => p.team === batting(m, i) && !events.some((e) => e.out === p.id));
+  check(b.striker !== b.partner && available.some((p) => p.id === b.striker) && available.some((p) => p.id === b.partner), "Choose two different available batters.");
+  check(!pair.striker || pair.striker === b.striker, "The striker has changed.");
+  check(!pair.partner || pair.partner === b.partner, "The non-striker has changed.");
+  check(s.players.some((p) => p.id === b.bowler && p.team === batting(m, 1 - i)), "Choose a bowler from the fielding team.");
+  if (pair.bowler) check(pair.bowler === b.bowler, "Keep the same bowler until the over ends.");
+  else if (events.length) check(events.at(-1)?.bowler !== b.bowler, "Choose a different bowler for the new over.");
+  if (b.kind === "wicket") {
+    check(["Bowled", "Caught", "Stumped", "Run out", "Hit wicket"].includes(b.dismissal || ""), "Choose a dismissal.");
+    check(["legal", "wide", "nb"].includes(b.extra || "legal"), "Invalid extra.");
+    check(b.out === b.striker || b.out === b.partner, "Choose the dismissed batter.");
+    if (b.dismissal !== "Run out") {
+      check(b.out === b.striker, "Only the striker can be dismissed this way.");
+      check(b.runs === 0, "Use zero completed runs for this dismissal.");
+      check(!noBall(b), "Only run-outs are supported on the no-ball itself.");
+      if (wide(b)) check(b.dismissal === "Stumped" || b.dismissal === "Hit wicket", "That dismissal is not valid on a wide.");
+    }
+    if (["Caught", "Run out", "Stumped"].includes(b.dismissal)) check(s.players.some((p) => p.id === b.fielder && p.team === batting(m, 1 - i)), "Choose the fielder to award points.");
+  } else check(!b.out && !b.dismissal && !b.fielder && !b.extra, "Invalid delivery fields.");
+}
+var TEAM_INFO = { White: { name: "Frost Dragon", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimera", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reaper", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "/teams/azure-reaper-refined.webp", color: "#6397ff" } };
+var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
+function shuffled(items) {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296 * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function standings(s) {
+  return TEAMS.map((team) => {
+    let played = 0, won = 0, tied = 0, runsFor = 0, runsAgainst = 0, ballsFor = 0, ballsAgainst = 0;
+    for (const m of s.matches.filter((m2) => m2.label !== "Final" && (m2.home === team || m2.away === team) && phase(s, m2) === 2)) {
+      played++;
+      const a = summary(m.innings[0]).runs, b = summary(m.innings[1]).runs;
+      if (a === b) tied++;
+      else if (batting(m, a > b ? 0 : 1) === team) won++;
+      for (const i of [0, 1]) {
+        const x = summary(m.innings[i]), bat = batting(m, i), allOut = x.wickets >= Math.max(1, s.players.filter((p) => p.team === bat).length - 1), balls = allOut ? m.overs * 6 : x.balls;
+        if (bat === team) {
+          runsFor += x.runs;
+          ballsFor += balls;
+        } else {
+          runsAgainst += x.runs;
+          ballsAgainst += balls;
+        }
+      }
+    }
+    const nrr = (ballsFor ? runsFor * 6 / ballsFor : 0) - (ballsAgainst ? runsAgainst * 6 / ballsAgainst : 0);
+    return { team, played, won, lost: played - won - tied, points: won * 2 + tied, nrr };
+  }).sort((a, b) => b.points - a.points || (Math.abs(b.nrr - a.nrr) > 1e-9 ? b.nrr - a.nrr : 0) || (s.drawOrder || TEAMS).indexOf(a.team) - (s.drawOrder || TEAMS).indexOf(b.team));
+}
+function syncFinal(s) {
+  const league = s.matches.filter((m) => m.label !== "Final"), final = s.matches.find((m) => m.label === "Final");
+  if (final?.started) return;
+  if (league.length < 3 || !league.every((m) => phase(s, m) === 2)) {
+    s.matches = s.matches.filter((m) => m.label !== "Final");
+    return;
+  }
+  if (!s.drawOrder) s.drawOrder = shuffled([...TEAMS]);
+  const [a, b] = standings(s);
+  if (final) {
+    final.home = a.team;
+    final.away = b.team;
+    final.first = a.team;
+    return;
+  }
+  s.matches.push({ id: crypto.randomUUID(), home: a.team, away: b.team, first: a.team, overs: s.overs, label: "Final", started: false, innings: [[], []] });
+}
+function apply(state, c) {
+  const next = structuredClone(state);
+  const s = next.seasons.find((x) => x.id === c.season);
+  if (c.type === "season") {
+    check(/^\d{4}-\d{2}-\d{2}$/.test(c.date) && (/* @__PURE__ */ new Date(c.date + "T12:00:00Z")).getUTCDay() === 6, "Choose a Saturday.");
+    check(!next.seasons.some((x) => x.date === c.date), "A season already exists for this Saturday.");
+    check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
+    const prev = next.seasons[0];
+    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...prev.points } : { ...defaultPoints }, matches: [] });
+    return next;
+  }
+  check(s, "Season not found.");
+  if (["player", "assign", "remove"].includes(c.type)) {
+    s.published = false;
+    s.squadsPublished = false;
+    s.fixturesPublished = false;
+  }
+  if (c.type === "fixtures") {
+    s.fixturesPublished = false;
+  }
+  if (c.type === "publish-fixtures") {
+    check(s.squadsPublished === true || s.published === true, "Publish squads first.");
+    check(s.matches.length >= 3, "Draw the fixtures first.");
+    s.fixturesPublished = true;
+    s.fixturesPublishedAt = Date.now();
+  } else if (c.type === "publish-squads" || c.type === "publish") {
+    check(TEAMS.every((t) => s.players.filter((p) => p.team === t).length >= 2), "Select at least two players per squad before publishing.");
+    s.squadsPublished = true;
+    s.squadsPublishedAt = Date.now();
+    if (c.type === "publish") {
+      s.published = true;
+      s.publishedAt = Date.now();
+      s.fixturesPublished = true;
+    }
+  } else if (c.type === "player") {
+    check(TEAMS.includes(c.team) && typeof c.name === "string" && c.name.trim().length > 0 && c.name.trim().length <= 50, "Enter a player name (up to 50 characters).");
+    check(!s.matches.some((m) => m.started), "Squads are locked after the first match starts.");
+    check(!s.players.some((p) => p.name.toLowerCase() === c.name.trim().toLowerCase()), "This player is already in the season.");
+    check(s.players.filter((p) => p.team === c.team).length < 11, "Each squad supports up to 11 players.");
+    s.players.push({ id: crypto.randomUUID(), name: c.name.trim(), team: c.team });
+  } else if (c.type === "assign") {
+    check(!s.matches.some((m) => m.started), "Teams are locked after play starts.");
+    check(TEAMS.includes(c.team) || c.team === "unassigned", "Choose a valid team.");
+    check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
+    check(!captains.some((p) => p.id === c.player.id), "Captains stay with their own teams.");
+    check(c.team === "unassigned" || s.players.filter((p) => p.team === c.team && p.id !== c.player.id).length < 11, "A squad can have at most 11 players.");
+    s.players = s.players.filter((p) => p.id !== c.player.id);
+    if (c.team !== "unassigned") s.players.push({ id: c.player.id, name: c.player.name, team: c.team });
+  } else if (c.type === "remove") {
+    check(!s.matches.some((m) => m.started), "Squads are locked after play starts.");
+    check(!captains.some((p) => p.id === c.player), "Captains stay with their own teams.");
+    check(!s.matches.length, "Squads are locked after fixtures are created.");
+    s.players = s.players.filter((p) => p.id !== c.player);
+  } else if (c.type === "fixtures") {
+    check(!s.matches.length, "Fixtures already exist.");
+    for (const team of TEAMS) check(s.players.filter((p) => p.team === team).length >= 2, "Add at least two players to each squad first.");
+    s.drawOrder = shuffled([...TEAMS]);
+    s.matches = shuffled([[TEAMS[0], TEAMS[1]], [TEAMS[1], TEAMS[2]], [TEAMS[2], TEAMS[0]]]).map(([home, away], i) => ({ id: crypto.randomUUID(), home, away, first: home, overs: s.overs, label: `League ${i + 1}`, started: false, innings: [[], []] }));
+  } else if (c.type === "final") {
+    check(!s.matches.some((m) => m.label === "Final"), "Final already exists.");
+    check(s.matches.length >= 3 && s.matches.every((m) => phase(s, m) === 2), "Complete the league matches first.");
+    syncFinal(s);
+  } else if (c.type === "points") {
+    for (const k of Object.keys(defaultPoints)) check(Number.isInteger(c.points[k]) && c.points[k] >= (k === "economyExpensive" ? -100 : 0) && c.points[k] <= 100, "Check the point values. Bonuses must be 0\u2013100; the high-economy penalty may be negative.");
+    check(c.points.economyMinOvers >= 1 && c.points.economyMinOvers <= 10, "Economy qualification must be 1\u201310 overs.");
+    s.points = c.points;
+  } else {
+    const m = s.matches.find((m2) => m2.id === c.match);
+    check(m, "Match not found.");
+    if (c.type === "start") {
+      check(!m.started, "Match has already started.");
+      check(s.matches.slice(0, s.matches.indexOf(m)).every((x) => phase(s, x) === 2), "Play the fixtures in their drawn order.");
+      check(c.first === m.home || c.first === m.away, "Choose the batting team.");
+      check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
+      check(!s.matches.some((o) => o.id !== m.id && phase(s, o) >= 0 && phase(s, o) < 2), "Finish the live match first.");
+      for (const t of [m.home, m.away]) check(s.players.filter((p) => p.team === t).length >= 2, "Each team needs at least two players.");
+      m.first = c.first;
+      m.overs = c.overs;
+      m.started = true;
+      m.pauseBetweenInnings = c.pauseBetweenInnings === true;
+      m.secondInningsStarted = false;
+    } else if (c.type === "next-innings") {
+      check(phase(s, m) === 1 && !m.innings[1].length && !m.secondInningsStarted, "Next innings is not awaiting a start.");
+      m.secondInningsStarted = true;
+    } else if (c.type === "ball") {
+      validateBall(s, m, c.ball);
+      m.innings[phase(s, m)].push(c.ball);
+    } else if (c.type === "dead") {
+      const i = phase(s, m);
+      check(i === 0 || i === 1, "Start a live innings first.");
+      check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
+      (m.deadBalls ??= []).push({ innings: i, afterBall: m.innings[i].length });
+    } else if (c.type === "undo") {
+      check(!s.matches.some((o) => o.id !== m.id && o.started && s.matches.indexOf(o) > s.matches.indexOf(m)), "Cannot undo after the next match has started.");
+      const i = m.innings[1].length ? 1 : 0, d = m.deadBalls?.at(-1);
+      if (d && (d.innings > i || d.innings === i && d.afterBall === m.innings[i].length)) m.deadBalls.pop();
+      else {
+        check(m.innings[i].length, "No deliveries to undo.");
+        m.innings[i].pop();
+      }
+      if (phase(s, m) === 0) m.secondInningsStarted = false;
+    } else throw new Error("Unknown action.");
+  }
+  syncFinal(s);
+  return next;
+}
+
+// server/render/push.ts
+var moduleName = "web-push";
+async function provider() {
+  const m = await import(moduleName);
+  return m.default || m;
+}
+async function keys() {
+  const db = database();
+  let row = await db.prepare("SELECT data FROM push_settings WHERE id=?").bind("vapid").first();
+  if (!row) {
+    const wp = await provider();
+    await db.prepare("INSERT OR IGNORE INTO push_settings (id,data) VALUES (?,?)").bind("vapid", JSON.stringify(wp.generateVAPIDKeys())).run();
+    row = await db.prepare("SELECT data FROM push_settings WHERE id=?").bind("vapid").first();
+  }
+  return JSON.parse(row.data);
+}
+async function pushKey() {
+  return (await keys()).publicKey;
+}
+async function saveSubscription(user, player, sub) {
+  let url;
+  try {
+    url = new URL(sub?.endpoint);
+  } catch {
+    throw Error("Invalid push endpoint.");
+  }
+  const h = url.hostname;
+  if (url.protocol !== "https:" || url.port || !(h === "fcm.googleapis.com" || h === "updates.push.services.mozilla.com" || h.endsWith(".push.services.mozilla.com") || h === "web.push.apple.com" || h.endsWith(".push.apple.com") || h.endsWith(".notify.windows.com"))) throw Error("Unsupported push provider.");
+  if (typeof sub.keys?.p256dh !== "string" || typeof sub.keys?.auth !== "string" || sub.endpoint.length > 2e3 || sub.keys.p256dh.length > 200 || sub.keys.auth.length > 100) throw Error("Invalid push subscription.");
+  await database().prepare("INSERT INTO push_subscriptions (endpoint,user_id,player_id,data,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,player_id=excluded.player_id,data=excluded.data,updated_at=excluded.updated_at").bind(sub.endpoint, user, player, JSON.stringify({ endpoint: sub.endpoint, keys: sub.keys }), Date.now()).run();
+}
+async function removeSubscription(user, endpoint) {
+  await database().prepare("DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?").bind(endpoint, user).run();
+}
+async function notifySquads(s) {
+  const db = database(), wp = await provider(), vapid = await keys(), rows = await db.prepare("SELECT endpoint,player_id,data FROM push_subscriptions").all();
+  let sent = 0, failed = 0;
+  const send = async (row) => {
+    const player = s.players.find((p) => p.id === row.player_id);
+    if (!player) return;
+    const tag = `squad-${s.id}-${player.id}-${s.squadsPublishedAt || s.publishedAt || 0}`;
+    const id = tag + ":" + row.endpoint;
+    try {
+      const exists = await db.prepare("SELECT id FROM push_deliveries WHERE id=?").bind(id).first();
+      if (exists) return;
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: `Your squad: ${TEAM_INFO[player.team].name}`, body: `${player.name}, you're with ${TEAM_INFO[player.team].name} for Season ${s.number}. Open your pavilion and meet your squad.`, tag, url: "/", icon: TEAM_INFO[player.team].crest }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
+      await db.prepare("INSERT OR IGNORE INTO push_deliveries (id,created_at) VALUES (?,?)").bind(id, Date.now()).run();
+      sent++;
+    } catch (e) {
+      failed++;
+      if (e.statusCode === 404 || e.statusCode === 410) await db.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
+    }
+  };
+  for (let i = 0; i < rows.results.length; i += 4) await Promise.all(rows.results.slice(i, i + 4).map(send));
+  return { sent, failed };
+}
+
+// app/api/push/route.ts
+var headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
+async function GET(req) {
+  const remote = await renderBackend(req);
+  if (remote) return remote;
+  try {
+    return Response.json({ publicKey: await pushKey() }, { headers });
+  } catch (e) {
+    return failure(e);
+  }
+}
+async function POST(req) {
+  const remote = await renderBackend(req);
+  if (remote) return remote;
+  try {
+    sameOrigin(req);
+    const a = await actor(req);
+    if (!a.user || !a.member?.player_id) throw new AccessError("Log in with your player account to enable squad alerts.", 401);
+    await rateLimit("push:" + a.user.userId, 60);
+    const raw = await req.text();
+    if (raw.length > 5e3) throw new AccessError("Subscription too large.", 413);
+    const body = JSON.parse(raw);
+    if (body.type === "unsubscribe") await removeSubscription(a.user.userId, String(body.endpoint));
+    else await saveSubscription(a.user.userId, a.member.player_id, body.subscription);
+    return Response.json({ ok: true }, { headers });
+  } catch (e) {
+    return failure(e);
+  }
+}
+
+// app/api/tournament/route.ts
+var route_exports2 = {};
+__export(route_exports2, {
+  GET: () => GET2,
+  POST: () => POST2,
+  dynamic: () => dynamic
+});
+
+// server/publication.ts
+function seasonPublished(s) {
+  return s.squadsPublished ?? s.published === true;
+}
+function visibleTournament(state, viewer) {
+  const privileged = viewer.userId === "committee-alpha" && viewer.committee === "Alpha" || !!viewer.userId && captains.some((p) => p.id === viewer.playerId);
+  return { seasons: state.seasons.map((s, index) => {
+    const historical = index > 0 && s.published === void 0 && s.squadsPublished === void 0 && s.matches.some((m) => m.started);
+    const squads = privileged || historical || seasonPublished(s);
+    const fixtures = squads && (privileged || historical || (s.fixturesPublished ?? s.published === true));
+    return { id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
+  }) };
+}
+
+// server/balance.ts
+var attrs = ["batting", "bowling", "fielding", "attitude"];
+function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
+  const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
+  if (selected.length < 6 || selected.length > 33) throw new Error("Select 6 to 33 available players, including the three captains.");
+  if (selected.some((id) => !pool2.some((p) => p.id === id))) throw new Error("A selected player is not in the current ratings pool. Reload the committee room.");
+  const players = selected.map((id) => pool2.find((p) => p.id === id));
+  const means = attrs.map((a) => {
+    const v = pool2.map((p) => p.averages[a]).filter((n) => n !== null);
+    return v.length ? v.reduce((x, y) => x + y, 0) / v.length : 1.5;
+  });
+  const vectors = new Map(players.map((p) => [p.id, attrs.map((a, i) => p.averages[a] ?? means[i])]));
+  const targets = attrs.map((_, i) => players.reduce((s, p) => s + vectors.get(p.id)[i], 0) / 3);
+  const shuffle = (a) => {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const loose = players.filter((p) => !captains.some((c) => c.id === p.id));
+  let best = [], bestLoss = Infinity;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const order = shuffle([...TEAMS]), sizes = Object.fromEntries(TEAMS.map((t) => [t, Math.floor(players.length / 3)]));
+    for (let i = 0; i < players.length % 3; i++) sizes[order[i]]++;
+    const slots = shuffle(TEAMS.flatMap((t) => Array.from({ length: sizes[t] - 1 }, () => t)));
+    const deal = [...captains.map((p) => ({ ...p })), ...shuffle([...loose]).map((p, i) => ({ id: p.id, name: p.name, team: slots[i] }))];
+    const loss = () => {
+      const totals = TEAMS.map((t) => attrs.map((_, i) => deal.filter((p) => p.team === t).reduce((s, p) => s + vectors.get(p.id)[i], 0)));
+      return totals.reduce((sum, v) => sum + v.reduce((s, n, i) => s + ((n - targets[i]) / Math.max(1, targets[i])) ** 2, 0), 0);
+    };
+    let score = loss();
+    for (let step = 0; step < 160; step++) {
+      const i = 3 + Math.floor(random() * (deal.length - 3)), j = 3 + Math.floor(random() * (deal.length - 3));
+      if (deal[i].team === deal[j].team) continue;
+      [deal[i].team, deal[j].team] = [deal[j].team, deal[i].team];
+      const next = loss();
+      if (next <= score) score = next;
+      else [deal[i].team, deal[j].team] = [deal[j].team, deal[i].team];
+    }
+    if (score < bestLoss) {
+      bestLoss = score;
+      best = deal;
+    }
+  }
+  return best;
+}
+
+// lib/scoring-access.ts
+function scoringAllowed(userId, name, _match) {
+  return userId === "committee-alpha" && name === "Alpha";
 }
 
 // server/ratings-source.json
@@ -596,7 +713,7 @@ async function readRatings() {
 
 // app/api/tournament/route.ts
 var dynamic = "force-dynamic";
-var headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
+var headers2 = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 async function read() {
   const db = database();
   const [meta, records] = await db.batch([db.prepare("SELECT revision FROM tournaments WHERE id = ?").bind("royal-rangers"), db.prepare("SELECT data FROM seasons")]);
@@ -607,19 +724,19 @@ async function initialize2() {
   await db.prepare("INSERT OR IGNORE INTO tournaments (id, data, revision) VALUES (?, ?, 0)").bind("royal-rangers", "{}").run();
   await db.prepare("INSERT OR IGNORE INTO seasons (id, data) VALUES (?, ?)").bind("rr-season-3", JSON.stringify({ id: "rr-season-3", number: 3, date: saturday(), overs: 10, players: captains, points: defaultPoints, matches: [] })).run();
 }
-async function GET(req) {
+async function GET2(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
     await initialize2();
     const snapshot = await read(), a = await actor(req);
-    return Response.json({ ...snapshot, state: visibleTournament(snapshot.state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }) }, { headers });
+    return Response.json({ ...snapshot, state: visibleTournament(snapshot.state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }) }, { headers: headers2 });
   } catch (e) {
     console.error(e);
-    return Response.json({ error: "Unable to load scores. Please retry." }, { status: 503, headers });
+    return Response.json({ error: "Unable to load scores. Please retry." }, { status: 503, headers: headers2 });
   }
 }
-async function POST(req) {
+async function POST2(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
@@ -655,27 +772,30 @@ async function POST(req) {
       state = structuredClone(current.state);
       state.seasons.find((s) => s.id === command.season).players = players;
       state.seasons.find((s) => s.id === command.season).published = false;
+      state.seasons.find((s) => s.id === command.season).squadsPublished = false;
+      state.seasons.find((s) => s.id === command.season).fixturesPublished = false;
     } else state = apply(current.state, command);
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
     const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
     if (!saved[1].meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
     await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee, command.type, changed.id, Date.now()).run();
-    return Response.json({ state, revision: revision + 1 }, { headers });
+    const pushDelivery = ["publish-squads", "publish"].includes(command.type) ? await notifySquads(changed).catch(() => ({ sent: 0, failed: 1 })) : void 0;
+    return Response.json({ state, revision: revision + 1, pushDelivery }, { headers: headers2 });
   } catch (e) {
     return failure(e);
   }
 }
 
 // app/api/member/route.ts
-var route_exports2 = {};
-__export(route_exports2, {
-  GET: () => GET2,
-  POST: () => POST2,
+var route_exports3 = {};
+__export(route_exports3, {
+  GET: () => GET3,
+  POST: () => POST3,
   dynamic: () => dynamic2
 });
 var dynamic2 = "force-dynamic";
-var response = (data, headers2 = {}) => {
-  const h = new Headers(headers2);
+var response = (data, headers3 = {}) => {
+  const h = new Headers(headers3);
   h.set("Cache-Control", "no-store");
   return Response.json(data, { headers: h });
 };
@@ -687,7 +807,7 @@ async function loginSession(req, userId) {
   h.append("Set-Cookie", sessionCookie(req, "rr_committee", "", 0));
   return response({ ok: true }, h);
 }
-async function GET2(req) {
+async function GET3(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
@@ -698,7 +818,7 @@ async function GET2(req) {
     return failure(e);
   }
 }
-async function POST2(req) {
+async function POST3(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
@@ -754,14 +874,14 @@ async function POST2(req) {
 }
 
 // app/api/committee/route.ts
-var route_exports3 = {};
-__export(route_exports3, {
-  GET: () => GET3,
-  POST: () => POST3,
+var route_exports4 = {};
+__export(route_exports4, {
+  GET: () => GET4,
+  POST: () => POST4,
   dynamic: () => dynamic3
 });
 var dynamic3 = "force-dynamic";
-async function GET3(req) {
+async function GET4(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
@@ -774,7 +894,7 @@ async function GET3(req) {
     return failure(e);
   }
 }
-async function POST3(req) {
+async function POST4(req) {
   const remote = await renderBackend(req);
   if (remote) return remote;
   try {
@@ -821,7 +941,7 @@ async function handleRoyalRangers(req) {
       return Response.json({ error: e.message }, { status: 409 });
     }
   }
-  const route = { tournament: route_exports, member: route_exports2, committee: route_exports3 }[path || ""];
+  const route = { tournament: route_exports2, member: route_exports3, committee: route_exports4, push: route_exports }[path || ""];
   if (!route) return new Response(null, { status: 404 });
   const handler = route[req.method];
   if (!handler) return new Response(null, { status: 405 });
