@@ -608,6 +608,28 @@ async function notifyAttendance(now = Date.now()) {
   }
   return { sent, failed, eligible };
 }
+async function notifyClubUpdateOnce() {
+  const db = database(), id = "club-update-emblem-2026-09-16";
+  const existing = await db.prepare("SELECT data FROM push_settings WHERE id=?").bind(id).first();
+  if (existing) return JSON.parse(existing.data);
+  const claim = await db.prepare("INSERT OR IGNORE INTO push_settings (id,data) VALUES (?,?)").bind(id, JSON.stringify({ status: "sending", sent: 0, failed: 0 })).run();
+  if (!claim.meta.changes) return { status: "sending", sent: 0, failed: 0 };
+  const rows = await db.prepare("SELECT endpoint,data FROM push_subscriptions").all();
+  const wp = await provider(), vapid = await keys();
+  let sent = 0, failed = 0;
+  for (const row of rows.results) {
+    try {
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: "A fresh look for match day", body: "Your Royal Rangers pavilion has a new crest. Remove the old bookmark or home-screen shortcut, then add it again. Tap for the steps. See you at the ground!", tag: id, url: "/?club-update=emblem-4", icon: "/icons/royal-icon-192.png?v=club-emblem-4" }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
+      sent++;
+    } catch (e) {
+      failed++;
+      if (e.statusCode === 404 || e.statusCode === 410) await db.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
+    }
+  }
+  const result = { status: "complete", sent, failed, subscribed: rows.results.length };
+  await db.prepare("UPDATE push_settings SET data=? WHERE id=?").bind(JSON.stringify(result), id).run();
+  return result;
+}
 
 // server/render/attendance-worker.ts
 var timer;
@@ -620,6 +642,7 @@ function startAttendanceReminders() {
     running = true;
     try {
       if (!await migrationStatus()) return;
+      attendanceWorkerStatus.clubUpdate = await notifyClubUpdateOnce();
       const reset = await resetAttendanceOnce("rr-season-3", "attendance-reset-2026-09-16-v1");
       attendanceWorkerStatus.resetCount = reset.count;
       Object.assign(attendanceWorkerStatus, await notifyAttendance(), { lastRun: Date.now(), error: false });
