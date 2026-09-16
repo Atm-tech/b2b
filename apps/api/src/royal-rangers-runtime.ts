@@ -687,7 +687,7 @@ async function POST2(req) {
       await rateLimit("committee-login:" + (req.headers.get("cf-connecting-ip") || "local"), 30);
       if (c.username?.trim().toLowerCase() !== "alpha" || typeof c.password !== "string" || c.password.length > 128 || !await codeMatches(c.password)) throw new AccessError("Incorrect committee username or password.", 401);
       const userId = "committee-alpha", memberToken = crypto.randomUUID() + crypto.randomUUID(), committeeToken = crypto.randomUUID() + crypto.randomUUID();
-      await db.batch([db.prepare("INSERT OR IGNORE INTO members (id,name,created_at) VALUES (?,?,?)").bind(userId, "Alpha", Date.now()), db.prepare("INSERT INTO member_sessions (token,user_id,expires) VALUES (?,?,?)").bind(await digest(memberToken), userId, Date.now() + 432e5), db.prepare("INSERT INTO committee_sessions (token,user_id,committee_name,expires) VALUES (?,?,?,?)").bind(await digest(committeeToken), userId, "Alpha", Date.now() + 432e5)]);
+      await db.batch([db.prepare("INSERT OR IGNORE INTO members (id,name,created_at) VALUES (?,?,?)").bind(userId, "Alpha", Date.now()), db.prepare("DELETE FROM committee_sessions WHERE user_id=?").bind(userId), db.prepare("DELETE FROM member_sessions WHERE user_id=?").bind(userId), db.prepare("INSERT INTO member_sessions (token,user_id,expires) VALUES (?,?,?)").bind(await digest(memberToken), userId, Date.now() + 432e5), db.prepare("INSERT INTO committee_sessions (token,user_id,committee_name,expires) VALUES (?,?,?,?)").bind(await digest(committeeToken), userId, "Alpha", Date.now() + 432e5)]);
       const h = new Headers();
       h.append("Set-Cookie", sessionCookie(req, "rr_member", memberToken, 43200));
       h.append("Set-Cookie", sessionCookie(req, "rr_committee", committeeToken, 43200));
