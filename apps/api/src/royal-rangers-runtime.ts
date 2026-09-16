@@ -623,7 +623,7 @@ async function committee(req) {
 }
 async function codeMatches(code) {
   const value = env.COMMITTEE_CODE_HASH;
-  if (!value) throw new AccessError("Pavilion access is not configured yet.", 503);
+  if (!value) throw new AccessError("Council access is not configured yet.", 503);
   const [salt, expected] = value.split(":");
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveBits"]);
   const bytes = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 1e5, hash: "SHA-256" }, key, 256);
@@ -694,7 +694,7 @@ var attrs = ["batting", "bowling", "fielding", "attitude"];
 function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
   const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
   if (selected.length < 6 || selected.length > 33) throw new Error("Select 6 to 33 available players, including the three captains.");
-  if (selected.some((id) => !pool2.some((p) => p.id === id))) throw new Error("A selected player is not in the current ratings pool. Reload the committee room.");
+  if (selected.some((id) => !pool2.some((p) => p.id === id))) throw new Error("A selected player is not in the current ratings pool. Reload the Cricket Council.");
   const players = selected.map((id) => pool2.find((p) => p.id === id));
   const means = attrs.map((a) => {
     const v = pool2.map((p) => p.averages[a]).filter((n) => n !== null);
@@ -772,7 +772,7 @@ async function addApprovedPlayer(name) {
 async function registerPlayer(playerId, username, password) {
   if (typeof username !== "string" || !/^[-a-z0-9_]{3,30}$/.test(username.trim().toLowerCase())) throw new Error("Use a username of 3-30 letters, numbers, underscores or hyphens.");
   const login = username.trim().toLowerCase();
-  if (login === "alpha") throw new Error("Alpha is reserved for committee access.");
+  if (login === "alpha") throw new Error("Alpha is reserved for Cricket Council access.");
   if (typeof password !== "string" || password.length < 10 || password.length > 128) throw new Error("Choose a password of 10-128 characters.");
   const players = await approvedPlayers(), player = players.find((p) => p.id === playerId);
   if (!player) throw new AccessError("Select your name from the approved player list.");
@@ -790,7 +790,7 @@ async function unregisterPlayer(playerId, expectedUserId) {
   const player = (await approvedPlayers()).find((p) => p.id === playerId);
   if (!player) throw new AccessError("Approved player not found.", 404);
   if (!player.user_id || player.user_id !== expectedUserId) throw new AccessError("Registration changed. Reload before resetting.", 409);
-  if (player.user_id === "committee-alpha") throw new AccessError("Committee access cannot be reset here.");
+  if (player.user_id === "committee-alpha") throw new AccessError("Cricket Council access cannot be reset here.");
   const db = database(), userId = player.user_id;
   await db.batch([
     db.prepare("DELETE FROM member_sessions WHERE user_id=?").bind(userId),
@@ -911,7 +911,7 @@ async function POST2(req) {
       if (season.matches.some((m) => m.started)) throw new AccessError("Squads are locked after play starts.");
       if (!Array.isArray(command.playerIds) || command.playerIds.length > 33 || command.playerIds.some((id) => typeof id !== "string")) throw new Error("Choose the available players.");
       const ratings = await readRatings();
-      if (command.ratingsRevision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the committee room before balancing." }, { status: 409 });
+      if (command.ratingsRevision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the Cricket Council before balancing." }, { status: 409 });
       if (season.availabilityClosed || season.squadsPublishedAt || season.publishedAt || season.squadsPublished || season.published) throw new Error("Squads have been published. Make replacements manually.");
       if (command.playerIds.some((id) => season.availability?.[id] !== "available")) throw new Error("Only confirmed available players can be balanced. Reload availability before selecting.");
       const players = balancedSquads(ratings.players, command.playerIds);
@@ -986,7 +986,7 @@ async function POST3(req) {
     if (c.type === "signup" || c.type === "login") {
       const username = c.username?.trim().toLowerCase();
       if (!username || !/^[-a-z0-9_]{3,30}$/.test(username)) throw new Error("Enter a valid username.");
-      if (username === "alpha") throw new Error("Use Pavilion access for Alpha.");
+      if (username === "alpha") throw new Error("Use Council access for Alpha.");
       if (typeof c.password !== "string" || !c.password || c.password.length > 128) throw new Error("Enter your password.");
       await rateLimit("login:" + username, 10);
       await rateLimit("auth-ip:" + (req.headers.get("cf-connecting-ip") || "local"), 100);
@@ -1057,7 +1057,7 @@ async function POST4(req) {
     }
     if (!ATTRIBUTES.includes(c.attribute) || c.value !== null && (!Number.isInteger(c.value) || c.value < 0 || c.value > 3)) throw new Error("Ratings must be 0, 1, 2, 3, or blank.");
     const ratings = await readRatings();
-    if (c.revision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the committee room." }, { status: 409 });
+    if (c.revision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the Cricket Council." }, { status: 409 });
     if (!ratings.players.some((p) => p.id === c.playerId)) throw new Error("Player not found.");
     ratings.data.overrides[`${c.playerId}:${a.committee}:${c.attribute}`] = c.value;
     const saved = await database().prepare("UPDATE private_ratings SET data = ?, revision = revision + 1 WHERE id = ? AND revision = ?").bind(JSON.stringify(ratings.data), "roster", c.revision).run();
