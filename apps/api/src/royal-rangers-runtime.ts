@@ -233,7 +233,7 @@ function failure(e) {
 
 // lib/cricket.ts
 var TEAMS = ["White", "Black", "Blue"];
-var defaultPoints = { run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
+var defaultPoints = { halfCentury: 15, century: 30, wicketHatTrick: 15, sixHatTrick: 15, run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
 function saturday() {
   const d = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   d.setDate(d.getDate() + (6 - d.getDay() + 7) % 7);
@@ -366,7 +366,7 @@ function apply(state, c) {
     check(!next.seasons.some((x) => x.date === c.date), "A season already exists for this Saturday.");
     check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
     const prev = next.seasons[0];
-    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...prev.points } : { ...defaultPoints }, matches: [] });
+    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...defaultPoints, ...prev.points } : { ...defaultPoints }, matches: [] });
     return next;
   }
   check(s, "Season not found.");
@@ -671,6 +671,24 @@ async function registerPlayer(playerId, username, password) {
   }
   return userId;
 }
+async function unregisterPlayer(playerId, expectedUserId) {
+  const player = (await approvedPlayers()).find((p) => p.id === playerId);
+  if (!player) throw new AccessError("Approved player not found.", 404);
+  if (!player.user_id || player.user_id !== expectedUserId) throw new AccessError("Registration changed. Reload before resetting.", 409);
+  if (player.user_id === "committee-alpha") throw new AccessError("Committee access cannot be reset here.");
+  const db = database(), userId = player.user_id;
+  await db.batch([
+    db.prepare("DELETE FROM member_sessions WHERE user_id=?").bind(userId),
+    db.prepare("DELETE FROM committee_sessions WHERE user_id=?").bind(userId),
+    db.prepare("DELETE FROM committee_seats WHERE user_id=?").bind(userId),
+    db.prepare("DELETE FROM push_subscriptions WHERE user_id=?").bind(userId),
+    db.prepare("DELETE FROM credentials WHERE user_id=?").bind(userId),
+    db.prepare("DELETE FROM player_registrations WHERE player_id=? AND user_id=?").bind(player.id, userId),
+    db.prepare("DELETE FROM members WHERE id=?").bind(userId),
+    db.prepare("INSERT INTO audit_log (id,actor,action,created_at) VALUES (?,?,?,?)").bind(crypto.randomUUID(), "Alpha", "Reset registration: " + player.name, Date.now())
+  ]);
+  return { id: player.id, name: player.name };
+}
 
 // server/ratings.ts
 var ATTRIBUTES = ["batting", "bowling", "fielding", "attitude"];
@@ -900,6 +918,10 @@ async function POST4(req) {
   try {
     const a = await committee(req);
     const c = await req.json();
+    if (c.type === "unregister-player") {
+      const player = await unregisterPlayer(c.playerId, c.expectedUserId);
+      return Response.json({ ok: true, player });
+    }
     if (c.type === "add-player") {
       const player = await addApprovedPlayer(c.name);
       await database().prepare("INSERT INTO audit_log (id,actor,action,created_at) VALUES (?,?,?,?)").bind(crypto.randomUUID(), "Alpha", "Added approved player: " + player.name, Date.now()).run();
