@@ -99,7 +99,7 @@ function validateBall(s, m, b) {
   if (pair.bowler) check(pair.bowler === b.bowler, "Keep the same bowler until the over ends.");
   else if (events.length) check(events.at(-1)?.bowler !== b.bowler, "Choose a different bowler for the new over.");
   if (b.kind === "wicket") {
-    check(["Bowled", "Caught", "LBW", "Stumped", "Run out", "Hit wicket"].includes(b.dismissal || ""), "Choose a dismissal.");
+    check(["Bowled", "Caught", "Stumped", "Run out", "Hit wicket"].includes(b.dismissal || ""), "Choose a dismissal.");
     check(["legal", "wide", "nb"].includes(b.extra || "legal"), "Invalid extra.");
     check(b.out === b.striker || b.out === b.partner, "Choose the dismissed batter.");
     if (b.dismissal !== "Run out") {
