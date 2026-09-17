@@ -4958,6 +4958,7 @@ body.so-viewport-locked .sales-catalog textarea {
 .wa-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; max-height: 720px; overflow: auto; padding: 2px 4px 6px 2px; }
 .wa-catalog-card { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; min-height: 150px; padding: 12px; border: 1px solid #dce7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05); }
 .wa-catalog-card img { width: 88px; height: 112px; align-self: center; object-fit: contain; border-radius: 10px; background: #f7fafb; }
+.product-meta.compact .product-box-pack { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; color: #0d756f; font-weight: 700; }
 .wa-catalog-card-copy { min-width: 0; display: grid; align-content: start; gap: 5px; }
 .wa-catalog-card-copy > span,.wa-catalog-card-copy small { color: #718497; font-size: 0.72rem; overflow-wrap: anywhere; }
 .wa-catalog-card-copy > strong { color: #17324d; font-size: 0.9rem; line-height: 1.3; }

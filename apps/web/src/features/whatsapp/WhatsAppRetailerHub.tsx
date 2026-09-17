@@ -120,7 +120,7 @@ type Dashboard = {
   analytics: { outbound: number; inbound: number; sent: number; delivered: number; read: number; failed: number; conversations: number; completedOrders: number };
   catalogImageStats: { selected: number; eligible: number; withImage: number };
   mockDrill?: { testRetailers: number; testProducts: number };
-  catalogProducts: Array<{ sku: string; name: string; brand: string; size: string; mrp: number; sellingRate: number; minimumOrderQuantity: number; imageUrl: string }>;
+  catalogProducts: Array<{ sku: string; name: string; brand: string; size: string; mrp: number; sellingRate: number; minimumOrderQuantity: number; piecesPerBox?: number; imageUrl: string }>;
   catalogFeedUrl: string;
   retailerEntryLink: string;
 };
@@ -925,6 +925,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
                   {product.mrp > 0 ? <span>MRP ₹{product.mrp.toFixed(2)}{discount > 0 ? ` · ${discount.toFixed(1)}% off` : ""}</span> : <span>MRP pending</span>}
                 </div>
                 <em>Minimum order {product.minimumOrderQuantity}</em>
+                {product.piecesPerBox ? <em>1 box = {product.piecesPerBox} {product.piecesPerBox === 1 ? "piece" : "pieces"}</em> : null}
               </div>
             </article>;
           })}

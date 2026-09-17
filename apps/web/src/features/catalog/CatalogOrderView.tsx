@@ -1386,6 +1386,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                     <div className="product-meta compact">
                       <span>{metaLabel}</span>
                       <span>{normalizeStaplesWeightLabel(product)}</span>
+                      {product.piecesPerBox ? <span className="product-box-pack">1 box = {product.piecesPerBox} {product.piecesPerBox === 1 ? "piece" : "pieces"}</span> : null}
                     </div>
                     <div className={item.familyKey ? "product-variant-slot" : "product-variant-slot empty"} aria-hidden={!item.familyKey}>
                       {item.familyKey ? <div className="product-meta compact">

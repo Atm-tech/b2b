@@ -7,6 +7,7 @@ import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { calculateSalesAmounts, calculateTaxAmounts, inferProductWeightKg, productWeightSearchText } from "@aapoorti-b2b/domain";
 import { whatsappCatalogMinimums, whatsappCatalogMrps, whatsappCatalogProductAliases, whatsappCatalogSalePrices } from "./whatsapp-catalog-minimums.js";
+import { whatsappCatalogBoxPacks } from "./whatsapp-catalog-box-packs.js";
 import type {
   AppSnapshot,
   AppUser,
@@ -238,6 +239,24 @@ async function syncWhatsAppCatalogMinimums() {
   if (updated.rowCount !== whatsappCatalogMinimums.length) {
     console.warn(`WhatsApp catalogue MOQ sync matched ${updated.rowCount || 0} of ${whatsappCatalogMinimums.length} workbook rows.`);
   }
+  // Match the box workbook independently: changed pack sizes must not inherit
+  // another article's box count just because they occupy the same workbook row.
+  await pool.query(
+    `WITH source AS (
+       SELECT * FROM UNNEST($1::text[], $2::integer[], $3::text[])
+         AS source_values(article_name, pieces_per_box, product_sku)
+     )
+     UPDATE products product SET pieces_per_box = source.pieces_per_box
+     FROM source
+     WHERE (source.product_sku <> '' AND product.sku = source.product_sku)
+        OR REGEXP_REPLACE(UPPER(product.sku), '[^A-Z0-9]+', '', 'g')
+         = REGEXP_REPLACE(UPPER(source.article_name), '[^A-Z0-9]+', '', 'g')
+        OR REGEXP_REPLACE(UPPER(COALESCE(NULLIF(product.article_name, ''), product.name)), '[^A-Z0-9]+', '', 'g')
+         = REGEXP_REPLACE(UPPER(source.article_name), '[^A-Z0-9]+', '', 'g')`,
+    [whatsappCatalogBoxPacks.map(item => item.articleName),
+     whatsappCatalogBoxPacks.map(item => item.piecesPerBox),
+     whatsappCatalogBoxPacks.map(item => whatsappCatalogProductAliases[item.articleName] || "")]
+  );
 }
 
 async function ensureCompatibilityColumns() {
@@ -263,6 +282,7 @@ async function ensureCompatibilityColumns() {
     ALTER TABLE products ADD COLUMN IF NOT EXISTS catalog_image_source_url TEXT;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS catalog_image_updated_at TIMESTAMPTZ;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS minimum_order_quantity DOUBLE PRECISION NOT NULL DEFAULT 1;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS pieces_per_box INTEGER;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS whatsapp_catalog_enabled BOOLEAN NOT NULL DEFAULT FALSE;
     CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand);
     CREATE INDEX IF NOT EXISTS idx_products_sub_category ON products(sub_category);
@@ -663,6 +683,7 @@ async function mapProducts(client?: DbClient): Promise<ProductMaster[]> {
     catalogImageSourceUrl: stringValue(row.catalog_image_source_url) || undefined,
     catalogImageUpdatedAt: row.catalog_image_updated_at ? isoValue(row.catalog_image_updated_at) : undefined,
     minimumOrderQuantity: Math.max(1, numberValue(row.minimum_order_quantity) || 1),
+    piecesPerBox: numberValue(row.pieces_per_box) > 0 ? numberValue(row.pieces_per_box) : undefined,
     whatsappCatalogEnabled: Boolean(row.whatsapp_catalog_enabled),
     createdBy: stringValue(row.created_by),
     createdAt: isoValue(row.created_at)

@@ -64,6 +64,7 @@ export type ProductMaster = {
   catalogImageSourceUrl?: string;
   catalogImageUpdatedAt?: string;
   minimumOrderQuantity?: number;
+  piecesPerBox?: number;
   whatsappCatalogEnabled?: boolean;
   createdBy: string;
   createdAt: string;

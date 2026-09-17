@@ -3331,7 +3331,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
              SELECT DISTINCT ON (product_sku) product_sku,rate
              FROM sales_orders WHERE rate>0 AND status<>'Cancelled'
              ORDER BY product_sku,created_at DESC
-           ) SELECT p.sku, p.name, p.brand, p.size, p.mrp, p.minimum_order_quantity,
+           ) SELECT p.sku, p.name, p.brand, p.size, p.mrp, p.minimum_order_quantity, p.pieces_per_box,
                   p.catalog_image_key, p.catalog_image_updated_at,
                   COALESCE(p.offer_price, p.rsp, p.mrp, latest.rate, 0) AS selling_rate
            FROM products p
@@ -3428,6 +3428,7 @@ export async function getWhatsAppDashboard(currentUser: StaffUser) {
       mrp: numberValue(row.mrp),
       sellingRate: numberValue(row.selling_rate),
       minimumOrderQuantity: Math.max(1, numberValue(row.minimum_order_quantity, 1)),
+      piecesPerBox: numberValue(row.pieces_per_box) > 0 ? numberValue(row.pieces_per_box) : undefined,
       imageUrl: row.catalog_image_key && catalogToken
         ? `${publicApi}/whatsapp/catalog/images/${encodeURIComponent(text(row.sku))}?token=${encodeURIComponent(catalogToken)}&v=${encodeURIComponent(text(row.catalog_image_updated_at))}`
         : `${publicWeb}/business-connect-icon-512.png`
@@ -4431,7 +4432,7 @@ export async function getWhatsAppCatalogFeed(token: string) {
     const offPercent = discountPercentFromMrp(mrp, rate);
     return [
       [
-        product.sku, product.name, [product.size, product.unit, mrp > 0 ? `MRP Rs.${mrp.toFixed(2)}` : "", offPercent > 0 ? `${offPercent.toFixed(2)}% off MRP` : "", `Minimum order ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
+        product.sku, product.name, [product.size, product.unit, product.piecesPerBox ? `1 box = ${product.piecesPerBox} ${product.piecesPerBox === 1 ? "piece" : "pieces"}` : "", mrp > 0 ? `MRP Rs.${mrp.toFixed(2)}` : "", offPercent > 0 ? `${offPercent.toFixed(2)}% off MRP` : "", `Minimum order ${Math.max(1, numberValue(product.minimumOrderQuantity, 1))}`, product.offerLabel, product.remarks].filter(Boolean).join(" | "),
         "in stock", "new", `${cataloguePrice.toFixed(2)} INR`, salePrice ? `${salePrice.toFixed(2)} INR` : "", `${publicWeb}/?product=${encodeURIComponent(product.sku)}`,
         product.catalogImageKey
           ? `${process.env.PUBLIC_API_URL || "https://b2b-v8kb.onrender.com"}/whatsapp/catalog/images/${encodeURIComponent(product.sku)}?token=${encodeURIComponent(expected)}&v=${encodeURIComponent(product.catalogImageUpdatedAt || product.catalogImageKey)}`
