@@ -1,3 +1,4 @@
+import { createConfirmationService } from "../src/whatsapp-confirmations.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
@@ -36,7 +37,7 @@ test("purchase cancellation endpoint accepts an empty item list and preserves th
 
 test("supplier alerts reach other staff despite one missing phone and retries do not resend successful alerts",async()=>{
   const source=fs.readFileSync(path.join(root,'apps/api/src/whatsapp-integration.ts'),'utf8');
-  const snippet=source.slice(source.indexOf('async function sendShortageNotification('));
+  const snippet=source.slice(source.indexOf('async function sendShortageNotification('),source.indexOf('let confirmationSweepRunning='));
   const sent=new Set<string>();const calls:string[]=[];
   const deps={text:(v:any)=>String(v||''),numberValue:(v:any)=>Number(v||0),whatsappAdminUsernames:()=>new Set(['wa.sales']),
     executeDatabaseQuery:async(sql:string,params:any[])=>{
@@ -51,6 +52,28 @@ test("supplier alerts reach other staff despite one missing phone and retries do
   await assert.rejects(()=>send(notification),/no WhatsApp number/);assert.equal(calls.length,2);
 });
 
+test("confirmation reminders ignore cancelled or superseded confirmations and overdue alerts retry per recipient",async()=>{
+  const source=fs.readFileSync(path.join(root,'apps/api/src/whatsapp-integration.ts'),'utf8');
+  const snippet=source.slice(source.indexOf('async function sendConfirmationFollowupNotification('));
+  const row:any={id:'DRAFT',status:'Awaiting Retailer',version:2,due_at:'2020-01-01',phone_e164:'919999999999',salesman_id:1,retailer_name:'Retailer',salesman_name:'Sales'};
+  const sent=new Set<string>();const messages:string[]=[];let buttons=0;
+  const deps={text:(v:any)=>String(v||''),numberValue:(v:any)=>Number(v||0),whatsappAdminUsernames:()=>new Set(['wa.sales']),compactProforma:()=>'',loadDraft:async()=>({draft:row,lines:[{approved_quantity:24}]}),
+    executeDatabaseQuery:async(sql:string,params:any[])=>{
+      if(sql.includes('SELECT d.*'))return {rows:[row]};
+      if(sql.includes('FROM users'))return {rows:[{id:3,mobile_number:''},{id:1,mobile_number:'911111111111'}]};
+      if(sql.includes('FROM whatsapp_messages'))return {rowCount:sent.has(params[0])?1:0};
+      if(sql.includes('UPDATE whatsapp_order_drafts'))return {rowCount:1};throw Error(sql);
+    },sendText:async(_phone:string,body:string,_kind:string,id:string)=>{messages.push(body);sent.add(id);},sendButtons:async()=>{buttons++;return {messageId:'MSG'};}};
+  const send=new Function(...Object.keys(deps),ts.transpileModule(snippet,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText+';return sendConfirmationFollowupNotification;')(...Object.values(deps));
+  assert.equal(await send({draft_id:'DRAFT',kind:'Resend',version:1}),false);assert.equal(buttons,0);
+  assert.equal(await send({draft_id:'DRAFT',kind:'Resend',version:2}),true);assert.equal(buttons,1);
+  const overdue={id:'DUE',draft_id:'DRAFT',kind:'Overdue',version:2};
+  await assert.rejects(()=>send(overdue),/no WhatsApp number/);assert.equal(messages.length,1);
+  await assert.rejects(()=>send(overdue),/no WhatsApp number/);assert.equal(messages.length,1);
+  row.status='Denied';assert.equal(await send({draft_id:'DRAFT',kind:'Resend',version:2}),false);assert.equal(buttons,1);
+  assert.equal(await send({id:'CANCEL',draft_id:'DRAFT',kind:'Cancelled',version:3,payload_json:{reason:'Retailer declined'}}),true);assert.match(messages[1],/Retailer declined/);
+});
+
 test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SHORTAGE_TEST_LOCAL!=="1"},async t=>{
   const env=dotenv.parse(fs.readFileSync(path.join(root,".env")));
   // Intentionally ignore DATABASE_URL: this test must never connect to production.
@@ -61,6 +84,7 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
   await setup.query(`CREATE SCHEMA ${schema}`);
   const pool=new pg.Pool({...config,options:`-c search_path=${schema}`});
   const service=createShortageService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
+  const confirmations=createConfirmationService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
   const sales={id:1,username:"sales",fullName:"Sales",role:"Sales",roles:["Sales"]};
   const purchaser={id:2,username:"purchase",fullName:"Purchaser",role:"Purchaser",roles:["Purchaser"]};
   const approve={decision:"Approve" as const,supplierId:"SUP",expectedAt:new Date(Date.now()+86400000).toISOString(),note:"Approved",lines:[{productSku:"SOAP",rate:20,gstRate:18}]};
@@ -248,6 +272,95 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
       const id=await draft(0);const caseId=(await service.detect(id))!;await service.purchase(caseId,approve,purchaser);
       await service.supplyDecision(caseId,{decision:'Cancel',note:'Retailer no longer wants the order'},sales);
       const view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.ok(view);assert.equal(view.status,'Supplier PO resolution required');assert.equal(view.closed_at,null);
+      assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Denied');
+    });
+    async function unconfirmed(){const id=await draft(100);await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[id]);await confirmations.begin(id);return id;}
+    await t.test("confirmation register retains old orders, requires dates and enforces Sales ownership",async()=>{
+      const id=await unconfirmed();await pool.query("UPDATE whatsapp_order_drafts SET created_at=NOW()-INTERVAL '90 days' WHERE id=$1",[id]);
+      assert.ok((await confirmations.list(sales)).items.some(item=>item.draft_id===id&&!item.due_at));
+      assert.ok(!(await confirmations.list({...sales,id:999})).items.some(item=>item.draft_id===id));
+      await assert.rejects(()=>confirmations.list(purchaser));
+      await assert.rejects(()=>confirmations.act(id,{action:'schedule',date:approve.expectedAt,note:'Follow-up'},{...sales,id:999}));
+      await assert.rejects(()=>confirmations.act(id,{action:'schedule',date:'2000-01-01',note:'Follow-up'},sales));
+      await assert.rejects(()=>confirmations.act(id,{action:'cancel',note:''},sales));
+      await confirmations.act(id,{action:'schedule',date:approve.expectedAt,note:'Call retailer after stock review'},sales);
+      assert.ok((await confirmations.list(sales)).items.find(item=>item.draft_id===id).due_at);
+    });
+    await t.test("confirmation overdue alerts are durable, deduplicated, superseded on reschedule and never auto-cancel",async()=>{
+      const id=await unconfirmed();await confirmations.act(id,{action:'schedule',date:approve.expectedAt,note:'Call tomorrow'},sales);
+      await pool.query("UPDATE whatsapp_confirmation_followups SET due_at=NOW()-INTERVAL '1 minute' WHERE draft_id=$1",[id]);
+      await confirmations.reconcile();await confirmations.reconcile();
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM whatsapp_confirmation_notifications WHERE draft_id=$1 AND kind='Overdue'",[id])).rows[0].n,1);
+      assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Awaiting Retailer');
+      await confirmations.act(id,{action:'schedule',date:approve.expectedAt,note:'Retailer requested a later call'},sales);
+      assert.equal((await pool.query("SELECT status FROM whatsapp_confirmation_notifications WHERE draft_id=$1 AND kind='Overdue'",[id])).rows[0].status,'Superseded');
+      await pool.query("UPDATE whatsapp_confirmation_followups SET due_at=NOW()-INTERVAL '1 minute' WHERE draft_id=$1",[id]);await confirmations.reconcile();
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM whatsapp_confirmation_notifications WHERE draft_id=$1 AND kind='Overdue'",[id])).rows[0].n,2);
+    });
+    await t.test("resend requires a next date and stale retries are invalidated when the order is cancelled",async()=>{
+      const id=await unconfirmed();await assert.rejects(()=>confirmations.act(id,{action:'resend',note:'Reminder'},sales));
+      await confirmations.act(id,{action:'resend',date:approve.expectedAt,note:'Retailer requested another copy'},sales);
+      await pool.query("UPDATE whatsapp_confirmation_notifications SET status='Failed' WHERE draft_id=$1",[id]);
+      await confirmations.act(id,{action:'retry',note:''},sales);
+      assert.equal((await pool.query('SELECT attempts FROM whatsapp_confirmation_notifications WHERE draft_id=$1',[id])).rows[0].attempts,0);
+      await confirmations.act(id,{action:'cancel',note:'Retailer no longer requires the order'},sales);await confirmations.reconcile();
+      assert.equal((await pool.query("SELECT status FROM whatsapp_confirmation_notifications WHERE draft_id=$1 AND kind='Resend'",[id])).rows[0].status,'Superseded');
+      await assert.rejects(()=>service.confirm(id));
+      assert.ok((await confirmations.list(sales)).items.some(item=>item.draft_id===id));
+      await pool.query("UPDATE whatsapp_confirmation_notifications SET status='Sent' WHERE draft_id=$1 AND kind='Cancelled'",[id]);
+      assert.ok(!(await confirmations.list(sales)).items.some(item=>item.draft_id===id));
+    });
+    await t.test("a confirmed sales order cannot be cancelled from confirmation follow-up even after a legacy status reset",async()=>{
+      const id=await unconfirmed();await service.confirm(id);
+      await assert.rejects(()=>confirmations.act(id,{action:'cancel',note:'Cancel'},sales));
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer',sales_cart_id=NULL WHERE id=$1",[id]);
+      await assert.rejects(()=>confirmations.act(id,{action:'cancel',note:'Cancel'},sales),/sales order already exists/);
+    });
+    await t.test("cancelling an available shortage portion preserves and later fulfils its linked 36 pending units",async()=>{
+      const id=await draft();const caseId=(await service.detect(id))!;
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[id]);
+      await confirmations.act(id,{action:'cancel',note:'Retailer cancels this 24-unit portion only'},sales);
+      let view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.lines[0].available,0);assert.equal(view.lines[0].pending,36);assert.equal(view.lines[0].cancelled,24);
+      await service.purchase(caseId,approve,purchaser);view=(await service.list(sales)).cases.find(c=>c.id===caseId);
+      await pool.query("UPDATE purchase_orders SET quantity_received=36,status='Received' WHERE cart_id=$1",[view.purchase_order_id]);await pool.query('UPDATE inventory_lots SET quantity_available=36');await service.release(caseId);
+      view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.portions.length,1);assert.equal(view.lines[0].released,36);
+    });
+    await t.test("cancelling an unconfirmed partial replenishment preserves the original SO and the remaining demand",async()=>{
+      const {caseId,po}=await approvedSplit();await pool.query("UPDATE purchase_orders SET quantity_received=12,status='Partially Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=36');
+      await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer accepts first 12'},sales);await service.release(caseId);
+      let view=(await service.list(sales)).cases.find(c=>c.id===caseId);const portion=view.portions[0].draftId;
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[portion]);
+      await confirmations.act(portion,{action:'cancel',note:'Retailer cancels these 12; remaining 24 stays pending'},sales);
+      view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.lines[0].available,24);assert.equal(view.lines[0].pending,24);assert.equal(view.lines[0].released,0);assert.equal(view.lines[0].cancelled,12);assert.ok(view.available_sales_cart_id);
+      await service.release(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).portions.length,1);
+      await pool.query("UPDATE purchase_orders SET quantity_received=36,status='Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=60');await service.monitorSupply(caseId);await service.release(caseId);
+      assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).portions.length,2);
+    });
+    await t.test("cancelling a full-quantity wait confirmation accounts for original and replenished units",async()=>{
+      const id=await draft();const caseId=(await service.detect(id))!;await service.choose(caseId,'Wait',sales,false,'Retailer waits for all 60');await service.purchase(caseId,approve,purchaser);
+      const po=(await service.list(sales)).cases.find(c=>c.id===caseId).purchase_order_id;await pool.query("UPDATE purchase_orders SET quantity_received=36,status='Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=60');await service.release(caseId);
+      const portion=(await service.list(sales)).cases.find(c=>c.id===caseId).portions[0].draftId;await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[portion]);
+      await confirmations.act(portion,{action:'cancel',note:'Retailer cancels all 60 before confirmation'},sales);
+      const line=(await service.list(sales)).cases.find(c=>c.id===caseId).lines[0];assert.equal(line.available,0);assert.equal(line.pending,0);assert.equal(line.released,0);assert.equal(line.cancelled,60);
+    });
+    await t.test("retailer confirmation and Sales cancellation cannot both succeed",async()=>{
+      const id=await draft();await service.detect(id);await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[id]);
+      const results=await Promise.allSettled([service.confirm(id),confirmations.act(id,{action:'cancel',note:'No response; Sales cancelled'},sales)]);
+      assert.equal(results.filter(result=>result.status==='fulfilled').length,1);
+      const row=(await pool.query('SELECT status,sales_cart_id FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0];assert.ok(row.status==='Completed'||row.status==='Denied');assert.equal(Boolean(row.sales_cart_id),row.status==='Completed');
+    });
+    await t.test("retailer clear preserves follow-up history and a stale edit button cannot reopen the cancelled order",async()=>{
+      const id=await unconfirmed();await assert.rejects(()=>confirmations.cancelByRetailer(id,'WRONG'));
+      await confirmations.cancelByRetailer(id,'SHOP');
+      assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Denied');
+      assert.ok((await pool.query('SELECT 1 FROM whatsapp_confirmation_events WHERE draft_id=$1',[id])).rowCount);
+      const source=fs.readFileSync(path.join(root,'apps/api/src/whatsapp-integration.ts'),'utf8');
+      const start=source.indexOf('    if (buttonId.startsWith("wa-edit:"))');
+      const snippet=source.slice(start,source.indexOf('    if (buttonId.startsWith("wa-change-product:"))',start));
+      let picker=false;
+      const deps={buttonId:`wa-edit:quantity:${id}`,profile:{counterpartyId:'SHOP'},text:(v:any)=>String(v||''),executeDatabaseQuery:(sql:string,params:any[])=>pool.query(sql,params),loadDraft:async()=>({draft:(await pool.query('SELECT * FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0]}),sendDraftChangeProductPicker:async()=>{picker=true;},sendDraftRemoveProductPicker:async()=>{picker=true;},clearRetailerProforma:async()=>{}};
+      const run=new Function(...Object.keys(deps),'return (async()=>{'+ts.transpileModule(snippet,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText+'})()');
+      await assert.rejects(()=>run(...Object.values(deps)),/no longer editable/);assert.equal(picker,false);
       assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Denied');
     });
     await t.test("old cases remain visible and notification failures can be retried",async()=>{

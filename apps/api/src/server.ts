@@ -86,6 +86,8 @@ import {
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
+  confirmationService,
+  processWhatsAppConfirmations,
   shortageService,
   processWhatsAppShortages,
   removeWhatsAppRetailer,
@@ -1505,6 +1507,17 @@ app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, as
   }, currentUser);
 }));
 
+app.get("/whatsapp/confirmations", async (req,res) => {
+  try {const user=await requireWhatsAppPilot(req,["Admin","Sales"]);res.json(await confirmationService.list(user,isWhatsAppAdminUser(user)));}
+  catch(error){res.status(403).json({message:error instanceof Error?error.message:"Access denied."});}
+});
+app.post("/whatsapp/confirmations/:id/:action", async (req,res)=>wrap(res,async()=>{
+  const user=await requireWhatsAppPilot(req,["Admin","Sales"]);
+  await confirmationService.act(req.params.id,{action:req.params.action,date:optionalString(req.body?.date),note:optionalString(req.body?.note)||""},user,isWhatsAppAdminUser(user));
+  void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));
+  return confirmationService.list(user,isWhatsAppAdminUser(user));
+}));
+
 app.get("/whatsapp/shortages", async (req, res) => {
   try { const user = await requireWhatsAppPilot(req, ["Admin", "Sales", "Purchaser"]); res.json(await shortageService.list(user, isWhatsAppAdminUser(user))); }
   catch (error) { res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." }); }
@@ -1705,6 +1718,8 @@ app.listen(port, () => {
   }
   void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
+  void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));
+  setInterval(()=>{void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));},30_000).unref();
   void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));
   setInterval(() => {
     void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));

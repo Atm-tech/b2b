@@ -204,7 +204,7 @@ export function createShortageService(deps: Dependencies) {
       if(row.closed_at || row.retailer_choice==="Pending" || row.retailer_choice==="Cancel Balance" || row.supply_review_required) return;
       if(!["Approved","Not Required"].includes(row.purchase_status) && !(row.purchase_status==="Cancelled" && row.sales_resolution==="Keep Pending"))return;
       // Only one unconfirmed replenishment portion is offered at a time.
-      if((await db.query("SELECT 1 FROM whatsapp_shortage_portions p JOIN whatsapp_order_drafts d ON d.id=p.draft_id WHERE p.case_id=$1 AND d.status<>'Completed'",[id])).rowCount)return;
+      if((await db.query("SELECT 1 FROM whatsapp_shortage_portions p JOIN whatsapp_order_drafts d ON d.id=p.draft_id WHERE p.case_id=$1 AND d.status NOT IN ('Completed','Denied')",[id])).rowCount)return;
       const root=(await db.query("SELECT * FROM whatsapp_order_drafts WHERE id=$1 FOR UPDATE",[row.draft_id])).rows[0];
       const all=(await db.query("SELECT s.*,l.rate,l.cd_percent,l.tod_percent,l.gst_rate,l.tax_mode FROM whatsapp_shortage_lines s JOIN whatsapp_order_draft_lines l ON l.id=s.draft_line_id WHERE s.case_id=$1 ORDER BY s.product_sku",[id])).rows;
       if(row.retailer_choice==='Split' && all.some(l=>Number(l.available_quantity)>0) && !['Completed','Superseded'].includes(root.status))return;

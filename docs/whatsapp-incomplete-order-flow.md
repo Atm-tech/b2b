@@ -194,3 +194,16 @@ Acceptance scenarios:
 - If procurement is cancelled after a partial delivery, Sales can retain or cancel the unreleased balance. A resubmitted purchase request recalculates the needed quantity instead of buying the already released quantity again.
 - The additive schema migration links historical single-balance drafts once and does not reset partial allocations on restart.
 - Validation uses isolated local PostgreSQL for transaction, quantity, retry, access-control and migration scenarios, plus desktop/mobile browser checks for Sales actions. No production test PO or receipt is created.
+
+
+## Retailer confirmation follow-up implementation
+
+- WhatsApp Home/Orders now includes a separate confirmation follow-up register for Sales and WhatsApp Admin. It includes every `Awaiting Retailer` draft regardless of age, including shortage portions.
+- Sales explicitly sets a future follow-up date and note. No deadline is invented for existing orders: orders without a date remain visible as requiring scheduling.
+- A 30-second worker generates one persistent overdue alert per follow-up version for the assigned Sales owner and WhatsApp Admin. Rescheduling supersedes obsolete reminders; successful recipient deliveries are not repeated when another recipient needs a retry.
+- Sales can schedule, resend with a new date, or cancel the unconfirmed portion with a required reason. Resends and cancellation messages use a persistent retry queue with five automatic attempts and a staff retry action.
+- Cancellation locks the draft and any linked shortage case in the same order as retailer confirmation. Processing/completed orders and drafts with an existing SO cannot be cancelled by this action. Cancellation is never automatic.
+- Cancelling a shortage portion conserves requested = original available + outstanding/released balance + cancelled quantity. Other confirmed portions and unallocated demand remain linked. Cancelled replenishment drafts no longer block later eligible portions.
+- Cancellation notification failures remain visible even after the draft becomes Denied. Shortage closure also waits for outstanding confirmation notifications.
+- Historical change-order buttons cannot reopen a denied draft. Retailer clear preserves follow-up history once a confirmation is tracked. New proformas start a fresh follow-up cycle; resends preserve their newly scheduled date.
+- Validation covers isolated PostgreSQL transactions, old-order visibility, ownership, overdue/retry versioning, cancellation/confirmation races and partial/full shortage accounting, plus desktop/mobile browser actions. Production verification is read-only.

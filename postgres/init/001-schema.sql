@@ -677,3 +677,35 @@ WITH migrated AS (
   ON CONFLICT(draft_id) DO NOTHING RETURNING case_id
 )
 UPDATE whatsapp_shortage_lines SET released_quantity=pending_quantity WHERE case_id IN (SELECT case_id FROM migrated);
+
+
+CREATE TABLE IF NOT EXISTS whatsapp_confirmation_followups (
+  draft_id TEXT PRIMARY KEY REFERENCES whatsapp_order_drafts(id),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  due_at TIMESTAMPTZ,
+  version INTEGER NOT NULL DEFAULT 1,
+  note TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_confirmation_events (
+  id BIGSERIAL PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES whatsapp_order_drafts(id),
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_confirmation_notifications (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES whatsapp_order_drafts(id),
+  kind TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'Pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_confirmation_due_idx ON whatsapp_confirmation_followups(due_at) WHERE active;
+CREATE INDEX IF NOT EXISTS whatsapp_confirmation_notifications_due_idx ON whatsapp_confirmation_notifications(available_at) WHERE status IN ('Pending','Sending');
