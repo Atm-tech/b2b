@@ -602,3 +602,58 @@ CREATE TABLE IF NOT EXISTS whatsapp_broadcast_campaigns (
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Shortage demand remains separate from fulfilment drafts and survives date filters.
+CREATE TABLE IF NOT EXISTS whatsapp_shortage_cases (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL UNIQUE REFERENCES whatsapp_order_drafts(id),
+  counterparty_id TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  retailer_choice TEXT NOT NULL DEFAULT 'Pending' CHECK (retailer_choice IN ('Pending','Split','Wait','Cancel Balance')),
+  status TEXT NOT NULL DEFAULT 'Awaiting Retailer Choice',
+  purchase_status TEXT NOT NULL DEFAULT 'Draft' CHECK (purchase_status IN ('Draft','Approved','Cancelled','Not Required')),
+  purchase_order_id TEXT,
+  purchaser_id BIGINT,
+  expected_at TIMESTAMPTZ,
+  next_action_at TIMESTAMPTZ,
+  decision_note TEXT NOT NULL DEFAULT '',
+  sales_resolution TEXT NOT NULL DEFAULT '',
+  balance_draft_id TEXT UNIQUE REFERENCES whatsapp_order_drafts(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS whatsapp_shortage_lines (
+  case_id TEXT NOT NULL REFERENCES whatsapp_shortage_cases(id),
+  draft_line_id TEXT NOT NULL,
+  product_sku TEXT NOT NULL,
+  requested_quantity DOUBLE PRECISION NOT NULL CHECK (requested_quantity>0),
+  available_quantity DOUBLE PRECISION NOT NULL CHECK (available_quantity>=0),
+  pending_quantity DOUBLE PRECISION NOT NULL CHECK (pending_quantity>=0),
+  procurement_quantity DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (procurement_quantity>=0),
+  cancelled_quantity DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (cancelled_quantity>=0),
+  PRIMARY KEY (case_id,product_sku),
+  CHECK (ABS(requested_quantity-available_quantity-pending_quantity-cancelled_quantity)<0.000001)
+);
+CREATE TABLE IF NOT EXISTS whatsapp_shortage_events (
+  id BIGSERIAL PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES whatsapp_shortage_cases(id),
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_shortage_notifications (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES whatsapp_shortage_cases(id),
+  kind TEXT NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'Pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_shortage_open_idx ON whatsapp_shortage_cases(created_at) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS whatsapp_shortage_notifications_due_idx ON whatsapp_shortage_notifications(available_at) WHERE status IN ('Pending','Sending');

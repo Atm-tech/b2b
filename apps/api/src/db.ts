@@ -537,6 +537,15 @@ export async function executeDatabaseQuery<T extends QueryResultRow>(text: strin
   return query<T>(text, params);
 }
 
+export async function executeDatabaseTransaction<T>(run: (client: DbClient) => Promise<T>) {
+  await ready;
+  const result = await withTransaction(run);
+  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries"]) {
+    invalidateSnapshotCacheForSql(`UPDATE ${table} SET`);
+  }
+  return result;
+}
+
 async function one<T extends QueryResultRow>(text: string, params: unknown[] = [], client?: DbClient) {
   const result = await query<T>(text, params, client);
   return result.rows[0];

@@ -86,6 +86,8 @@ import {
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
+  shortageService,
+  processWhatsAppShortages,
   removeWhatsAppRetailer,
   removeWhatsAppStaffUser,
   reviewWhatsAppDraft,
@@ -1503,6 +1505,28 @@ app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, as
   }, currentUser);
 }));
 
+app.get("/whatsapp/shortages", async (req, res) => {
+  try { const user = await requireWhatsAppPilot(req, ["Admin", "Sales", "Purchaser"]); res.json(await shortageService.list(user, isWhatsAppAdminUser(user))); }
+  catch (error) { res.status(403).json({ message: error instanceof Error ? error.message : "Access denied." }); }
+});
+app.post("/whatsapp/shortages/:id/:action", async (req, res) => wrap(res, async () => {
+  const user = await requireWhatsAppPilot(req, ["Admin", "Sales", "Purchaser"]);
+  const admin = isWhatsAppAdminUser(user);
+  const caseId = req.params.id;
+  const note = optionalString(req.body?.note) || "";
+  if (req.params.action === "purchase") await shortageService.purchase(caseId, {
+    decision: req.body?.decision, supplierId: optionalString(req.body?.supplierId) || "", expectedAt: optionalString(req.body?.expectedAt) || "", note,
+    lines: (req.body?.decision === "Cancel" ? [] : parseCartLines(req.body?.lines)).map(line => ({ productSku: requiredString(line.productSku, "Product"), rate: requiredNumber(line.rate, "Rate"), gstRate: requiredNumber(line.gstRate, "GST rate") }))
+  }, user, admin);
+  else if (req.params.action === "choice") await shortageService.choose(caseId, req.body?.choice, user, admin, note);
+  else if (req.params.action === "followup") await shortageService.followup(caseId, requiredString(req.body?.date, "Follow-up date"), note, user, admin);
+  else if (req.params.action === "resubmit") await shortageService.reopenPurchase(caseId, user, admin, note);
+  else if (req.params.action === "retry") await shortageService.retryNotifications(caseId, user, admin);
+  else throw new Error("Unknown shortage action.");
+  void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
+  return shortageService.list(user, admin);
+}));
+
 app.post("/whatsapp/drafts/:id/review", async (req, res) => wrap(res, async () => {
   const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
   const lines = parseCartLines(req.body?.lines).map((line) => ({
@@ -1678,6 +1702,8 @@ app.listen(port, () => {
   if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) {
     void ensureDcoCheckboxFlow().catch((error) => console.error("DCO checkbox Flow setup failed:", error instanceof Error ? error.message : "Unknown error"));
   }
+  void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
+  setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
   void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));
   setInterval(() => {
     void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));

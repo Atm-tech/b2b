@@ -1,0 +1,183 @@
+# WhatsApp orders: incomplete-order and closure flow
+
+Prepared 18 September 2026. This document records the complete exception-flow specification. The stock-shortage workflow described in decision 1 is implemented; later exception stages remain planned.
+
+Scope assumes all incomplete WhatsApp orders: stock shortage, no confirmation, packing problems, delivery failure, partial delivery, cancellation, returns, payment and refund pending. Non-WhatsApp sales orders retain their existing flow and remain hidden from Warehouse Manager accounts under the current visibility rule.
+
+## Agreed decision 1: stock shortage
+
+Confirmed with the user after the initial audit. This decision takes precedence over the generic shortage options below; the stock-shortage workflow is implemented.
+
+- Sales owns the retailer-facing shortage case and coordinates the available and pending portions.
+- Example: retailer requests 60, available quantity is 24, short quantity is 36.
+- Send the retailer confirmation for the available 24, and a separate pending message for the short 36. A confirmation request is not an automatic dispatch.
+- Offer the retailer the three choices: available now with balance later; wait for the entire quantity; available now with balance cancelled. Sales handles the retailer's decision; Purchaser approval must not override it.
+- On detecting shortage, automatically create a draft purchase order for the short quantity and alert the Purchaser for approval. It is an approval request, not an already approved supplier commitment.
+- If Purchaser approves, track replenishment until stock is physically received and available. Approval alone must not label the pending goods available or fulfilled.
+- Once the upstream process has made the pending quantity available, send its confirmation to the retailer. If the retailer chose to wait for the full quantity, confirm the full quantity when available.
+- If Purchaser cancels the draft PO, the case remains assigned to Sales. Sales resolves the available-now/balance-cancelled versus available-now/balance-pending choice with the retailer. Cancelling procurement must not silently cancel retailer demand.
+- Keep the remaining 36 linked to the original demand until supplied or explicitly cancelled. Do not mark the complete retailer order fulfilled merely because the available 24 were confirmed or sent.
+- Supplier selection, procurement consolidation, promised dates and reminder timings are not decided by this agreement; do not invent commitments for them.
+
+## The closure rule
+
+An order is closed only when every requested item has a recorded outcome, all dispatched goods have a recorded destination, and every financial obligation is reconciled. Creating an SO, sending a WhatsApp message, receiving a payment screenshot, or finishing a delivery route does not close the order.
+
+Maintain three independent statuses:
+
+1. Order: awaiting confirmation / confirmed / partly fulfilled / fulfilled / cancelled.
+2. Goods: awaiting stock / packing / dispatch ready / in transit / delivered / return pending / returned and checked.
+3. Money: not due / collection pending / partly collected / verification pending / reconciled / refund or credit pending.
+
+Overall status is Open, Action Required, or Closed. A delivered order with unpaid money stays open for Accounts; it does not stay in the warehouse packing queue.
+
+## Flow
+
+```mermaid
+flowchart TD
+  A[Retailer submits order] --> B{Stock available?}
+  B -- No or partial --> C[Sales records shortage and offers choices]
+  C --> C1[Wait for stock: owner and expected date]
+  C --> C2[Available quantity now; balance as linked pending demand]
+  C --> C3[Alternative product or revised quantity]
+  C --> C4[Cancel all or specified balance with reason]
+  C1 --> B
+  C2 --> D[Retailer confirms versioned proforma]
+  C3 --> D
+  B -- Yes --> D
+  D -- No reply --> E[Confirmation follow-up: owner and due date]
+  E --> D
+  D -- Accepted --> F[Create SO once and reserve stock atomically]
+  F --> G[Warehouse packs and verifies quantity and weight]
+  G -- Mismatch --> H[Hold dispatch; Sales resolves and reconfirms changes]
+  H --> G
+  G -- Passed --> I[Assign DCO and record physical handover]
+  I --> J{Delivery outcome per retailer and item}
+  J -- Full --> K[Accepted goods and delivery evidence recorded]
+  J -- Partial --> L[Accepted quantity plus refused or missing balance]
+  L --> K
+  L --> M[Track remaining goods and agreed next action]
+  J -- Failed --> M
+  M --> N{Decision}
+  N -- Retry --> O[New delivery attempt and scheduled date]
+  O --> J
+  N -- Return --> P[Return to warehouse; quantity and condition checked]
+  P --> Q[Restock good goods; quarantine damaged goods]
+  Q --> R[Accounts adjusts bill, credit or refund]
+  K --> S{All money reconciled?}
+  S -- No --> T[Accounts collection or verification queue]
+  T --> S
+  C4 --> R
+  R --> U{Any unresolved goods, balance, money or follow-up?}
+  S -- Yes --> U
+  U -- Yes --> V[Stay open under the responsible owner]
+  U -- No --> W[Close with final outcome and audit trail]
+```
+
+## Exception decisions and responsibility
+
+| Trigger | Required options / next action | Owner | Completion condition |
+|---|---|---|---|
+| No stock | Wait with expected date; propose alternative; cancel with reason | Assigned salesperson; Purchaser owns any replenishment task | Retailer confirms a revised order or explicitly cancels |
+| Part stock | Supply available stock and keep balance pending; wait for full quantity; cancel balance | Sales | Both supplied and remaining quantities have explicit outcomes |
+| Retailer silent | Follow-up with next-action date; escalate overdue; cancel only by an authorized decision | Sales, then Admin | Recorded acceptance or cancellation; no silent expiry |
+| Price, item or quantity change | New proforma version; invalidate old buttons; request fresh acceptance | Sales | Latest version accepted; previous version cannot create an SO |
+| Packing shortage or wrong weight | Record actual count/weight; block dispatch; recount or revise order | Warehouse, then Sales | Goods match the accepted order or retailer accepts revision |
+| No delivery agent / missed pickup | Assign or reassign agent; set pickup date; retain packing record | Delivery Manager | Physical handover recorded against the assigned attempt |
+| Shop closed / retailer unavailable / wrong address | Record reason and goods location; retry date or return | Delivery agent records; Delivery Manager resolves | Successful retry or goods received back at warehouse |
+| Retailer refuses full order | Record refusal reason; return goods; resolve bill and advance payment | Delivery Manager, Warehouse, Accounts | Goods and money both reconciled |
+| Partial delivery / item rejection | Record accepted, refused, damaged and missing quantity per item | Agent, Warehouse, Sales and Accounts for their respective steps | Every item and every remaining rupee reconciled |
+| Delivered, payment pending | Keep collection case with amount, collector and due date | Collection Agent / Accounts | Verified settlement, or separately authorized documented adjustment |
+| Cash collected, not handed over | Track agent cash separately from customer debt | Agent, then Accounts | Cash handover counted and acknowledged once |
+| UPI or cheque submitted | Keep verification pending; failed/bounced payment reopens collection | Accounts | Verified payment applied once to the correct order |
+| Cancel before dispatch | Release only existing reservation; resolve any advance/refund | Sales/Admin, Warehouse, Accounts | No reserved goods or pending financial obligation |
+| Cancel after dispatch | Return flow, not immediate stock restoration | Delivery Manager, Warehouse, Accounts | Physical return inspection and financial adjustment complete |
+| Goods lost or damaged in transit | Incident record, evidence and responsible party; approved disposition | Delivery Manager/Admin and Accounts | Loss disposition and money adjustment recorded |
+| WhatsApp send fails | Durable notification retry linked to the same business event | System retry; Admin if exhausted | Delivery status recorded or alternative contact logged |
+
+Default reminder intervals and retry limits must be configurable. Do not assume a timeout authorizes cancellation, a write-off, a refund, or a new dispatch.
+
+## Quantity and money controls
+
+- Keep original requested quantity even when approved quantity is reduced. Do not delete excluded lines: mark them pending, substituted, or cancelled with reason.
+- For each original demand line: requested quantity = accepted-and-kept quantity + open quantity + explicitly cancelled quantity. A replacement is linked to the original demand; it is not counted as additional demand.
+- Track goods custody separately: cumulative outbound units must equal units retained by the customer, physically returned, still in transit, or recorded as an approved loss/disposition. Link repeat dispatches to delivery attempts so one unit is not counted twice in customer demand.
+- Reserve only available stock inside the SO transaction. On cancellation release reservation once. Goods already outside the warehouse return to available stock only after receipt and inspection; damaged items remain blocked.
+- Partial fulfilment creates a linked balance case. Do not automatically charge freight twice or copy the full original invoice total to the remaining order. Show revised amounts for approval.
+- Customer balance is based on the final charges, credits, verified collections and refunds. Agent-held cash is a separate obligation and must not cause duplicate customer collection.
+- Existing retailer permissions for partial payment, later collection and cheque continue to apply. Unauthorized exceptions require an explicit Admin decision.
+- A “refund pending” case is not closed by a promise. Record refund amount, method, reference and verification.
+
+## One pending-work queue, filtered by role
+
+Every exception has a persistent case ID linked to the original draft, SO, line, DCO/stop and attempt as applicable. Mandatory fields: reason code, affected quantity/amount, owner, next action, due date, current status and event history. Completion requires evidence or an explicit reasoned decision.
+
+Views:
+
+- Sales: stock shortages, confirmation follow-ups, changes and unresolved balance demand.
+- Warehouse: WhatsApp packing holds and physical return receipts. Financial follow-up stays with Accounts.
+- Delivery: missed pickups, failed stops, retry schedules and goods awaiting return.
+- Accounts: unpaid amounts, unverified payments, agent cash handover, credit and refund cases.
+- Admin: all overdue, unassigned and repeatedly failed cases, plus unresolved closure blockers.
+
+Queues must include old unresolved work regardless of the dashboard's usual seven-day order date filter. A handoff requires a valid active owner; if that person is removed or inactive, the case escalates for reassignment rather than disappearing.
+
+Suggested commands/screens: Pending Orders, My Actions, Overdue, Stock Pending, Retry Delivery, Return Receipt and Close Review. Buttons validate current role, ownership, order version and state on the server.
+
+## Reliable transitions
+
+- Claim actions and update order, reservation and event records in one transaction. Use stable idempotency keys for webhook messages, confirmations, payment references, returns and delivery attempts.
+- Persist the business decision first and enqueue the notification in an outbox. A WhatsApp network error must not revert a successfully created SO to awaiting confirmation or create a second SO on retry.
+- Revalidate stock and pricing at acceptance. Two retailers cannot reserve the same available units.
+- Record attempted deliveries as separate immutable attempts. A retry cannot overwrite the previous failure or move already delivered quantities back into transit.
+- Cancellation cannot run concurrently with a successful dispatch. Repeated cancel/return/payment actions have no second financial or stock effect.
+- Close is a guarded operation: no pending demand, reservation, goods return, custody discrepancy, collection, verification, refund, cash handover or exception task remains.
+- Closed outcomes distinguish fully fulfilled, partially fulfilled with balance cancelled, cancelled before dispatch, and returned/refunded. A later complaint or charge failure reopens a linked case with history preserved.
+
+## Gaps found in the existing implementation
+
+1. `finalizeDraft` uses draft status `Completed` once the sales cart is created. The UI labels this “Completed orders”; the end-to-end status needs to distinguish SO created from operational/financial closure.
+2. `reviewWhatsAppDraft` can reduce approved quantity and delete omitted draft lines. It does not create a linked balance-demand case for the remainder.
+3. `finalizeDraft` creates a sales cart before sending a notification, and its catch path resets the draft to awaiting confirmation. Business completion and notification retry need separate handling to avoid duplicate SO creation after a send error.
+4. Delivery stops currently model delivery with a boolean and collection with Pending/Later/Collected. Explicit failed/partial attempts, retries and return custody are needed.
+5. Sales returns insert inventory lots directly. A failed-delivery return needs physical receipt, condition checks, cumulative return limits and linked financial reconciliation.
+6. Default snapshot order history spans seven days. Exception work needs a separate unresolved query so age does not hide pending cases.
+
+Relevant implementation: `apps/api/src/whatsapp-integration.ts`, `apps/api/src/db.ts`, `apps/web/src/features/whatsapp/WhatsAppRetailerHub.tsx`, and `packages/domain/src/index.ts`.
+
+## Delivery sequence and acceptance scenarios
+
+Build in coherent stages, keeping an Admin pending-work view available from the first stage:
+
+1. Durable cases, event history, role queues and guarded closure; correct “SO created” labeling.
+2. Shortage/balance demand, confirmation versioning and atomic, idempotent SO creation.
+3. Delivery attempts, partial acceptance, retry, return receipt and custody reconciliation.
+4. Financial adjustments, payment verification, cash handover, refunds and notification outbox.
+
+Acceptance scenarios:
+
+- Request 60 soaps, stock 24: retailer chooses 24 now plus 36 later. All 60 stay accounted for until the 36 are delivered or explicitly cancelled.
+- Same case, retailer cancels the remaining 36: that cancellation is recorded; there is no invisible lost demand.
+- Two confirmations race for the same stock: total reservations never exceed availability.
+- WhatsApp notification fails after SO creation: retry sends the update without creating another SO.
+- Packed quantity differs from confirmed quantity: dispatch remains blocked until resolved.
+- Shop closed: failure remains on the agent/manager queue, has a next action, and creates a new attempt for redelivery.
+- Customer accepts 8 of 10: two units follow a tracked return or retry path; invoice and collection reflect the agreed outcome.
+- Entire dispatched order refused: stock remains out until warehouse return receipt, and an advance refund remains open until verified.
+- Replayed return scan/cancel/payment cannot create extra stock, refund, or collection.
+- Customer paid cash: customer debt clears according to verification rules, but the agent's unacknowledged cash handover remains open.
+- Cheque bounces or UPI verification fails: collection case opens with the correct remaining amount.
+- Case older than seven days or assigned to an inactive user remains visible and escalates.
+- One failed stop does not prevent independent successful stops from recording delivery; the DCO cannot claim fully resolved while goods or settlement remain outstanding.
+- Warehouse sees only WhatsApp-origin operational cases; Admin/Accounts can reconcile all necessary records without exposing unrelated SOs to warehouse accounts.
+
+## Stock-shortage implementation details
+
+- The shortage register is visible on WhatsApp Home/Orders and on Purchaser Overview/Purchase/Purchases.
+- Draft purchase orders are stored with their shortage case until a Purchaser supplies a supplier, purchase rates, GST rates and expected receipt date. Approval atomically creates the operational PO and purchase ledger entry. Default terms are supplier delivery and NEFT, stated in the approval form.
+- A 30-second reconciliation worker detects existing reduced-quantity drafts, processes notifications and checks accepted stock receipts. Replenishment already on hand does not generate an unnecessary PO.
+- If procurement is cancelled, Sales records whether the retailer wants the balance kept pending or cancelled. Kept demand can be released when physical stock becomes available, or Sales can request purchase approval again.
+- Available and balance confirmations create their sales orders atomically and idempotently. The delivery charge is applied once across those portions. Existing committed WhatsApp quantities are excluded from available-to-promise stock.
+- Notifications use persistent retry records. Failed notifications remain attached to the case and can be retried by Sales/Admin.
+- The case remains in the register while confirmation, replenishment, fulfilment or payment verification is unresolved. No order-date cutoff applies to the register.
+- Follow-up dates are explicit Sales actions. Automatic reminder frequency, supplier-side messages and the later delivery-failure/refund workflows are outside this stage.

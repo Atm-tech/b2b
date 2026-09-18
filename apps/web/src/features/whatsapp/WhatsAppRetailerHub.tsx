@@ -1,3 +1,4 @@
+import { ShortageRegister } from "./ShortageRegister";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
@@ -103,6 +104,7 @@ type WhatsAppDraft = {
   lines: DraftLine[];
 };
 type Dashboard = {
+  openShortageCount?: number;
   trainingBroadcast?: { message: string; url: string };
   permissions: { whatsappAdmin: boolean };
   configuration: { connected: boolean; mode: string; phoneNumberIdPresent: boolean; catalogIdPresent: boolean; verifyTokenPresent: boolean; appSecretPresent: boolean };
@@ -222,7 +224,7 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
   return <article className="panel">
     <div className="section-heading">
       <div><span className="eyebrow">{draft.source} · {formatDateTimeIst(draft.created_at)}</span><h3>{draft.retailer_name}</h3></div>
-      <span className={`status-pill ${draft.status === "Completed" ? "success" : "pending"}`}>{draft.status}</span>
+      <span className={`status-pill ${draft.status === "Completed" ? "success" : "pending"}`}>{draft.status === "Completed" ? "SO Created" : draft.status}</span>
     </div>
     <p className="helper-text">{draft.id} · {draft.phone_e164} · Assigned to {draft.salesman_name}{draft.sales_cart_id ? ` · SO ${draft.sales_cart_id}` : ""}</p>
     {draft.status === "Needs Review" && /Stock review:/i.test(draft.note || "") ? <p className="helper-text"><strong>Stock confirmation required:</strong> edit the quantity/rate below and send confirmation, or deny the order. The retailer is waiting for {draft.salesman_name}.</p> : null}
@@ -799,12 +801,14 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 
     <nav className={`${dedicatedWorkspace ? "wa-admin-dock" : "wa-section-tabs"}${availableSections.length < 5 ? " is-compact" : ""}${availableSections.length === 6 ? " has-six" : ""}${availableSections.length > 6 ? " has-many" : ""}`} aria-label="WhatsApp administration">
       {availableSections.map((section) => {
-        const badge = section.key === "Orders" ? activeDrafts.length : section.key === "Retailers" ? pendingRegistrations.length : section.key === "Offers" ? pendingWishlists.length : section.key === "Chat" ? liveChatUnread : section.key === "Service" ? openServiceTickets.length : 0;
+        const badge = section.key === "Orders" ? activeDrafts.length + (dashboard?.openShortageCount || 0) : section.key === "Retailers" ? pendingRegistrations.length : section.key === "Offers" ? pendingWishlists.length : section.key === "Chat" ? liveChatUnread : section.key === "Service" ? openServiceTickets.length : 0;
         return <button key={section.key} type="button" className={activeSection === section.key ? "active" : ""} onClick={() => setActiveSection(section.key)} aria-current={activeSection === section.key ? "page" : undefined}>
           <span><SidebarVectorIcon view={section.view} /></span><strong>{section.label}</strong>{badge > 0 ? <em>{badge > 99 ? "99+" : badge}</em> : null}
         </button>;
       })}
     </nav>
+
+    {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <ShortageRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
 
     {activeSection === "Home" ? <>
       <section className="wa-command-grid" aria-label="WhatsApp overview">
@@ -952,7 +956,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       </div></Panel>
       <div className="section-heading"><div><span className="eyebrow">Retailer-confirmed ordering</span><h2>Active proforma invoices</h2></div><span className="wa-queue-count">{activeDrafts.length} open</span></div>
       {activeDrafts.length ? activeDrafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async (item, body) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/review`, body, "Final summary sent to retailer.")} onDeny={async (item, reason) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/deny`, { reason }, "Order denied and retailer informed.")} onInvoice={whatsappAdmin ? async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.") : undefined} />) : <div className="wa-empty-state"><span><SidebarVectorIcon view="SalesOrders" /></span><strong>No active proforma</strong><p>Retailer will receive a proforma invoice before any sales order is created.</p></div>}
-      {completedDrafts.length ? <details className="wa-order-history"><summary>Completed orders ({completedDrafts.length})</summary><div className="stacked-sections">{completedDrafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async () => undefined} onDeny={async () => undefined} onInvoice={whatsappAdmin ? async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.") : undefined} onStatus={async (item, status, note) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/status`, { status, note }, "Order status retailer ko bhej diya.")} />)}</div></details> : null}
+      {completedDrafts.length ? <details className="wa-order-history"><summary>Sales orders created ({completedDrafts.length})</summary><div className="stacked-sections">{completedDrafts.map((draft) => <DraftReviewCard key={draft.id} draft={draft} snapshot={snapshot} busy={busy} onReview={async () => undefined} onDeny={async () => undefined} onInvoice={whatsappAdmin ? async (item) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/invoice`, {}, "Invoice summary sent.") : undefined} onStatus={async (item, status, note) => submit(`/whatsapp/drafts/${encodeURIComponent(item.id)}/status`, { status, note }, "Order status retailer ko bhej diya.")} />)}</div></details> : null}
     </section> : null}
 
     {activeSection === "Chat" ? <section className="wa-live-chat-shell">
@@ -1030,7 +1034,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
 
     {isMarketingWorkspace && whatsappAdmin && activeSection === "Insights" ? <section className="stacked-sections">
       <div className="wa-insight-grid">{[
-        ["Conversations", dashboard?.analytics.conversations || 0], ["Inbound", dashboard?.analytics.inbound || 0], ["Outbound", dashboard?.analytics.outbound || 0], ["Delivered", dashboard?.analytics.delivered || 0], ["Read", dashboard?.analytics.read || 0], ["Failed", dashboard?.analytics.failed || 0], ["Completed orders", dashboard?.analytics.completedOrders || 0]
+        ["Conversations", dashboard?.analytics.conversations || 0], ["Inbound", dashboard?.analytics.inbound || 0], ["Outbound", dashboard?.analytics.outbound || 0], ["Delivered", dashboard?.analytics.delivered || 0], ["Read", dashboard?.analytics.read || 0], ["Failed", dashboard?.analytics.failed || 0], ["Sales orders created", dashboard?.analytics.completedOrders || 0]
       ].map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{value}</strong><small>Last 30 days</small></article>)}</div>
       <TwoCol left={<Panel title="Retailer entry point" eyebrow="QR and Click-to-WhatsApp"><p className="helper-text">Use this link behind shop QR codes, visiting cards and retailer onboarding campaigns.</p><div className="settings-line"><input readOnly value={dashboard?.retailerEntryLink || ""} /><button className="ghost-button" type="button" onClick={() => void navigator.clipboard.writeText(dashboard?.retailerEntryLink || "")}>Copy link</button></div>{dashboard?.retailerEntryLink ? <a className="primary-button wa-link-button" href={dashboard.retailerEntryLink} target="_blank" rel="noreferrer">Test in WhatsApp</a> : null}</Panel>} right={<Panel title="Broadcast history" eyebrow="Campaign performance"><DataTable headers={["Time", "Campaign", "Type", "Audience", "Sent", "Failed"]} rows={(dashboard?.campaigns || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.title || "Broadcast"), String(item.message_type || "text"), String(item.audience_count || 0), String(item.sent_count || 0), String(item.failed_count || 0)])} /></Panel>} />
       <Panel title="Order update audit" eyebrow="Retailer notifications"><DataTable headers={["Time", "Order", "Status", "Note", "By"]} rows={(dashboard?.orderEvents || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.sales_cart_id || item.draft_id || ""), String(item.status_label || ""), String(item.note || ""), String(item.created_by || "")])} /></Panel>

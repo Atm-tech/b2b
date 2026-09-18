@@ -6635,3 +6635,12 @@ button:disabled {
     padding-inline: 3px;
   }
 }
+
+/* Keep the shortage register readable within narrow operational workspaces. */
+.shortage-register, .shortage-register .stacked-sections, .shortage-register .panel { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.shortage-register .table-wrap { overflow-x: auto; max-width: 100%; }
+.shortage-register table { min-width: 560px; }
+.shortage-register td strong, .shortage-register td small { display: block; }
+.shortage-register .helper-text { overflow-wrap: anywhere; }
+.shortage-register details { margin-top: 12px; }
+.shortage-register summary { cursor: pointer; font-weight: 650; padding: 8px 0; }
