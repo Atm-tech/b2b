@@ -1,3 +1,4 @@
+import { PackingRegister } from "./PackingRegister";
 import { ConfirmationRegister } from "./ConfirmationRegister";
 import { ShortageRegister } from "./ShortageRegister";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -809,6 +810,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       })}
     </nav>
 
+    {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <PackingRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
     {!isMarketingWorkspace && (whatsappAdmin || (currentUser.roles || [currentUser.role]).includes("Sales")) && (activeSection === "Home" || activeSection === "Orders") ? <ConfirmationRegister sessionToken={sessionToken} /> : null}
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <ShortageRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
 

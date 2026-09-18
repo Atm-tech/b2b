@@ -1,3 +1,4 @@
+import { createPackingService } from "./whatsapp-packing.js";
 import { createConfirmationService } from "./whatsapp-confirmations.js";
 import { createShortageService, type ShortageChoice } from "./whatsapp-shortages.js";
 import { randomUUID } from "node:crypto";
@@ -15,9 +16,10 @@ import { dcoCheckboxFlow, validateDcoCheckboxSelection } from "./whatsapp-dco-ch
 import { isDeliveryCollectionAgent, discountPercentFromMrp, isValidMetaSignature, isValidWebhookChallenge, normalizeWhatsAppPhone, prepareWhatsAppListMessage, scoreWhatsAppProductQuery, unpackedWhatsAppSalesOrders } from "./whatsapp-utils.js";
 
 type JsonObject = Record<string, unknown>;
+export const packingService = createPackingService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const confirmationService = createConfirmationService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const shortageService = createShortageService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
-type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles">;
+type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles"> & { warehouseIds?: string[] };
 type RetailerProfile = {
   counterpartyId: string;
   retailerName: string;
@@ -1712,7 +1714,7 @@ function collectionRemaining(stop: DeliveryRouteStop) {
 }
 
 function packingResultButtons(cartId: string, verified: boolean) {
-  return [...(verified ? [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }] : []), { id: `wa-so:change:${encodeURIComponent(cartId)}`, title: "Change" }];
+  return [...(verified ? [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }] : []), { id: `wa-so:recheck:${encodeURIComponent(cartId)}`, title: "Recheck" }];
 }
 
 const cashDenominations = [500, 200, 100, 50, 20, 10] as const;
@@ -1949,7 +1951,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       const reading = await readWhatsAppWeightPhoto(text(media), packing.expectedKg, packing.toleranceKg);
       if (!reading) { packingManualWeightPending.set(from, packing); await sendText(from, `Weight photo saved for SO ${shortId(packing.cartId)}. Scale par dikh raha actual weight kg type karein, example: 8.45. Expected: ${packing.expectedKg.toFixed(3)} kg.`, "WarehouseWeight", packing.cartId); }
       else if (!reading.visible) { packingManualWeightPending.set(from, packing); await sendText(from, `Scale clearly read nahi hua. Actual weight kg mein type karein. Expected: ${packing.expectedKg.toFixed(3)} kg.`, "WarehouseWeight", packing.cartId); }
-      else { packingWeightResults.set(from, { cartId: packing.cartId, withinTolerance: reading.withinTolerance, weightKg: reading.weightKg, expectedKg: packing.expectedKg }); await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Sales Order',$2,$3,$4,'Operational',NOW())`, [id("WEIGHT"), packing.cartId, `WhatsApp scale read ${reading.weightKg.toFixed(3)} kg; expected ${packing.expectedKg.toFixed(3)} kg; difference ${reading.difference.toFixed(3)} kg; ${reading.withinTolerance ? "within tolerance" : "outside tolerance"}.`, user.fullName]); await sendButtons(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance - Packed select kar sakte hain." : "Tolerance se bahar - Change select karke SO verify karein."}`, packingResultButtons(packing.cartId, reading.withinTolerance), "WarehouseWeight", packing.cartId); }
+      else { if(!reading.withinTolerance)await packingService.open(packing.cartId,user,isWhatsAppAdminUser(user),reading.weightKg); packingWeightResults.set(from, { cartId: packing.cartId, withinTolerance: reading.withinTolerance, weightKg: reading.weightKg, expectedKg: packing.expectedKg }); await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Sales Order',$2,$3,$4,'Operational',NOW())`, [id("WEIGHT"), packing.cartId, `WhatsApp scale read ${reading.weightKg.toFixed(3)} kg; expected ${packing.expectedKg.toFixed(3)} kg; difference ${reading.difference.toFixed(3)} kg; ${reading.withinTolerance ? "within tolerance" : "outside tolerance"}.`, user.fullName]); await sendButtons(from, `Weight read: ${reading.weightKg.toFixed(3)} kg\nExpected: ${packing.expectedKg.toFixed(3)} kg\nDifference: ${reading.difference >= 0 ? "+" : ""}${reading.difference.toFixed(3)} kg\n${reading.withinTolerance ? "Within tolerance. Select Packed." : "Outside tolerance. Select Recheck and record the warehouse findings."}`, packingResultButtons(packing.cartId, reading.withinTolerance), "WarehouseWeight", packing.cartId); }
       return true;
     }
     const pending = deliveryProofPending.get(from);
@@ -2096,7 +2098,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }, 0));
     packingPhotoPending.set(from, { cartId, expectedKg, toleranceKg });
     const testOrder = lines.every((line) => line.productSku.startsWith("WA-TEST-"));
-    await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nExpected weight: ${expectedKg.toFixed(3)} kg.\n${testOrder ? "Test order: Enter weight se manually kg daalein, ya weight photo bhejein." : "Packed maal ki weight photo bhejein."} Weight verify hone ke baad Packed button aayega.`, [...(testOrder ? [{ id: `wa-so:weight:${encodeURIComponent(cartId)}`, title: "Enter weight" }] : []), { id: `wa-so:change:${encodeURIComponent(cartId)}`, title: "Change" }], "WarehouseSO", cartId);
+    await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nExpected weight: ${expectedKg.toFixed(3)} kg.\n${testOrder ? "Test order: Enter weight se manually kg daalein, ya weight photo bhejein." : "Packed maal ki weight photo bhejein."} Weight verify hone ke baad Packed button aayega.`, [...(testOrder ? [{ id: `wa-so:weight:${encodeURIComponent(cartId)}`, title: "Enter weight" }] : []), { id: `wa-so:recheck:${encodeURIComponent(cartId)}`, title: "Recheck" }], "WarehouseSO", cartId);
     return true;
   }
   if (action.startsWith("wa-so:weight:")) {
@@ -2112,6 +2114,13 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendText(from, `Actual weight kg mein type karein, example: 2.9. Expected: ${pending.expectedKg.toFixed(3)} kg. Test order mein photo optional hai.`, "WarehouseWeight", cartId);
     return true;
   }
+  if(action.startsWith("wa-so:finalize:")) {
+    const cartId=decodeURIComponent(action.split(':')[2]||'');
+    const review=await packingService.open(cartId,user,isWhatsAppAdminUser(user));
+    await packingService.finalize(review.id,user,isWhatsAppAdminUser(user));
+    await sendText(from,'Packing review finalized. The amended bill and eligible dispatch dockets have been saved.','PackingReview',review.id);
+    return true;
+  }
   if (action.startsWith("wa-so:packed:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
@@ -2123,23 +2132,17 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     const weightResult = packingWeightResults.get(from);
     if (!weightResult || weightResult.cartId !== cartId) { await sendText(from, "Scale photo ke baad actual weight kg type karein. Weight verification complete hone par hi Packed hoga."); return true; }
-    if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Weight ${weightResult.weightKg.toFixed(3)} kg hai, expected ${weightResult.expectedKg.toFixed(3)} kg se tolerance ke bahar hai. Change select karke quantity/product verify karein.`); return true; }
+    if (weightResult?.cartId === cartId && !weightResult.withinTolerance) { await sendText(from, `Recorded weight ${weightResult.weightKg.toFixed(3)} kg is outside tolerance for the expected ${weightResult.expectedKg.toFixed(3)} kg. Select Recheck to record findings or request an authorised weight override.`); return true; }
     await createSalesDockets({ linkedOrderIds: [cartId] }, user); staffProofs.delete(from);
     packingWeightResults.delete(from); packingPhotoProofs.delete(from); packingManualWeightPending.delete(from);
     await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO type karke ready SO select karke bundle banayein.`, "WarehouseSO", cartId);
     return true;
   }
-  if (action.startsWith("wa-so:change:")) {
-    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(user); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
-    if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
-    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
-    return true;
-  }
-  if (action.startsWith("wa-so:line:")) {
-    const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText);
-    packingChangePending.set(from, { cartId, sku });
-    await sendText(from, `*${sku}* selected hai. Nayi quantity sirf number mein bhejein. Product remove karne ke liye 0 bhejein.`, "WarehouseSO", cartId);
+  if (["wa-so:recheck:","wa-so:change:","wa-so:line:"].some(prefix=>action.startsWith(prefix))) {
+    const cartId=decodeURIComponent(action.split(":")[2]||"");
+    const review=await packingService.open(cartId,user,isWhatsAppAdminUser(user));
+    packingPhotoPending.delete(from);packingManualWeightPending.delete(from);packingWeightResults.delete(from);packingPhotoProofs.delete(from);staffProofs.delete(from);
+    await sendPackingRecheckInstructions(from,review);
     return true;
   }
   if (action.startsWith("wa-in:po:")) {
@@ -2345,9 +2348,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     packingManualWeightPending.delete(from);
     const difference = weightKg - manualPackingWeight.expectedKg; const withinTolerance = manualPackingWeight.expectedKg <= 0 || Math.abs(difference) <= manualPackingWeight.toleranceKg;
+    if(!withinTolerance)await packingService.open(manualPackingWeight.cartId,user,isWhatsAppAdminUser(user),weightKg);
     packingWeightResults.set(from, { cartId: manualPackingWeight.cartId, withinTolerance, weightKg, expectedKg: manualPackingWeight.expectedKg });
     await executeDatabaseQuery(`INSERT INTO note_records (id,entity_type,entity_id,note,created_by,visibility,created_at) VALUES ($1,'Sales Order',$2,$3,$4,'Operational',NOW())`, [id("WEIGHT"), manualPackingWeight.cartId, `${manualPackingWeight.manualTest ? "TEST: photo omitted; " : ""}WhatsApp manual scale weight ${weightKg.toFixed(3)} kg; expected ${manualPackingWeight.expectedKg.toFixed(3)} kg; difference ${difference.toFixed(3)} kg; ${withinTolerance ? "within tolerance" : "outside tolerance"}.`, user.fullName]);
-    await sendButtons(from, `Weight entered: ${weightKg.toFixed(3)} kg\nExpected: ${manualPackingWeight.expectedKg.toFixed(3)} kg\nDifference: ${difference >= 0 ? "+" : ""}${difference.toFixed(3)} kg\n${withinTolerance ? "Within tolerance - Packed dabayein." : "Tolerance se bahar - Change select karke quantity/product verify karein."}`, packingResultButtons(manualPackingWeight.cartId, withinTolerance), "WarehouseWeight", manualPackingWeight.cartId);
+    await sendButtons(from, `Weight entered: ${weightKg.toFixed(3)} kg\nExpected: ${manualPackingWeight.expectedKg.toFixed(3)} kg\nDifference: ${difference >= 0 ? "+" : ""}${difference.toFixed(3)} kg\n${withinTolerance ? "Within tolerance. Select Packed." : "Outside tolerance. Select Recheck and record the warehouse findings."}`, packingResultButtons(manualPackingWeight.cartId, withinTolerance), "WarehouseWeight", manualPackingWeight.cartId);
     return true;
   }
   if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT ") || normalized.startsWith("READY "))) {
@@ -2365,30 +2369,25 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Sales order select karein. Weight photo, Packed ya Change next aayega." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready SO", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
     return true;
   }
-  const selectedPackingChange = packingChangePending.get(from);
-  if (warehouseUser && selectedPackingChange) {
-    if (["CANCEL", "BACK", "MENU"].includes(normalized)) { packingChangePending.delete(from); await sendText(from, "Product change cancel ho gaya. SO type karke order dobara select karein.", "WarehouseSO", selectedPackingChange.cartId); return true; }
-    const quantity = numberValue(command);
-    const { cartId, sku } = selectedPackingChange;
-    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
-    if (!Number.isInteger(quantity) || quantity < 0) { await sendText(from, "Sirf whole-number quantity bhejein. Remove karne ke liye 0 bhejein."); return true; }
-    if (!lines.some((item) => item.productSku === sku)) { packingChangePending.delete(from); await sendText(from, "Selected product SO mein available nahi hai. SO dobara select karein."); return true; }
-    const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku === sku ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
-    if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
-    const first = lines[0]; await updateSalesOrderGroup(cartId, { paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: `${first.note || ""} | Warehouse packing change by ${user.fullName}`.trim(), status: "Booked", lines: nextLines }, user);
-    packingChangePending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
-    await sendText(from, `SO ${shortId(cartId)} update ho gaya. SO ${shortId(cartId)} select karke fresh weight photo bhejein, phir Packed dabayein.`, "WarehouseSO", cartId);
+  if(warehouseUser && normalized.startsWith("RECHECK ")) {
+    // Format: RECHECK <SO suffix> | <kg or BROKEN> | <reason> | SKU=quantity,SKU=quantity
+    const parts=command.split('|').map(part=>part.trim());
+    const suffix=parts[0].slice(8).trim();
+    const candidates=Array.from(new Set(snapshot.salesOrders.filter(item=>item.status==='Booked'&&matchSuffix(item.cartId||item.id,suffix)).map(item=>item.cartId||item.id)));
+    if(parts.length!==4||candidates.length!==1){await sendText(from,'Use RECHECK <SO reference> | <weight in kg or BROKEN> | <reason> | SKU=quantity,SKU=quantity. Include every product.');return true;}
+    const review=await packingService.open(candidates[0],user,isWhatsAppAdminUser(user));
+    const counts=new Map(parts[3].split(',').map(entry=>{const [sku,qty]=entry.trim().split('=');return [sku?.trim(),Number(qty)] as const;}));
+    const damaged=/damage|broken goods/i.test(parts[2]);
+    const report={reason:parts[2],machineBroken:parts[1].toUpperCase()==='BROKEN',weight:parts[1].toUpperCase()==='BROKEN'?null:Number(parts[1]),lines:review.original_json.map((line:any)=>({id:line.id,quantity:counts.get(line.product_sku)??NaN,issue:Number(counts.get(line.product_sku))<Number(line.quantity)?(damaged?'Damaged':'Missing'):'None'}))};
+    await packingService.report(review.id,report,user,isWhatsAppAdminUser(user));
+    await sendText(from,'Recheck recorded. The bill is unchanged until approvals and final confirmation are complete. Open the packing review register for the next action.','PackingReview',review.id);
     return true;
   }
-  if (warehouseUser && normalized.startsWith("CHANGE ")) {
-    const parts = command.trim().split(/\s+/); const cartId = snapshot.salesOrders.find((item) => matchSuffix(item.cartId || item.id, parts[1] || ""))?.cartId || ""; const sku = parts[2]; const quantity = numberValue(parts[3]);
-    const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
-    if (!cartId || !sku || parts.length < 4 || quantity < 0 || !lines.some((item) => item.productSku.toUpperCase() === sku.toUpperCase())) { await sendText(from, "Format: CHANGE <SO last6> <SKU> <new qty>. SO aur product select karke dobara try karein."); return true; }
-    const nextLines = lines.map((line) => ({ id: line.id, productSku: line.productSku, warehouseId: line.warehouseId, quantity: line.productSku.toUpperCase() === sku.toUpperCase() ? quantity : line.quantity, rate: line.rate, cdTodRate: line.cdTodRate, cdAmount: line.cdAmount, todAmount: line.todAmount, gstRate: line.gstRate, taxMode: line.taxMode })).filter((line) => line.quantity > 0);
-    if (!nextLines.length) { await sendText(from, "SO ke saare products remove nahi kar sakte. Sales Admin se cancel karwayein."); return true; }
-    const first = lines[0]; await updateSalesOrderGroup(cartId, { paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: `${first.note || ""} | Warehouse packing change by ${user.fullName}`.trim(), status: "Booked", lines: nextLines }, user);
-    packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
-    await sendText(from, `SO ${shortId(cartId)} update ho gaya. Weight photo bhejein aur SO ${shortId(cartId)} type karke Packed dabayein.`, "WarehouseSO", cartId);
+  if(warehouseUser && normalized.startsWith("CHANGE ")) {
+    const suffix=command.trim().split(/\s+/)[1]||'';
+    const order=snapshot.salesOrders.find(item=>item.status==='Booked'&&matchSuffix(item.cartId||item.id,suffix));
+    if(!order){await sendText(from,'Select an unpacked sales order before requesting a recheck.');return true;}
+    await sendPackingRecheckInstructions(from,await packingService.open(order.cartId||order.id,user,isWhatsAppAdminUser(user)));
     return true;
   }
   if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT "))) {
@@ -2544,7 +2543,7 @@ async function handleInboundMessage(message: JsonObject) {
   if (!saved) return;
   const guideCommand = messageType === "text" ? text((message.text as JsonObject | undefined)?.body) : "";
   if (trainingLinkReply(guideCommand) !== null) {
-    const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
+    const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles,warehouse_ids_json AS "warehouseIds"
       FROM users WHERE active=TRUE AND regexp_replace(COALESCE(mobile_number,''),'[^0-9]','','g') IN ($1,$2,$3)`,
       [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
     // Ambiguous shared numbers never combine staff permissions.
@@ -2552,7 +2551,7 @@ async function handleInboundMessage(message: JsonObject) {
     await sendText(from, trainingLinkReply(guideCommand, user?.roles?.length ? user.roles : user ? [user.role] : [], user ? isWhatsAppAdminUser(user) : false)!, user ? "StaffTraining" : "TrainingGuide", user ? String(user.id) : undefined);
     return;
   }
-  const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles
+  const staff = await executeDatabaseQuery<StaffUser>(`SELECT id,username,full_name AS "fullName",role,roles_json AS roles,warehouse_ids_json AS "warehouseIds"
     FROM users WHERE active=TRUE AND regexp_replace(COALESCE(mobile_number,''),'[^0-9]','','g') IN ($1,$2,$3)`,
     [from.replace(/\D/g, ""), from.replace(/\D/g, "").slice(-10), `0${from.replace(/\D/g, "").slice(-10)}`]);
   // Staff numbers never fall through to retailer onboarding, including voice
@@ -2750,6 +2749,12 @@ async function handleInboundMessage(message: JsonObject) {
       const choice = choices[choiceKey];
       if (!choice) throw new Error("Invalid shortage choice.");
       await shortageService.choose(caseId, choice, { counterpartyId: profile.counterpartyId });
+      return;
+    }
+    if(buttonId.startsWith("wa-pack-accept:")||buttonId.startsWith("wa-pack-reject:")) {
+      const [action,caseId,revision]=buttonId.split(':');
+      await packingService.retailerDecision(caseId,Number(revision),profile.counterpartyId,action==='wa-pack-accept');
+      await sendText(from,action==='wa-pack-accept'?'Revised quantities and bill accepted. Warehouse will now finalize packing.':'The proposed amendment was not accepted. Sales will follow up; packing remains on hold.','PackingReview',caseId);
       return;
     }
     if (buttonId.startsWith("wa-confirm:")) {
@@ -4584,12 +4589,14 @@ export async function processWhatsAppShortages() {
         const allCreated = linked.rows.length > 0 && drafts.every(d => d.status === "Completed" && d.sales_cart_id);
         if (noBalance && allCreated) {
           const cartIds = drafts.map(d=>d.sales_cart_id);
-          const unsettled = await executeDatabaseQuery(`SELECT id FROM sales_orders WHERE cart_id=ANY($1::text[]) AND status NOT IN ('Delivered','Closed')
+          const unsettled = await executeDatabaseQuery(`SELECT id FROM sales_orders WHERE cart_id=ANY($1::text[]) AND status NOT IN ('Delivered','Closed') AND NOT (status='Cancelled' AND quantity=0)
             UNION ALL SELECT id FROM ledger_entries WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND pending_amount>0`,[cartIds]);
           const unverified = await executeDatabaseQuery("SELECT id FROM payments WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND verification_status NOT IN ('Verified','Resolved','Rejected')",[cartIds]);
           const unsent = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_notifications WHERE case_id=$1 AND status<>'Sent' UNION ALL SELECT id FROM whatsapp_confirmation_notifications WHERE draft_id=ANY($2::text[]) AND status NOT IN ('Sent','Superseded')",[row.id,linked.rows.map(d=>d.id)]);
           const supplierOpen = await executeDatabaseQuery("SELECT 1 FROM purchase_orders WHERE cart_id=$1 AND status NOT IN ('Cancelled','Closed') AND quantity_received<quantity_ordered",[row.purchase_order_id||null]);
-          if (!supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
+          const packingOpen=await executeDatabaseQuery(`SELECT 1 FROM whatsapp_packing_reviews p WHERE p.cart_id=ANY($1::text[]) AND
+            (p.status<>'Finalized' OR EXISTS(SELECT 1 FROM whatsapp_packing_notifications n WHERE n.case_id=p.id AND n.status NOT IN ('Sent','Superseded')) OR (p.balance_draft_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM whatsapp_shortage_cases s WHERE s.draft_id=p.balance_draft_id AND s.closed_at IS NOT NULL)))`,[cartIds]);
+          if (!packingOpen.rowCount && !supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
         }
       } catch (error) {
         console.error("Shortage reconciliation failed", {caseId:row.id,error: error instanceof Error?error.message:"Unknown error"});
@@ -4741,4 +4748,46 @@ async function sendConfirmationFollowupNotification(notification:Record<string,u
     return true;
   }
   throw new Error('Unknown confirmation notification.');
+}
+
+
+async function sendPackingRecheckInstructions(phone:string,review:any) {
+  if(review.status==='Ready to Finalize') {
+    await sendButtons(phone,`Recheck and approvals are complete for SO ${review.cart_id}. Finalize the recorded quantities and bill.`,[{id:`wa-so:finalize:${encodeURIComponent(review.cart_id)}`,title:'Confirm and finalize'}],'PackingReview',review.id);
+    return;
+  }
+  const publicWeb=(process.env.PUBLIC_WEB_URL||'https://b2b-api-theta.vercel.app').replace(/\/$/,'');
+  await sendText(phone,`Packing recheck required\nSO: ${review.cart_id}\nRecount every item and recheck the scale.\nReply: RECHECK ${shortId(review.cart_id)} | <kg or BROKEN> | <reason, including missing or damaged goods> | ${review.original_json.map((line:any)=>`${line.product_sku}=${line.quantity}`).join(',')}\n\nOr open Packing rechecks in the warehouse workspace: ${publicWeb}\nA faulty-machine override needs WhatsApp Admin approval. Quantity changes require Sales review and retailer acceptance before finalization.`,'PackingReview',review.id);
+}
+
+let packingSweepRunning=false;
+export async function processWhatsAppPackingReviews() {
+  if(packingSweepRunning)return;packingSweepRunning=true;
+  try {
+    for(let index=0;index<30;index++) {
+      const notification=(await executeDatabaseQuery<Record<string,unknown>>(`UPDATE whatsapp_packing_notifications SET status='Sending',attempts=attempts+1,available_at=NOW()+INTERVAL '5 minutes'
+        WHERE id=(SELECT id FROM whatsapp_packing_notifications WHERE status IN ('Pending','Sending') AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`)).rows[0];
+      if(!notification)break;
+      try {const sent=await sendPackingReviewNotification(notification);await executeDatabaseQuery("UPDATE whatsapp_packing_notifications SET status=$2,last_error='' WHERE id=$1",[notification.id,sent?'Sent':'Superseded']);}
+      catch(error){await executeDatabaseQuery("UPDATE whatsapp_packing_notifications SET status=$2,last_error=$3,available_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",[notification.id,Number(notification.attempts)>=5?'Failed':'Pending',error instanceof Error?error.message:'Notification failed']);}
+    }
+  } finally {packingSweepRunning=false;}
+}
+async function sendPackingReviewNotification(notification:Record<string,unknown>) {
+  const row=(await executeDatabaseQuery<Record<string,any>>(`SELECT r.*,c.name AS retailer_name,wr.phone_e164 FROM whatsapp_packing_reviews r JOIN counterparties c ON c.id=r.shop_id LEFT JOIN whatsapp_retailers wr ON wr.counterparty_id=r.shop_id WHERE r.id=$1`,[notification.case_id])).rows[0];
+  if(!row||row.revision!==Number(notification.revision))return false;
+  if(notification.kind==='RetailerAmendment') {
+    if(row.status!=='Awaiting Retailer')return false;
+    if(!row.phone_e164)throw new Error('The retailer WhatsApp number is unavailable.');
+    const lines=row.original_json.map((line:any)=>{const next=row.report_json.lines.find((item:any)=>item.id===line.id);return `${line.product_name}: ${line.quantity} -> ${next.quantity} (${Number(line.quantity)-next.quantity} ${next.issue==='Damaged'?'damaged':'unavailable'})`;}).join('\n');
+    await sendButtons(row.phone_e164,compact(`Packing amendment for SO ${row.cart_id}\n${lines}\nRevised bill: Rs.${Number(row.proposed_total).toFixed(2)}\nUnavailable balance: ${row.balance_choice==='Pending'?'kept pending as a linked order':'cancelled'}\nReason: ${row.reason}\nConfirm the revised quantities and bill before packing is finalized.`,1024),[{id:`wa-pack-accept:${row.id}:${row.revision}`,title:'Accept revised bill'},{id:`wa-pack-reject:${row.id}:${row.revision}`,title:'Contact Sales'}],'PackingAmendment',text(notification.id));return true;
+  }
+  if(notification.kind==='Finalized') {
+    if(!row.phone_e164)throw new Error('The retailer WhatsApp number is unavailable.');
+    await sendText(row.phone_e164,`Packing finalized for SO ${row.cart_id}. Revised bill: Rs.${Number(row.proposed_total).toFixed(2)}.${row.balance_draft_id?` Pending balance reference: ${row.balance_draft_id}. Sales will follow up separately.`:''}${Number(row.credit_amount)>0?` Rs.${Number(row.credit_amount).toFixed(2)} requires financial review following the bill reduction.`:''}`,'PackingFinalized',text(notification.id));return true;
+  }
+  const recipients=(await executeDatabaseQuery<Record<string,unknown>>(`SELECT id,mobile_number FROM users WHERE active=TRUE AND (id=$1 OR id=$2 OR role='Admin' OR roles_json ? 'Admin' OR lower(username)=ANY($3::text[])) ORDER BY id`,[row.salesman_id,row.reported_by,[...whatsappAdminUsernames()]])).rows;
+  const failures:string[]=[];
+  for(const recipient of recipients){try{const ref=`${notification.id}:${recipient.id}`;if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='PackingStaffUpdate' AND related_entity_id=$1 AND status<>'Failed'",[ref])).rowCount)continue;if(!recipient.mobile_number)throw new Error(`Staff member ${recipient.id} has no WhatsApp number. The packing review remains visible in the register.`);await sendText(text(recipient.mobile_number),`Packing review ${row.id}\nSO: ${row.cart_id}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.reason||'Warehouse recheck is required.'}\nOpen Packing rechecks in your workspace. ${['Finalized','Financial Review'].includes(row.status)?'Packing is finalized.'+(Number(row.credit_amount)>0?` Credit/refund review required: Rs.${Number(row.credit_amount).toFixed(2)}.`:''):'Packing stays on hold until the required approvals and final confirmation are complete.'}`,'PackingStaffUpdate',ref);}catch(error){failures.push(error instanceof Error?error.message:'Staff notification failed');}}
+  if(!recipients.length)failures.push('No staff recipient is available.');if(failures.length)throw new Error(failures.join(' '));return true;
 }

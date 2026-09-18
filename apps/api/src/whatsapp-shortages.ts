@@ -226,6 +226,7 @@ export function createShortageService(deps: Dependencies) {
       const draftId=key("WAD");
       await db.query(`INSERT INTO whatsapp_order_drafts(id,counterparty_id,phone_e164,salesman_id,warehouse_id,source,status,billing_type,payment_mode,cash_timing,delivery_mode,note)
         VALUES($1,$2,$3,$4,$5,'Shortage balance','Needs Review',$6,$7,$8,$9,$10)`,[draftId,row.counterparty_id,root.phone_e164,row.salesman_id,row.warehouse_id,root.billing_type,root.payment_mode,root.cash_timing,root.delivery_mode,`Pending quantity released from shortage ${id}`]);
+      await db.query('UPDATE whatsapp_order_drafts SET delivery_charge_waived=$2 WHERE id=$1',[draftId,Boolean(root.delivery_charge_waived)]);
       for(const l of required){
         await db.query("INSERT INTO whatsapp_order_draft_lines(id,draft_id,product_sku,requested_quantity,approved_quantity,rate,cd_percent,tod_percent,gst_rate,tax_mode,note) VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,'')",[key("WADL"),draftId,l.product_sku,l.quantity,l.rate,l.cd_percent,l.tod_percent,l.gst_rate,l.tax_mode]);
         await db.query('UPDATE whatsapp_shortage_lines SET released_quantity=released_quantity+$3 WHERE case_id=$1 AND product_sku=$2',[id,l.product_sku,l.allocated]);
@@ -286,7 +287,7 @@ export function createShortageService(deps: Dependencies) {
       // Charge the configured delivery fee once across the original and balance portions.
       const firstPortion = !caseRow || !(await db.query("SELECT 1 FROM whatsapp_order_drafts WHERE sales_cart_id IS NOT NULL AND (id=$1 OR id IN (SELECT draft_id FROM whatsapp_shortage_portions WHERE case_id=$2))",[caseRow.draft_id,caseRow.id])).rowCount;
       const setting=(await db.query("SELECT value_json FROM settings WHERE key='delivery_charge'")).rows[0]?.value_json;
-      const charge=draft.delivery_mode==='Delivery' && firstPortion ? Number(setting?.amount||0):0;
+      const charge=draft.delivery_mode==='Delivery' && firstPortion && !draft.delivery_charge_waived ? Number(setting?.amount||0):0;
       if(charge>0){await db.query("UPDATE sales_orders SET delivery_charge=$2 WHERE id=(SELECT id FROM sales_orders WHERE cart_id=$1 ORDER BY id LIMIT 1)",[cartId,charge]);total+=charge;}
       await db.query("INSERT INTO ledger_entries(id,side,linked_order_id,party_name,goods_value,paid_amount,pending_amount,status) VALUES($1,'Sales',$2,$3,$4,0,$4,'Pending')",[key('LED'),cartId,draft.retailer_name,total]);
       await db.query("UPDATE whatsapp_order_drafts SET status='Completed',sales_cart_id=$2,retailer_confirmed_at=NOW(),completed_at=NOW() WHERE id=$1",[draftId,cartId]);

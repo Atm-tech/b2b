@@ -207,3 +207,15 @@ Acceptance scenarios:
 - Cancellation notification failures remain visible even after the draft becomes Denied. Shortage closure also waits for outstanding confirmation notifications.
 - Historical change-order buttons cannot reopen a denied draft. Retailer clear preserves follow-up history once a confirmation is tracked. New proformas start a fresh follow-up cycle; resends preserve their newly scheduled date.
 - Validation covers isolated PostgreSQL transactions, old-order visibility, ownership, overdue/retry versioning, cancellation/confirmation races and partial/full shortage accounting, plus desktop/mobile browser actions. Production verification is read-only.
+
+## Packing recheck and amended bill implementation
+
+- Warehouse starts with Recheck and records each line's actual quantity, missing/damaged reason, measured weight or a broken-scale declaration. An out-of-tolerance WhatsApp weight opens the same persistent review automatically.
+- An open review blocks normal packing, dispatch and direct sales-order edits. Warehouse access follows warehouse scope; Sales owns commercial decisions; WhatsApp Admin monitors all cases without an order-date cutoff.
+- A broken scale or weight outside tolerance requires a WhatsApp Admin override with a recorded reason. An override does not waive retailer acceptance of changed quantities.
+- For reduced quantities, Sales chooses whether the balance remains pending or is cancelled and sends the proposed bill for retailer acceptance. Until acceptance and warehouse final confirmation, the original bill remains unchanged. Rejection returns the case to Sales; Sales can request another recheck.
+- Warehouse explicitly confirms and finalizes after the required approvals. One transaction updates quantities, proportional discounts, tax, the ledger and positive-quantity dispatch dockets. Missing/damaged stock is blocked from reuse. Zero-quantity lines remain as cancelled history with zero amounts.
+- Pending demand becomes a linked shortage draft. A delivery charge already retained on the fulfilled portion is waived on its balance. Parent shortage closure waits for the packing review, notifications and linked balance to resolve.
+- An amount paid above the revised bill remains visible as Financial Review. Refund execution and verified financial closure belong to the later return/refund workflow and are not automated here.
+- Staff alerts and retailer amendment/finalization messages have persistent retries. Replayed acceptance and finalization are idempotent; superseded retailer buttons cannot apply an older revision.
+- Validation covers isolated PostgreSQL transactions and access controls, broken scales, rejected/stale amendments, reduced/all-zero quantities, inventory holds, linked balances and repeated finalization, plus desktop/mobile UI actions. Production verification is read-only.

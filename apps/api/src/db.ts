@@ -1,3 +1,4 @@
+import { assertNoPackingHold } from "./packing-guards.js";
 import "dotenv/config";
 import { isWhatsAppWarehouseUser, whatsappWarehouseSnapshot } from "./warehouse-order-visibility.js";
 import { isDeliveryCollectionAgent } from "./whatsapp-utils.js";
@@ -540,7 +541,7 @@ export async function executeDatabaseQuery<T extends QueryResultRow>(text: strin
 export async function executeDatabaseTransaction<T>(run: (client: DbClient) => Promise<T>) {
   await ready;
   const result = await withTransaction(run);
-  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries"]) {
+  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries", "inventory_lots", "delivery_dockets"]) {
     invalidateSnapshotCacheForSql(`UPDATE ${table} SET`);
   }
   return result;
@@ -3027,10 +3028,11 @@ async function assertPurchaseOrdersOperational(orderIds: string[], client: DbCli
 async function assertSalesOrdersOperational(orderIds: string[], client: DbClient) {
   const normalizedOrderIds = Array.from(new Set(orderIds.map((item) => item.trim()).filter(Boolean)));
   if (normalizedOrderIds.length === 0) throw new Error("Select at least one sales order.");
+  await assertNoPackingHold(client, normalizedOrderIds);
   const orders = await query<Record<string, unknown>>(
     `SELECT id, cart_id, status, delivery_mode
      FROM sales_orders
-     WHERE id = ANY($1::text[]) OR cart_id = ANY($1::text[])`,
+     WHERE (id = ANY($1::text[]) OR cart_id = ANY($1::text[])) AND NOT (status='Cancelled' AND quantity=0)`,
     [normalizedOrderIds],
     client
   );
@@ -4116,6 +4118,7 @@ export async function updateSalesOrder(orderId: string, payload: {
     ? ((order.cart_id ? numberValue(order.delivery_charge) : settings.deliveryCharge.amount))
     : 0;
   await withTransaction(async (client) => {
+    await assertNoPackingHold(client,[orderId]);
     const currentStatus = stringValue(order.status) as SalesOrder["status"];
     const shouldPostOutboundInventory =
       payload.deliveryMode !== "Delivery" &&
@@ -4179,6 +4182,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
   const settings = await mapSettings();
 
   await withTransaction(async (client) => {
+    await assertNoPackingHold(client,[orderId]);
     const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
     const currentQtyByKey = new Map<string, number>();
     const nextQtyByKey = new Map<string, number>();

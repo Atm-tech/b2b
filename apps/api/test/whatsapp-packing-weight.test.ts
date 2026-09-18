@@ -9,7 +9,7 @@ function fixture(testProduct = true) {
   const sku = testProduct ? "WA-TEST-SOAP-12" : "REAL-SOAP";
   const replies: any[] = []; const packed: any[] = [];
   const maps = Object.fromEntries(["staffProofs", "deliveryProofPending", "cashCollectionPending", "paymentProofPending", "packingPhotoPending", "packingWeightResults", "packingPhotoProofs", "packingManualWeightPending", "packingChangePending", "dcoBuildSessions", "dcoHandoverSelections", "receiptSessions", "collectionConfirmations"].map((key) => [key, new Map()]));
-  const deps = {...maps, unpackedWhatsAppSalesOrders, text: (v: unknown) => String(v ?? ""), numberValue: (v: unknown) => Number(v), staffHasRole: () => true, shortId: (s: string) => s,
+  const deps = {...maps, packingService:{open:async()=>({id:"CASE",cart_id:"CART-1",original_json:[]})},isWhatsAppAdminUser:()=>false,sendPackingRecheckInstructions:async()=>{replies.push({body:"Recheck required",buttons:[]});}, unpackedWhatsAppSalesOrders, text: (v: unknown) => String(v ?? ""), numberValue: (v: unknown) => Number(v), staffHasRole: () => true, shortId: (s: string) => s,
     getSnapshot: async () => ({ salesOrders: [{id:"SO-1",cartId:"CART-1",status:"Booked",deliveryMode:"Delivery",productSku:sku,quantity:10,shopName:"Test Shop"}], products:[{sku,defaultWeightKg:0.1,toleranceKg:0,tolerancePercent:0}], deliveryTasks:[],deliveryDockets:[],counterparties:[] }),
     sendText: async (_p: string, body: string) => { replies.push({body,buttons:[]}); },
     sendButtons: async (_p: string, body: string, buttons: any[]) => { replies.push({body,buttons}); },
@@ -21,7 +21,7 @@ function fixture(testProduct = true) {
 }
 test("test packing shows Packed only after manual weight and creates real dockets", async () => {
   const f=fixture(); await f.action("wa-so:order:CART-1");
-  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Enter weight","Change"]);
+  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Enter weight","Recheck"]);
   await f.action("wa-so:packed:CART-1"); assert.equal(f.packed.length,0);
   await f.action("wa-so:weight:CART-1");
   await f.weight("NaN"); assert.equal(f.packed.length,0);
@@ -30,12 +30,12 @@ test("test packing shows Packed only after manual weight and creates real docket
 });
 test("out of tolerance weight does not expose Packed", async () => {
   const f=fixture(); await f.action("wa-so:order:CART-1"); await f.action("wa-so:weight:CART-1"); await f.weight("5");
-  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Change"]);
+  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Recheck"]);
   await f.action("wa-so:packed:CART-1"); assert.equal(f.packed.length,0);
 });
 test("normal products cannot use photo-free test weight", async () => {
   const f=fixture(false); await f.action("wa-so:order:CART-1");
-  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Change"]);
+  assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Recheck"]);
   await f.action("wa-so:weight:CART-1"); assert.match(f.replies.at(-1).body,/test order dobara/);
   await f.action("wa-so:packed:CART-1"); assert.equal(f.packed.length,0);
 });

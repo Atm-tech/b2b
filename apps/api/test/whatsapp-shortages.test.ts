@@ -1,3 +1,5 @@
+import { createPackingService } from "../src/whatsapp-packing.js";
+import { assertNoPackingHold } from "../src/packing-guards.js";
 import { createConfirmationService } from "../src/whatsapp-confirmations.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -54,7 +56,7 @@ test("supplier alerts reach other staff despite one missing phone and retries do
 
 test("confirmation reminders ignore cancelled or superseded confirmations and overdue alerts retry per recipient",async()=>{
   const source=fs.readFileSync(path.join(root,'apps/api/src/whatsapp-integration.ts'),'utf8');
-  const snippet=source.slice(source.indexOf('async function sendConfirmationFollowupNotification('));
+  const snippet=source.slice(source.indexOf('async function sendConfirmationFollowupNotification('),source.indexOf('async function sendPackingRecheckInstructions('));
   const row:any={id:'DRAFT',status:'Awaiting Retailer',version:2,due_at:'2020-01-01',phone_e164:'919999999999',salesman_id:1,retailer_name:'Retailer',salesman_name:'Sales'};
   const sent=new Set<string>();const messages:string[]=[];let buttons=0;
   const deps={text:(v:any)=>String(v||''),numberValue:(v:any)=>Number(v||0),whatsappAdminUsernames:()=>new Set(['wa.sales']),compactProforma:()=>'',loadDraft:async()=>({draft:row,lines:[{approved_quantity:24}]}),
@@ -85,6 +87,8 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
   const pool=new pg.Pool({...config,options:`-c search_path=${schema}`});
   const service=createShortageService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
   const confirmations=createConfirmationService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
+  const packing=createPackingService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
+  const warehouse={id:3,fullName:'Warehouse',role:'Warehouse Manager',roles:['Warehouse Manager'],warehouseIds:['C21']};
   const sales={id:1,username:"sales",fullName:"Sales",role:"Sales",roles:["Sales"]};
   const purchaser={id:2,username:"purchase",fullName:"Purchaser",role:"Purchaser",roles:["Purchaser"]};
   const approve={decision:"Approve" as const,supplierId:"SUP",expectedAt:new Date(Date.now()+86400000).toISOString(),note:"Approved",lines:[{productSku:"SOAP",rate:20,gstRate:18}]};
@@ -362,6 +366,65 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
       const run=new Function(...Object.keys(deps),'return (async()=>{'+ts.transpileModule(snippet,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText+'})()');
       await assert.rejects(()=>run(...Object.values(deps)),/no longer editable/);assert.equal(picker,false);
       assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Denied');
+    });
+    async function packingOrder(){const id=await unconfirmed();const cart=await service.confirm(id);const review=await packing.open(cart,warehouse);return {id,cart,review};}
+    const recheck=(row:any,quantity:number,weight:number|null,machineBroken=false)=>({lines:row.original_json.map((line:any)=>({id:line.id,quantity,issue:quantity<line.quantity?'Missing' as const:'None' as const})),weight,machineBroken,reason:machineBroken?'Scale is broken; all quantities physically recounted':'Physical recount completed'});
+    await t.test("packing recheck is durable, warehouse-scoped and blocks dispatch and unapproved finalization",async()=>{
+      const {cart,review}=await packingOrder();assert.equal((await packing.open(cart,warehouse)).id,review.id);
+      assert.equal((await packing.list({...warehouse,warehouseIds:['OTHER']})).cases.some(item=>item.id===review.id),false);
+      await assert.rejects(()=>packing.report(review.id,recheck(review,60,6),{...warehouse,warehouseIds:['OTHER']}));
+      await assert.rejects(()=>packing.report(review.id,recheck(review,60,6),sales));
+      await assert.rejects(()=>packing.finalize(review.id,warehouse));
+      await assert.rejects(()=>assertNoPackingHold(pool,[cart]),/recheck is unresolved/);
+      await packing.report(review.id,recheck(review,60,6),warehouse);await packing.finalize(review.id,warehouse);
+      assert.equal((await pool.query('SELECT quantity FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].quantity,60);
+      await packing.finalize(review.id,warehouse);assert.equal((await pool.query('SELECT count(*)::int AS n FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].n,1);
+    });
+    await t.test("broken scale requires reasoned Admin override after the physical recount",async()=>{
+      const {review}=await packingOrder();await packing.report(review.id,recheck(review,60,null,true),warehouse);
+      assert.equal((await packing.list(sales)).cases.find(item=>item.id===review.id).status,'Override Approval Required');
+      await assert.rejects(()=>packing.act(review.id,{action:'override',note:'Approve'},warehouse));
+      await assert.rejects(()=>packing.act(review.id,{action:'override',note:''},sales,true));
+      await assert.rejects(()=>packing.finalize(review.id,warehouse));
+      await packing.act(review.id,{action:'override',note:'Independent recount verified; scale sent for repair'},sales,true);
+      await packing.finalize(review.id,warehouse);
+      const proof=(await pool.query('SELECT weighing_proof_name FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].weighing_proof_name;assert.match(proof,/override approved/);assert.match(proof,/scale sent for repair/);
+    });
+    await t.test("quantity amendment waits for retailer acceptance then updates bill, ledger and docket exactly once",async()=>{
+      const {cart,review}=await packingOrder();const before=(await pool.query('SELECT goods_value FROM ledger_entries WHERE linked_order_id=$1',[cart])).rows[0].goods_value;
+      await packing.report(review.id,recheck(review,48,4.8),warehouse);
+      assert.equal((await pool.query('SELECT quantity FROM sales_orders WHERE cart_id=$1',[cart])).rows[0].quantity,60);
+      await assert.rejects(()=>packing.finalize(review.id,warehouse));
+      await packing.act(review.id,{action:'propose',balance:'Cancel',note:'Retailer to approve 48; cancel 12'},sales);
+      const proposed=(await packing.list(sales)).cases.find(item=>item.id===review.id);assert.ok(proposed.proposed_total<before);
+      await assert.rejects(()=>packing.retailerDecision(review.id,proposed.revision,'WRONG',true));
+      await packing.retailerDecision(review.id,proposed.revision,'SHOP',true);await packing.retailerDecision(review.id,proposed.revision,'SHOP',true);
+      await Promise.all([packing.finalize(review.id,warehouse),packing.finalize(review.id,warehouse)]);
+      const order=(await pool.query('SELECT * FROM sales_orders WHERE cart_id=$1',[cart])).rows[0];assert.equal(order.quantity,48);assert.equal(order.cd_amount,72);assert.equal(order.total_amount,1368);assert.equal(order.delivery_charge,10);
+      const ledger=(await pool.query('SELECT * FROM ledger_entries WHERE linked_order_id=$1',[cart])).rows[0];assert.equal(ledger.goods_value,1378);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM delivery_dockets WHERE sales_order_id=$1',[order.id])).rows[0].n,1);
+      assert.ok((await pool.query("SELECT quantity_blocked FROM inventory_lots WHERE lot_id='LOT'")).rows[0].quantity_blocked>=12);
+    });
+    await t.test("retailer rejection and stale amendment buttons keep packing blocked",async()=>{
+      const {review}=await packingOrder();await packing.report(review.id,recheck(review,48,4.8),warehouse);await packing.act(review.id,{action:'propose',balance:'Cancel',note:'Review revised order'},sales);
+      const proposed=(await packing.list(sales)).cases.find(item=>item.id===review.id);await packing.retailerDecision(review.id,proposed.revision,'SHOP',false);
+      await assert.rejects(()=>packing.finalize(review.id,warehouse));await assert.rejects(()=>packing.retailerDecision(review.id,proposed.revision,'SHOP',true));
+      await packing.act(review.id,{action:'recheck',note:'Retailer requests recount'},sales);assert.equal((await packing.list(sales)).cases.find(item=>item.id===review.id).status,'Recheck Required');
+    });
+    await t.test("packing pending balance stays linked and does not charge delivery twice",async()=>{
+      await pool.query("INSERT INTO whatsapp_retailers(counterparty_id,phone_e164,salesman_id,default_warehouse_id,created_by) VALUES('SHOP','919999999999',1,'C21','test') ON CONFLICT(counterparty_id) DO NOTHING");
+      const {review}=await packingOrder();await packing.report(review.id,recheck(review,48,4.8),warehouse);await packing.act(review.id,{action:'propose',balance:'Pending',note:'48 now and 12 pending'},sales);
+      const proposed=(await packing.list(sales)).cases.find(item=>item.id===review.id);await packing.retailerDecision(review.id,proposed.revision,'SHOP',true);const finalized=await packing.finalize(review.id,warehouse);assert.ok(finalized.balance_draft_id);
+      const balance=(await pool.query('SELECT * FROM whatsapp_order_drafts WHERE id=$1',[finalized.balance_draft_id])).rows[0];assert.equal(balance.delivery_charge_waived,true);
+      assert.equal((await pool.query('SELECT requested_quantity FROM whatsapp_order_draft_lines WHERE draft_id=$1',[balance.id])).rows[0].requested_quantity,12);
+      assert.ok(await service.detect(balance.id));
+    });
+    await t.test("fully unavailable and prepaid amendments create no docket and keep excess payment visible for financial review",async()=>{
+      const {cart,review}=await packingOrder();await pool.query("INSERT INTO payments(id,side,linked_order_id,amount,mode,verification_status,created_by) VALUES('PACK-PAY','Sales',$1,100,'NEFT','Verified','test')",[cart]);
+      await packing.report(review.id,recheck(review,0,0),warehouse);await packing.act(review.id,{action:'propose',balance:'Cancel',note:'Retailer to cancel unavailable items'},sales);const proposed=(await packing.list(sales)).cases.find(item=>item.id===review.id);await packing.retailerDecision(review.id,proposed.revision,'SHOP',true);
+      const result=await packing.finalize(review.id,warehouse);assert.equal(result.status,'Financial Review');assert.equal(result.credit_amount,100);assert.equal(result.proposed_total,0);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].n,0);
+      assert.equal((await pool.query('SELECT quantity,status FROM sales_orders WHERE cart_id=$1',[cart])).rows[0].status,'Cancelled');
     });
     await t.test("old cases remain visible and notification failures can be retried",async()=>{
       const id=await draft();const caseId=(await service.detect(id))!;await pool.query("UPDATE whatsapp_shortage_cases SET created_at=NOW()-INTERVAL '90 days' WHERE id=$1",[caseId]);

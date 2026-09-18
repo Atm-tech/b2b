@@ -6644,3 +6644,5 @@ button:disabled {
 .shortage-register .helper-text { overflow-wrap: anywhere; }
 .shortage-register details { margin-top: 12px; }
 .shortage-register summary { cursor: pointer; font-weight: 650; padding: 8px 0; }
+
+.shortage-register .packing-machine-choice input { width: 18px; height: 18px; min-height: 18px; padding: 0; box-shadow: none; flex: 0 0 18px; }

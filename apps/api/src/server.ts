@@ -86,6 +86,8 @@ import {
   handleWhatsAppWebhook,
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
+  packingService,
+  processWhatsAppPackingReviews,
   confirmationService,
   processWhatsAppConfirmations,
   shortageService,
@@ -1507,6 +1509,20 @@ app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, as
   }, currentUser);
 }));
 
+app.get("/whatsapp/packing-reviews",async(req,res)=>{
+  try{const user=await requireWhatsAppPilot(req,["Admin","Sales","Warehouse Manager"]);res.json(await packingService.list(user,isWhatsAppAdminUser(user)));}
+  catch(error){res.status(403).json({message:error instanceof Error?error.message:"Access denied."});}
+});
+app.post("/whatsapp/packing-reviews/:id/:action",async(req,res)=>wrap(res,async()=>{
+  const user=await requireWhatsAppPilot(req,["Admin","Sales","Warehouse Manager"]);const admin=isWhatsAppAdminUser(user);
+  if(req.params.action==='open')await packingService.open(req.params.id,user,admin);
+  else if(req.params.action==='report')await packingService.report(req.params.id,{lines:req.body?.lines,reason:optionalString(req.body?.reason)||'',weight:req.body?.weight===null?null:Number(req.body?.weight),machineBroken:req.body?.machineBroken===true},user,admin);
+  else if(req.params.action==='finalize')await packingService.finalize(req.params.id,user,admin);
+  else await packingService.act(req.params.id,{action:req.params.action,note:optionalString(req.body?.note)||'',balance:optionalString(req.body?.balance)},user,admin);
+  void processWhatsAppPackingReviews().catch(error=>console.error('Packing review notification failed',error));
+  return packingService.list(user,admin);
+}));
+
 app.get("/whatsapp/confirmations", async (req,res) => {
   try {const user=await requireWhatsAppPilot(req,["Admin","Sales"]);res.json(await confirmationService.list(user,isWhatsAppAdminUser(user)));}
   catch(error){res.status(403).json({message:error instanceof Error?error.message:"Access denied."});}
@@ -1718,6 +1734,8 @@ app.listen(port, () => {
   }
   void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
+  void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));
+  setInterval(()=>{void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));},30_000).unref();
   void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));
   setInterval(()=>{void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));},30_000).unref();
   void autoCloseInactiveWhatsAppLiveChats().catch((error) => console.error("WhatsApp live-chat inactivity sweep failed", error));

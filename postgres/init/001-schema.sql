@@ -709,3 +709,52 @@ CREATE TABLE IF NOT EXISTS whatsapp_confirmation_notifications (
 );
 CREATE INDEX IF NOT EXISTS whatsapp_confirmation_due_idx ON whatsapp_confirmation_followups(due_at) WHERE active;
 CREATE INDEX IF NOT EXISTS whatsapp_confirmation_notifications_due_idx ON whatsapp_confirmation_notifications(available_at) WHERE status IN ('Pending','Sending');
+
+
+CREATE TABLE IF NOT EXISTS whatsapp_packing_reviews (
+  id TEXT PRIMARY KEY,
+  cart_id TEXT NOT NULL UNIQUE,
+  shop_id TEXT NOT NULL,
+  salesman_id BIGINT NOT NULL,
+  warehouse_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Recheck Required',
+  original_json JSONB NOT NULL,
+  report_json JSONB,
+  reason TEXT NOT NULL DEFAULT '',
+  expected_weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+  measured_weight DOUBLE PRECISION,
+  override_required BOOLEAN NOT NULL DEFAULT FALSE,
+  override_approved_by TEXT,
+  override_reason TEXT NOT NULL DEFAULT '',
+  balance_choice TEXT,
+  balance_draft_id TEXT REFERENCES whatsapp_order_drafts(id),
+  revision INTEGER NOT NULL DEFAULT 1,
+  proposed_total DOUBLE PRECISION,
+  retailer_accepted_at TIMESTAMPTZ,
+  credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  reported_by BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_packing_events (
+  id BIGSERIAL PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES whatsapp_packing_reviews(id),
+  action TEXT NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_packing_notifications (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES whatsapp_packing_reviews(id),
+  revision INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_packing_notification_due_idx ON whatsapp_packing_notifications(available_at) WHERE status IN ('Pending','Sending');
+
+ALTER TABLE whatsapp_order_drafts ADD COLUMN IF NOT EXISTS delivery_charge_waived BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE whatsapp_packing_reviews ADD COLUMN IF NOT EXISTS accepted_revision INTEGER;
