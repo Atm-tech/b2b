@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
+import {returnFinancialStatus} from './delivery-return-receipts.js';
 import {calculateSalesAmounts} from '@aapoorti-b2b/domain';
 type Db=Pick<PoolClient,'query'>;
 const money=(value:number)=>Math.round((value+Number.EPSILON)*100)/100;
@@ -57,4 +58,5 @@ export async function syncDeliveryExceptionPayment(db:Db,row:any){
  const stops=task.route_json.map((s:any)=>s.orderId!==row.order_id?s:{...s,amountToPay:total,collectionAmount:paid,paid:paid>=total,collectionStatus:paid>=total?'Collected':'Pending',paymentRequired:total>paid,picked:paid>=total,collectionMode:latest?.mode,collectionReference:latest?.reference_number,collectionProofName:latest?.proof_name||s.collectionProofName});
  await db.query('UPDATE delivery_tasks SET route_json=$2::jsonb,last_action_at=NOW() WHERE id=$1',[row.task_id,JSON.stringify(stops)]);
  await db.query('UPDATE delivery_exceptions SET credit_amount=$2,updated_at=NOW() WHERE id=$1',[row.id,Math.max(0,money(paid-total))]);
+ if(row.warehouse_received_at){const status=await returnFinancialStatus(db,row);const next=(await db.query('UPDATE delivery_exceptions SET status=$2,revision=revision+1 WHERE id=$1 AND status<>$2 RETURNING revision',[row.id,status])).rows[0];if(next){await db.query("INSERT INTO delivery_exception_events(case_id,action,actor,note) VALUES($1,$2,'System',$3)",[row.id,status==='Closed'?'Return financially closed':'Financial review reopened','Physical warehouse receipt retained; status reconciled against verified payments.']);await db.query('INSERT INTO delivery_exception_notifications(id,case_id,revision) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[`${row.id}:${next.revision}`,row.id,next.revision]);}}
 }

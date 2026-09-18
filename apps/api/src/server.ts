@@ -1511,6 +1511,15 @@ app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, as
   }, currentUser);
 }));
 
+const returnPhotoUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:8*1024*1024},fileFilter:(_req,file,cb)=>{if(!['image/jpeg','image/png','image/webp'].includes(file.mimetype))return cb(new Error('A JPEG, PNG or WebP photo is required.'));cb(null,true);}});
+app.post('/delivery-exceptions/:id/photos/:stage',async(req,res,next)=>{
+  try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);await deliveryExceptionService.authorizePhoto(req.params.id,req.params.stage,typeof req.query.lineId==='string'?req.query.lineId:null,user,isWhatsAppAdminUser(user));returnPhotoUpload.single('photo')(req,res,next);}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Photo upload denied.'});}
+},async(req,res)=>wrap(res,async()=>{
+  const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);if(!req.file)throw Error('Take or upload a photo first.');await deliveryExceptionService.addPhoto(req.params.id,req.params.stage,typeof req.query.lineId==='string'?req.query.lineId:null,req.file.buffer,user,isWhatsAppAdminUser(user));return deliveryExceptionService.list(user,isWhatsAppAdminUser(user));
+}));
+app.get('/delivery-exceptions/:id/photos/:photoId',async(req,res)=>{
+  try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);const photo=await deliveryExceptionService.photo(req.params.id,req.params.photoId,user,isWhatsAppAdminUser(user));res.setHeader('Content-Type',photo.mime_type);res.setHeader('Cache-Control','private, no-store');res.send(photo.image_bytes);}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Photo access denied.'});}
+});
 app.get('/delivery-exceptions',async(req,res)=>{
   try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);res.json(await deliveryExceptionService.list(user,isWhatsAppAdminUser(user)));}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Access denied.'});}
 });
@@ -1522,6 +1531,9 @@ app.post('/delivery-exceptions/:id/:action',async(req,res)=>wrap(res,async()=>{
   else if(action==='withdraw')await deliveryExceptionService.withdraw(id,v,user,admin);
   else if(action==='decide')await deliveryExceptionService.decide(id,{decision:requiredString(req.body?.decision,'Decision'),note:requiredString(req.body?.note,'Reason'),dueAt:optionalString(req.body?.dueAt),revision:v},user,admin);
   else if(action==='retry')await deliveryExceptionService.retryNotifications(id,user,admin);
+  else if(action==='handover')await deliveryExceptionService.handover(id,v,user,admin);
+  else if(action==='save-receipt')await deliveryExceptionService.saveReceipt(id,req.body?.receipt,v,user);
+  else if(action==='receive')await deliveryExceptionService.finalizeReceipt(id,v,user);
   else if(action==='collect'){
     const row=await deliveryExceptionService.get(id,user,admin);
     if(!row.canEdit||!row.bill_adjusted_at)throw Error('The assigned agent can collect after seller approval.');

@@ -785,3 +785,20 @@ ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS adjusted_total DOUBLE P
 ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS accepted_json JSONB;
 ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS decision_revision INTEGER;
+
+CREATE TABLE IF NOT EXISTS delivery_exception_photos (
+ id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES delivery_exceptions(id),
+ stage TEXT NOT NULL CHECK(stage IN ('Agent report','Agent handover','Warehouse receipt')),
+ line_id TEXT, image_bytes BYTEA NOT NULL, mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+ sha256 TEXT NOT NULL, source TEXT NOT NULL, source_message_id TEXT,
+ created_by BIGINT NOT NULL REFERENCES users(id), created_by_name TEXT NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_exception_photo_message_idx ON delivery_exception_photos(source_message_id) WHERE source_message_id IS NOT NULL;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS handover_at TIMESTAMPTZ;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS receipt_json JSONB;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS warehouse_received_at TIMESTAMPTZ;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS warehouse_received_by BIGINT;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS receipt_finalized_revision INTEGER;
+
+CREATE INDEX IF NOT EXISTS delivery_exception_photos_case_idx ON delivery_exception_photos(case_id,stage,line_id);

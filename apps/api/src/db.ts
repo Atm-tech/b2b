@@ -543,7 +543,7 @@ export async function executeDatabaseQuery<T extends QueryResultRow>(text: strin
 export async function executeDatabaseTransaction<T>(run: (client: DbClient) => Promise<T>) {
   await ready;
   const result = await withTransaction(run);
-  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries", "inventory_lots", "delivery_dockets", "delivery_tasks", "payments"]) {
+  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries", "inventory_lots", "delivery_dockets", "delivery_tasks", "payments", "sales_returns"]) {
     invalidateSnapshotCacheForSql(`UPDATE ${table} SET`);
   }
   return result;
@@ -2589,6 +2589,9 @@ export async function createSalesReturn(payload: {
   if (payload.lines.length === 0) throw new Error("Select at least one product for sales return.");
   const returnGroupId = makeId("SRTN");
   await withTransaction(async (client) => {
+    const returnOrderIds=[...new Set([payload.linkedOrderId,...(await query("SELECT COALESCE(cart_id,id) AS id FROM sales_orders WHERE id=ANY($1::text[])",[payload.lines.map(l=>l.linkedOrderLineId||'')],client)).rows.map(r=>stringValue(r.id))].filter(Boolean))];
+    await query("SELECT id FROM delivery_tasks WHERE side='Sales' AND EXISTS(SELECT 1 FROM jsonb_array_elements(route_json) s WHERE s->>'orderId'=ANY($1::text[])) ORDER BY id FOR UPDATE",[returnOrderIds],client);
+    if((await query("SELECT 1 FROM delivery_exceptions WHERE order_id=ANY($1::text[]) AND bill_adjusted_at IS NOT NULL",[returnOrderIds],client)).rowCount)throw Error('Use the linked delivery exception warehouse receipt. The return bill was already adjusted.');
     for (const line of payload.lines) {
       if (line.quantity <= 0) throw new Error("Return quantity must be greater than zero.");
       if (line.rate < 0) throw new Error("Rate cannot be negative.");

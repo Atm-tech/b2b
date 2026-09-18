@@ -522,6 +522,7 @@ export type DeliveryRouteStop = {
   picked: boolean;
   delivered?: boolean;
   deliveryExceptionId?: string;
+  returnReceived?: boolean;
   deliveryProofName?: string;
   collectionStatus?: "Pending" | "Later" | "Collected";
   collectionMode?: PaymentMode;
