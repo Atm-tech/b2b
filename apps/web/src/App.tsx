@@ -1514,7 +1514,7 @@ function App() {
         </aside> : null}
         <div className="content-shell">
           {!isWhatsAppWorkspaceUser && currentRoles.some(role=>["Admin","Sales","Warehouse Manager"].includes(role)) && ["Overview","SalesOrders","Delivery"].includes(activeView) ? <PackingRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
-          {!isWhatsAppWorkspaceUser && currentRoles.some(role=>["Admin","Sales","Delivery","Out Delivery","Warehouse Manager"].includes(role)) && ["Overview","SalesOrders","Delivery","CurrentDelivery"].includes(activeView) ? <DeliveryExceptionRegister snapshot={snapshot} sessionToken={sessionToken} currentUser={currentUser} /> : null}
+          {!isWhatsAppWorkspaceUser && currentRoles.some(role=>["Admin","Sales","Delivery","Out Delivery","Warehouse Manager"].includes(role)) && ["Overview","SalesOrders","Delivery","CurrentDelivery"].includes(activeView) ? <DeliveryExceptionRegister snapshot={snapshot} sessionToken={sessionToken} currentUser={currentUser} onChanged={()=>void refresh()} /> : null}
           {!isWhatsAppWorkspaceUser && currentRoles.includes("Purchaser") && ["Overview", "Purchase", "Purchases"].includes(activeView) ? <ShortageRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
           <Suspense fallback={<div className="panel"><span className="eyebrow">Loading</span><p>Opening workspace…</p></div>}>
           {!effectiveSimpleMode && activeView === "Overview" ? <section className={isAccountsUser ? "metric-grid metric-collage-grid metric-collage-grid-accounts" : "metric-grid metric-collage-grid"}>

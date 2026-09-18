@@ -1855,7 +1855,9 @@ export function DeliveryJobsView({
   }
 
   function taskDraft(task: DeliveryTask) {
-    return drafts[task.id] || {
+    const saved=drafts[task.id];
+    if(saved)return {...saved,routeStops:saved.routeStops.map(stop=>{const live=task.routeStops.find(s=>s.orderId===stop.orderId);return (stop.deliveryExceptionId||live?.deliveryExceptionId)&&live?live:stop;})};
+    return {
       routeHint: task.routeHint || "",
       weightProofName: task.weightProofName || "",
       cashProofName: task.cashProofName || "",
@@ -2132,7 +2134,7 @@ export function DeliveryJobsView({
             }}>Mark paid</button>
           </div>
         </article> : null}
-        {!allPicked && task.side === "Sales" && nextStop && nextStop.checked && !nextStop.delivered ? <article className="list-card top-gap">
+        {!allPicked && task.side === "Sales" && nextStop && !nextStop.deliveryExceptionId && nextStop.checked && !nextStop.delivered ? <article className="list-card top-gap">
           <strong>Delivery proof</strong>
           <p>Mark goods delivered first. Collection opens automatically after delivery.</p>
           <div className="form-grid top-gap">
@@ -2145,7 +2147,8 @@ export function DeliveryJobsView({
           </div>
           <div className="payment-card-actions top-gap"><button className="primary-button" type="button" disabled={!nextStop.deliveryProofName} onClick={() => updateStopDraft(task.id, task, nextStop.orderId, { delivered: true })}>Delivered - open collection</button></div>
         </article> : null}
-        {!allPicked && task.side === "Sales" && nextStop && nextStop.delivered && nextStop.collectionStatus !== "Collected" && nextStop.collectionStatus !== "Later" ? (() => {
+        {!allPicked && nextStop?.deliveryExceptionId ? <p className="helper-text">Use Delivery exceptions above to review the report and collect after seller approval. Returned goods remain assigned to you until warehouse receipt.</p> : null}
+        {!allPicked && task.side === "Sales" && nextStop && !nextStop.deliveryExceptionId && nextStop.delivered && nextStop.collectionStatus !== "Collected" && nextStop.collectionStatus !== "Later" ? (() => {
           const customer = customerById.get(nextStop.supplierId || "");
           const expectedAmount = Math.max(0, nextStop.amountToPay || 0);
           const draftCollection = collectionDraft(task.id, nextStop.orderId, expectedAmount);

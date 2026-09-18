@@ -779,3 +779,9 @@ CREATE TABLE IF NOT EXISTS delivery_exception_notifications (
  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_error TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS delivery_exception_notification_due_idx ON delivery_exception_notifications(available_at) WHERE status IN ('Pending','Sending');
+
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS bill_adjusted_at TIMESTAMPTZ;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS adjusted_total DOUBLE PRECISION;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS accepted_json JSONB;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS decision_revision INTEGER;

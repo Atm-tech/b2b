@@ -1,5 +1,6 @@
 import { assertNoPackingHold } from "./packing-guards.js";
 import { assertDeliveryExceptionUpdate } from "./delivery-exceptions.js";
+import {prepareDeliveryExceptionPayment,syncDeliveryExceptionPayment} from './delivery-exception-billing.js';
 import "dotenv/config";
 import { isWhatsAppWarehouseUser, whatsappWarehouseSnapshot } from "./warehouse-order-visibility.js";
 import { isDeliveryCollectionAgent } from "./whatsapp-utils.js";
@@ -542,7 +543,7 @@ export async function executeDatabaseQuery<T extends QueryResultRow>(text: strin
 export async function executeDatabaseTransaction<T>(run: (client: DbClient) => Promise<T>) {
   await ready;
   const result = await withTransaction(run);
-  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries", "inventory_lots", "delivery_dockets"]) {
+  for (const table of ["products", "purchase_orders", "sales_orders", "ledger_entries", "inventory_lots", "delivery_dockets", "delivery_tasks", "payments"]) {
     invalidateSnapshotCacheForSql(`UPDATE ${table} SET`);
   }
   return result;
@@ -3086,6 +3087,8 @@ async function insertAdvancePayment(side: "Purchase" | "Sales", linkedOrderId: s
 }
 
 export async function createPayment(payload: {
+  exceptionId?: string;
+  exceptionRevision?: number;
   side: "Purchase" | "Sales";
   linkedOrderId: string;
   amount: number;
@@ -3103,6 +3106,8 @@ export async function createPayment(payload: {
   const createdAt = operationalDate(payload.operationDate);
   const submittedAt = payload.verificationStatus === "Submitted" || payload.verificationStatus === "Disputed" ? createdAt : null;
   await withTransaction(async (client) => {
+    const exception=await prepareDeliveryExceptionPayment(client,payload,currentUser);
+    if(exception?.duplicate)return;
     await query(
       `INSERT INTO payments (
         id, side, linked_order_id, payment_kind, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
@@ -3131,7 +3136,9 @@ export async function createPayment(payload: {
     if (payload.verificationStatus !== "Rejected") {
       await recalculateLedger(payload.side, payload.linkedOrderId, client);
     }
+    await syncDeliveryExceptionPayment(client,exception);
   });
+  invalidateSnapshotCacheForSql('UPDATE delivery_tasks SET');
   return getSnapshot();
 }
 
@@ -3217,6 +3224,8 @@ export async function verifyPayment(paymentId: string, status: "Pending" | "Subm
   return withTransaction(async (client) => {
     const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId], client);
     if (!payment) throw new Error("Payment not found.");
+    const exception=payment.side==='Sales'?(await query<Record<string,any>>("SELECT * FROM delivery_exceptions WHERE order_id=$1 AND bill_adjusted_at IS NOT NULL ORDER BY created_at DESC LIMIT 1",[payment.linked_order_id],client)).rows[0]:null;
+    if(exception)await query('SELECT id FROM delivery_tasks WHERE id=$1 FOR UPDATE',[exception.task_id],client);
     if (status === "Verified" && currentUser.roles.includes("Accounts") && !stringValue(payment.reference_number).trim()) {
       throw new Error("Reference number is required before accounts can complete a payment.");
     }
@@ -3238,6 +3247,8 @@ export async function verifyPayment(paymentId: string, status: "Pending" | "Subm
         isoValue(payment.created_at) || now()
       );
     }
+    await syncDeliveryExceptionPayment(client,exception);
+    invalidateSnapshotCacheForSql('UPDATE delivery_tasks SET');
     return getSnapshot();
   });
 }
@@ -4511,7 +4522,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
       if (shouldPostOutboundInventory) {
         for (const order of affectedSalesOrders.rows) {
           const currentStatus = stringValue(order.status) as SalesOrder["status"];
-          if (currentStatus === "Out for Delivery" || currentStatus === "Delivered" || currentStatus === "Closed") continue;
+          if (currentStatus === "Out for Delivery" || currentStatus === "Delivered" || currentStatus === "Closed" || (currentStatus==='Cancelled' && numberValue(order.quantity)===0)) continue;
           if (stringValue(order.delivery_mode) !== "Delivery") continue;
           await consumeInventory(
             stringValue(order.warehouse_id),
@@ -4569,7 +4580,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
       await query(
         `UPDATE sales_orders
          SET status = $1
-         WHERE id = ANY($2::text[]) OR cart_id = ANY($2::text[])`,
+         WHERE (id = ANY($2::text[]) OR cart_id = ANY($2::text[])) AND NOT (status='Cancelled' AND quantity=0)`,
         [salesStatus, linkedOrderIds],
         client
       );

@@ -1522,6 +1522,12 @@ app.post('/delivery-exceptions/:id/:action',async(req,res)=>wrap(res,async()=>{
   else if(action==='withdraw')await deliveryExceptionService.withdraw(id,v,user,admin);
   else if(action==='decide')await deliveryExceptionService.decide(id,{decision:requiredString(req.body?.decision,'Decision'),note:requiredString(req.body?.note,'Reason'),dueAt:optionalString(req.body?.dueAt),revision:v},user,admin);
   else if(action==='retry')await deliveryExceptionService.retryNotifications(id,user,admin);
+  else if(action==='collect'){
+    const row=await deliveryExceptionService.get(id,user,admin);
+    if(!row.canEdit||!row.bill_adjusted_at)throw Error('The assigned agent can collect after seller approval.');
+    const mode=requiredString(req.body?.mode,'Payment mode');if(!['Cash','UPI'].includes(mode))throw Error('Select Cash or UPI for this collection.');
+    await createPayment({side:'Sales',linkedOrderId:row.order_id,exceptionId:id,exceptionRevision:v,amount:requiredNumber(req.body?.amount,'Amount'),mode:mode as PaymentMode,referenceNumber:requiredString(req.body?.reference,'Collection reference'),utrNumber:optionalString(req.body?.utr),verificationStatus:'Submitted',verificationNote:`Adjusted delivery collection for ${id}`},user);
+  }
   else throw Error('Unknown delivery exception action.');
   void processDeliveryExceptions().catch(error=>console.error('Delivery exception notifications failed',error));
   return deliveryExceptionService.list(user,admin);
@@ -1754,7 +1760,7 @@ app.listen(port, () => {
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
   void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));
   void processDeliveryExceptions().catch(error=>console.error('Delivery exception processing failed',error));
-  setInterval(()=>{void processDeliveryExceptions().catch(error=>console.error('Delivery exception processing failed',error));},30_000).unref();
+  setInterval(()=>{void processDeliveryExceptions().catch(error=>console.error('Delivery exception processing failed',error));},3_000).unref();
   setInterval(()=>{void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));},30_000).unref();
   void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));
   setInterval(()=>{void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));},30_000).unref();
