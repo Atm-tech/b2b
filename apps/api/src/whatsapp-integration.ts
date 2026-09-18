@@ -1928,7 +1928,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const pending = deliveryProofPending.get(from);
     if (pending) {
       deliveryProofPending.delete(from);
-      const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === pending.taskId); const stop = task?.routeStops[pending.stopIndex];
+      const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === pending.taskId); const stop = task?.routeStops[pending.stopIndex];
       const party = (await getCollectionRetailer(stop?.supplierId)) as { allowLaterCollection?: boolean; allowPartialCollection?: boolean; allowChequeCollection?: boolean } | undefined;
       if (task && stop) {
         const stops: DeliveryRouteStop[] = task.routeStops.map((item, index) => index === pending.stopIndex ? { ...item, delivered: true, deliveryProofName: staffProofs.get(from) } : item);
@@ -1942,7 +1942,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const paymentPending = paymentProofPending.get(from);
     if (paymentPending) {
       paymentProofPending.delete(from);
-      const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === paymentPending.taskId); const stop = task?.routeStops[paymentPending.stopIndex];
+      const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === paymentPending.taskId); const stop = task?.routeStops[paymentPending.stopIndex];
       if (task && stop) {
         const reading = messageType === "image" ? await readWhatsAppPaymentProof(text(media), paymentPending.mode, collectionRemaining(stop)) : null;
         const party = (await getCollectionRetailer(stop.supplierId)) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
@@ -1974,7 +1974,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-so:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.split(":")[2] || "");
-    const snapshot = await getSnapshot();
+    const snapshot = await getSnapshot(user);
     if (!unpackedWhatsAppSalesOrders(snapshot.salesOrders, snapshot.deliveryDockets).some((order) => (order.cartId || order.id) === cartId)) {
       await sendText(from, "Yeh SO packed hai ya packing ke liye available nahi hai. Packed SO ke liye DCO type karein; pending packing ke liye SO.", "WarehouseSO", cartId);
       return true;
@@ -1982,7 +1982,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action === "wa-dco:list") {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const snapshot = await getSnapshot(); const carts = new Map<string, typeof snapshot.salesOrders>();
+    const snapshot = await getSnapshot(user); const carts = new Map<string, typeof snapshot.salesOrders>();
     for (const docket of snapshot.deliveryDockets.filter((item) => item.status === "Ready")) { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); if (order) { const key = order.cartId || order.id; carts.set(key, [...(carts.get(key) || []), order]); } }
     const chosen = dcoBuildSessions.get(from) || []; const rows = [...carts.entries()].filter(([key]) => !chosen.includes(key));
     if (!rows.length) { await sendText(from, chosen.length ? "Aur packed SO available nahi hai. Create DCO dabayein." : "Koi packed SO available nahi hai."); return true; }
@@ -1997,7 +1997,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action === "wa-dco:create") {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot();
+    const chosen = dcoBuildSessions.get(from) || []; const snapshot = await getSnapshot(user);
     if (!chosen.length) { await sendText(from, "Pehle packed SO select karein. DCO type karein."); return true; }
     const dockets = snapshot.deliveryDockets.filter((docket) => docket.status === "Ready" && chosen.includes(snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.cartId || snapshot.salesOrders.find((item) => item.id === docket.salesOrderId)?.id || ""));
     const readyCarts = new Set(dockets.map((docket) => { const order = snapshot.salesOrders.find((item) => item.id === docket.salesOrderId); return order?.cartId || order?.id; }));
@@ -2012,7 +2012,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action === "wa-dco:ready" || action.startsWith("wa-dco:ready:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const snapshot = await getSnapshot();
+    const snapshot = await getSnapshot(user);
     const tasks = snapshot.deliveryTasks.filter((task) => task.side === "Sales" && task.consignmentId && task.status === "Planned");
     const page = Math.max(0, Number(action.split(":")[2]) || 0); const rows = tasks.slice(page * 9, page * 9 + 9).map((task) => ({ id: `wa-dco:open:${encodeURIComponent(task.id)}`, title: `DCO ${shortId(task.consignmentId!)}`, description: compact(`${task.linkedOrderIds.length} SO - ${task.routeStops.map((stop) => stop.supplierName).join(", ")}`, 72) }));
     if (!rows.length) { await sendText(from, "Handover ke liye DCO nahi mila. DCO > Create DCO se packed SO bundle karein."); return true; }
@@ -2024,7 +2024,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const parts = action.split(":"); const selection = dcoHandoverSelections.get(from);
     const taskId = parts[1] === "send" ? selection?.taskId : decodeURIComponent(parts[2] || "");
-    const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.side === "Sales" && item.consignmentId && item.status === "Planned");
+    const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.side === "Sales" && item.consignmentId && item.status === "Planned");
     if (!task) { await sendText(from, "DCO ab handover ke liye available nahi hai. DCO type karke fresh list dekhein."); return true; }
     if (parts[1] === "open") {
       await sendButtons(from, `DCO ${shortId(task.consignmentId!)}: ${task.linkedOrderIds.length} SO\n${task.routeStops.map((stop) => stop.supplierName).join("\n")}`, [{ id: `wa-dco:handover:${encodeURIComponent(task.id)}`, title: "Handover" }], "DCO", task.consignmentId); return true;
@@ -2059,7 +2059,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-so:order:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     packingChangePending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
-    const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
+    const cartId = decodeURIComponent(action.slice("wa-so:order:".length)); const snapshot = await getSnapshot(user); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO dispatch ke liye available nahi hai. SO type karke fresh list dekhein."); return true; }
     const expectedKg = lines.reduce((sum, line) => sum + line.quantity * numberValue(snapshot.products.find((product) => product.sku === line.productSku)?.defaultWeightKg), 0);
     const toleranceKg = Math.max(0.05, lines.reduce((sum, line) => {
@@ -2075,7 +2075,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-so:weight:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:weight:".length));
-    const snapshot = await getSnapshot();
+    const snapshot = await getSnapshot(user);
     const lines = snapshot.salesOrders.filter((order) => (order.cartId || order.id) === cartId);
     const pending = packingPhotoPending.get(from) || packingManualWeightPending.get(from);
     if (!lines.length || !lines.every((line) => line.status === "Booked" && line.productSku.startsWith("WA-TEST-")) || !pending || pending.cartId !== cartId) { await sendText(from, "Manual test weight ke liye SO se test order dobara select karein."); return true; }
@@ -2090,7 +2090,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const cartId = decodeURIComponent(action.slice("wa-so:packed:".length)); const proof = staffProofs.get(from);
     if (!proof || packingPhotoProofs.get(from) !== cartId) { await sendText(from, "Isi SO ke packed maal ke saath fresh weight photo bhejein, phir Packed dabayein."); return true; }
     if (proof.startsWith("Manual test weight")) {
-      const snapshot = await getSnapshot();
+      const snapshot = await getSnapshot(user);
       const lines = snapshot.salesOrders.filter((order) => (order.cartId || order.id) === cartId);
       if (!lines.length || !lines.every((line) => line.status === "Booked" && line.productSku.startsWith("WA-TEST-"))) { await sendText(from, "Photo-free weight sirf test products ke liye hai. SO dobara select karein."); return true; }
     }
@@ -2104,7 +2104,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:change:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
+    const cartId = decodeURIComponent(action.slice("wa-so:change:".length)); packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from); const snapshot = await getSnapshot(user); const lines = snapshot.salesOrders.filter((item) => (item.cartId || item.id) === cartId && item.status === "Booked");
     if (!lines.length) { await sendText(from, "SO editable nahi hai."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)} - product select karke quantity change/remove karein.` }, action: { button: "Products", sections: [{ title: "SO products", rows: lines.slice(0, 10).map((line) => ({ id: `wa-so:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Current qty ${line.quantity}` })) }] } } }, "WarehouseSO", cartId);
     return true;
@@ -2117,7 +2117,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-in:po:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-in:po:".length)); const snapshot = await getSnapshot();
+    const cartId = decodeURIComponent(action.slice("wa-in:po:".length)); const snapshot = await getSnapshot(user);
     const lines = snapshot.purchaseOrders.filter((item) => (item.cartId || item.id) === cartId && !["Received", "Closed", "Cancelled"].includes(item.status));
     if (!lines.length) { await sendText(from, "PO active nahi hai. IN type karke fresh list dekhein."); return true; }
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `PO ${shortId(cartId)} - received product select karein.` }, action: { button: "Products", sections: [{ title: lines[0].supplierName, rows: lines.slice(0, 10).map((line) => ({ id: `wa-in:line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.productSku)}`, title: compact(line.productSku, 24), description: `Ordered ${line.quantityOrdered} | Received ${line.quantityReceived}` })) }] } } }, "WarehouseIN", cartId);
@@ -2125,7 +2125,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-in:line:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText); const snapshot = await getSnapshot();
+    const [, , cartText, skuText] = action.split(":"); const cartId = decodeURIComponent(cartText); const sku = decodeURIComponent(skuText); const snapshot = await getSnapshot(user);
     const order = snapshot.purchaseOrders.find((item) => (item.cartId || item.id) === cartId && item.productSku === sku && !["Received", "Closed", "Cancelled"].includes(item.status));
     if (!order) { await sendText(from, "PO product active nahi hai. IN type karke fresh list dekhein."); return true; }
     const remainingQty = order.quantityOrdered - order.quantityReceived;
@@ -2137,13 +2137,13 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     receiptSessions.delete(from); await sendText(from, "Inward session complete. Stock received entries record ho gayi hain. IN type karke pending PO check kar sakte hain.", "WarehouseIN"); return true;
   }
   if (action.startsWith("wa-delivery:task:")) {
-    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && deliveryTaskAllowed(item, user));
+    const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && deliveryTaskAllowed(item, user));
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
     const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")));
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection ${stop.collectionStatus === "Later" ? "later" : "pending"} - Rs.${collectionRemaining(stop).toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:stop:")) {
-    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
     const party = (await getCollectionRetailer(stop.supplierId));
     if (stop.delivered && stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")) {
@@ -2153,15 +2153,15 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${collectionRemaining(stop).toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
   }
-  if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Delivery task unavailable hai. LIST type karein."); return true; } deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
+  if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Delivery task unavailable hai. LIST type karein."); return true; } deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
   if (action.startsWith("wa-collect:now:")) {
-    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex]; const party = (await getCollectionRetailer(stop?.supplierId)) as { allowPartialCollection?: boolean } | undefined;
+    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex]; const party = (await getCollectionRetailer(stop?.supplierId)) as { allowPartialCollection?: boolean } | undefined;
     if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     const choices = party?.allowPartialCollection ? [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Full" }, { id: `wa-collect:partial:${taskId}:${stopIndex}`, title: "Partial" }] : [{ id: `wa-collect:full:${taskId}:${stopIndex}`, title: "Collect full" }];
     await sendButtons(from, `Collection due: Rs.${collectionRemaining(stop).toFixed(2)}. Amount choice select karein.`, choices, "Collection", taskId); return true;
   }
   if (action.startsWith("wa-collect:later:")) {
-    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !deliveryTaskAllowed(task, user) || !stop || !stop.delivered || stop.paid) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     if (!(await getCollectionRetailer(stop.supplierId))?.allowLaterCollection) { await sendText(from, "Collect later privilege required hai."); return true; }
     const stops = task.routeStops.map((item, index) => index === stopIndex ? { ...item, collectionStatus: "Later" as const, paid: false } : item);
@@ -2169,14 +2169,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendText(from, `${stop.supplierName} ke liye Collect Later recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id); return true;
   }
   if (action.startsWith("wa-collect:full:") || action.startsWith("wa-collect:partial:")) {
-    const [, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; const party = (await getCollectionRetailer(stop?.supplierId)) as { allowChequeCollection?: boolean; allowPartialCollection?: boolean } | undefined;
+    const [, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; const party = (await getCollectionRetailer(stop?.supplierId)) as { allowChequeCollection?: boolean; allowPartialCollection?: boolean } | undefined;
     if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
     if (!stop.delivered || stop.paid || (kind === "partial" && !party?.allowPartialCollection)) { await sendText(from, "Collection choice ab allowed nahi hai. LIST se dobara select karein."); return true; }
     const modes = [{ id: `wa-mop:cash:${kind}:${taskId}:${indexText}`, title: "Cash" }, { id: `wa-mop:upi:${kind}:${taskId}:${indexText}`, title: "UPI" }]; if (party?.allowChequeCollection) modes.push({ id: `wa-mop:cheque:${kind}:${taskId}:${indexText}`, title: "Cheque" });
     await sendButtons(from, `${kind === "partial" ? "Partial" : "Full"} collection selected. Payment mode select karein.`, modes, "Collection", taskId); return true;
   }
   if (action.startsWith("wa-mop:")) {
-    const [, mode, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)];
+    const [, mode, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)];
     if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Collection task unavailable hai."); return true; }
     const privilege = (await getCollectionRetailer(stop.supplierId));
     if (!stop.delivered || stop.paid || !["full", "partial"].includes(kind) || !["cash", "upi", "cheque"].includes(mode) || (kind === "partial" && !privilege?.allowPartialCollection) || (mode === "cheque" && !privilege?.allowChequeCollection)) { await sendText(from, "Payment choice ab allowed nahi hai. LIST se dobara select karein."); return true; }
@@ -2197,7 +2197,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (collectionConfirmations.get(from) !== action) { await sendText(from, "Confirmation expired ya already submitted hai. LIST se dobara select karein."); return true; }
     collectionConfirmations.delete(from);
     const [, , kind, taskId, indexText, amountText] = action.split(":"); const amount = numberValue(amountText);
-    const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !deliveryTaskAllowed(task, user) || !stop || stop.paid || !stop.delivered || amount <= 0) { await sendText(from, "Cash collection unavailable hai. LIST se retailer dobara select karein."); return true; }
     const party = (await getCollectionRetailer(stop.supplierId)) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
     const tolerance = WHATSAPP_COLLECTION_TOLERANCE;
@@ -2215,7 +2215,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (collectionConfirmations.get(from) !== action) { await sendText(from, "Confirmation expired ya already submitted hai. LIST se payment dobara select karein."); return true; }
     collectionConfirmations.delete(from);
     const [, , modeText, kind, taskId, indexText, amountText] = action.split(":"); const amount = numberValue(amountText); const mode = modeText === "cheque" ? "Cheque" : "UPI";
-    const snapshot = await getSnapshot(); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
+    const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !deliveryTaskAllowed(task, user) || !stop || stop.paid || !stop.delivered || amount <= 0) { await sendText(from, "Collection unavailable hai. LIST se retailer dobara select karein."); return true; }
     const party = (await getCollectionRetailer(stop.supplierId)) as { allowPartialCollection?: boolean; collectionTolerance?: number } | undefined;
     const tolerance = WHATSAPP_COLLECTION_TOLERANCE;
@@ -2245,7 +2245,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const normalized = command.toUpperCase().replace(/\s+/g, " ");
   const warehouseUser = staffHasRole(user, ["Admin", "Warehouse Manager"]);
   const deliveryUser = staffHasRole(user, ["Admin", "Delivery", "Out Delivery", "Collection Agent", "Delivery Manager"]);
-  const snapshot = await getSnapshot();
+  const snapshot = await getSnapshot(user);
   const matchSuffix = (value: string, suffix: string) => value.toUpperCase().endsWith(suffix.toUpperCase());
 
   const cashSession = cashCollectionPending.get(from);
@@ -2303,7 +2303,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       const proof = staffProofs.get(from); if (!proof) { await sendText(from, "Weight photo missing hai. Product dobara select karke photo bhejein."); receiptSessions.delete(from); return true; }
       await createReceiptCheck({ purchaseOrderId: receiptSession.purchaseOrderId, warehouseId: receiptSession.warehouseId, receivedQuantity: receiptSession.quantity, actualWeightKg: value, weighingProofName: proof, note: `WhatsApp guided IN by ${user.fullName}`, confirmPartial: receiptSession.quantity < receiptSession.remainingQty }, user);
       staffProofs.delete(from); const cartId = receiptSession.cartId; const sku = receiptSession.sku; receiptSessions.delete(from);
-      const fresh = await getSnapshot(); const pendingLines = fresh.purchaseOrders.filter((item) => (item.cartId || item.id) === cartId && !["Received", "Closed", "Cancelled"].includes(item.status));
+      const fresh = await getSnapshot(user); const pendingLines = fresh.purchaseOrders.filter((item) => (item.cartId || item.id) === cartId && !["Received", "Closed", "Cancelled"].includes(item.status));
       await sendButtons(from, `${sku}: ${receiptSession.quantity} received and stock recorded. ${pendingLines.length ? "Isi PO mein aur product receive karna hai?" : "PO inward complete hai."}`, pendingLines.length ? [{ id: `wa-in:po:${encodeURIComponent(cartId)}`, title: "Receive another" }, { id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }] : [{ id: `wa-in:finish:${encodeURIComponent(cartId)}`, title: "Finish inward" }], "WarehouseIN", cartId);
       return true;
     }
@@ -3724,11 +3724,16 @@ export async function seedWhatsAppTestRetailers(currentUser: StaffUser) {
 
 export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
-    `WITH seed (sku,name,department,category,unit,weight,moq,stock,rsp,mrp) AS (
+    `WITH seed (sku,name,department,category,unit,weight,moq,stock,rsp,mrp,size) AS (
        VALUES
-         ('WA-TEST-BISCUIT-5','WA TEST BISCUIT 100G','Grocery','Biscuits','Pack',0.10,5,50,18,20),
-         ('WA-TEST-SOAP-12','WA TEST SOAP 100G','Personal Care','Bath Soap','Piece',0.10,12,120,27,30),
-         ('WA-TEST-DRINK-24','WA TEST DRINK 750ML','Beverages','Soft Drinks','Bottle',0.75,24,240,45,50)
+         ('WA-TEST-BISCUIT-5','WA TEST BISCUIT 100G','Grocery','Biscuits','Pack',0.10,5,50,18,20,'100G'),
+         ('WA-TEST-SOAP-12','WA TEST SOAP 100G','Personal Care','Bath Soap','Piece',0.10,12,120,27,30,'100G'),
+         ('WA-TEST-DRINK-24','WA TEST DRINK 750ML','Beverages','Soft Drinks','Bottle',0.75,24,240,45,50,'750ML'),
+         ('WA-TEST-RICE-5','WA TEST RICE 1KG','Grocery','Rice','Pack',1,5,2000,54,60,'1KG'),
+         ('WA-TEST-SUGAR-5','WA TEST SUGAR 1KG','Grocery','Sugar','Pack',1,5,2000,45,50,'1KG'),
+         ('WA-TEST-SALT-10','WA TEST SALT 1KG','Grocery','Salt','Pack',1,10,2000,18,20,'1KG'),
+         ('WA-TEST-DAL-5','WA TEST DAL 500G','Grocery','Pulses','Pack',0.5,5,2000,63,70,'500G'),
+         ('WA-TEST-COFFEE-5','WA TEST COFFEE 100G','Beverages','Coffee','Pack',0.1,5,2000,90,100,'100G')
      ), retired_test_products AS (
        UPDATE products SET whatsapp_catalog_enabled=FALSE
        WHERE sku LIKE 'WA-TEST-%' AND sku NOT IN (SELECT sku FROM seed)
@@ -3742,7 +3747,7 @@ export async function seedWhatsAppTestProducts(currentUser: StaffUser) {
        SELECT sku,name,'Test',department,'WhatsApp Test',category,'Test Products',unit,
               18,'Exclusive',weight,0.01,10,'["C21"]'::jsonb,'[]'::jsonb,
               'WhatsApp ordering and proforma test product','Aapoorti Test',name,
-              CASE WHEN unit='Bottle' THEN '750ML' ELSE '100G' END,rsp,mrp,
+              size,rsp,mrp,
               'Test rate',rsp,moq,TRUE,$1,NOW()
        FROM seed
        ON CONFLICT (sku) DO UPDATE SET

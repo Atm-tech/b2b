@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { isWhatsAppWarehouseUser, whatsappWarehouseSnapshot } from "./warehouse-order-visibility.js";
 import { isDeliveryCollectionAgent } from "./whatsapp-utils.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -1464,7 +1465,7 @@ function defaultSnapshotOrderRange(): Required<SnapshotOrderRange> {
   return { fromDate: from.toISOString().slice(0, 10), toDate };
 }
 
-export async function getSnapshot(currentUser?: AppUser, requestedRange?: SnapshotOrderRange): Promise<AppSnapshot> {
+export async function getSnapshot(currentUser?: Pick<AppUser, "role" | "roles"> & Partial<AppUser>, requestedRange?: SnapshotOrderRange): Promise<AppSnapshot> {
   await ready;
   await reconcileDeliveryCashCollectionsWhenDue();
   const {
@@ -1523,7 +1524,7 @@ export async function getSnapshot(currentUser?: AppUser, requestedRange?: Snapsh
     goodsWarrants,
     notes: notes.filter((item) => linksToVisibleOrder(item.entityId))
   };
-  if (currentUser && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("In Delivery") || currentUser.roles.includes("Out Delivery") || currentUser.roles.includes("Delivery"))) {
+  if (currentUser && currentUser.warehouseIds && currentUser.warehouseIds.length > 0 && (currentUser.roles.includes("Warehouse Manager") || currentUser.roles.includes("Delivery Manager") || currentUser.roles.includes("In Delivery") || currentUser.roles.includes("Out Delivery") || currentUser.roles.includes("Delivery"))) {
     const scopedWarehouseIds = new Set(currentUser.warehouseIds);
     const scopedPurchaseOrderIds = new Set(snapshotWithoutMetrics.purchaseOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
     const scopedSalesOrderIds = new Set(snapshotWithoutMetrics.salesOrders.filter((item) => scopedWarehouseIds.has(item.warehouseId)).map((item) => item.id));
@@ -1533,7 +1534,7 @@ export async function getSnapshot(currentUser?: AppUser, requestedRange?: Snapsh
     ]);
     const scopedDeliveryTaskIds = new Set(snapshotWithoutMetrics.deliveryTasks.filter((task) => {
       const assignees = deliveryAssigneeList(task.assignedTo);
-      return assignees.includes(currentUser.username) || assignees.includes(currentUser.fullName) || task.routeStops.some((stop) => scopedWarehouseIds.has(stop.warehouseId));
+      return assignees.includes(currentUser.username || "") || assignees.includes(currentUser.fullName || "") || task.routeStops.some((stop) => scopedWarehouseIds.has(stop.warehouseId));
     }).map((task) => task.id));
     snapshotWithoutMetrics = {
       ...snapshotWithoutMetrics,
@@ -1555,6 +1556,10 @@ export async function getSnapshot(currentUser?: AppUser, requestedRange?: Snapsh
       goodsWarrants: snapshotWithoutMetrics.goodsWarrants,
       notes: snapshotWithoutMetrics.notes.filter((item) => scopedPurchaseOrderIds.has(item.entityId) || scopedSalesOrderIds.has(item.entityId) || scopedCartIds.has(item.entityId))
     };
+  }
+  if (isWhatsAppWarehouseUser(currentUser)) {
+    const origins = await query<{ sales_cart_id: string }>("SELECT DISTINCT sales_cart_id FROM whatsapp_order_drafts WHERE sales_cart_id IS NOT NULL");
+    snapshotWithoutMetrics = whatsappWarehouseSnapshot(snapshotWithoutMetrics, new Set(origins.rows.map((row) => row.sales_cart_id)));
   }
   return {
     metrics: buildMetrics(snapshotWithoutMetrics),

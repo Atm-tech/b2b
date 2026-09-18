@@ -1,3 +1,4 @@
+import { isWhatsAppWarehouseUser } from "./warehouse-order-visibility.js";
 import {royalRangersRouter} from './royal-rangers-routes.js';
 import cors from "cors";
 import compression from "compression";
@@ -1691,7 +1692,16 @@ async function storeProofFile(category: ProofCategory, file: Express.Multer.File
 
 async function wrap(res: express.Response, run: () => Promise<unknown>) {
   try {
-    res.status(201).json(await run());
+    let result = await run();
+    // Mutations also return snapshots; keep the same warehouse visibility as login/refresh.
+    if (result && typeof result === "object" && ("salesOrders" in result || "snapshot" in result)) {
+      const user = await getCurrentUser(res.req);
+      if (isWhatsAppWarehouseUser(user)) {
+        const snapshot = await getSnapshot(user);
+        result = "salesOrders" in result ? snapshot : { ...result, snapshot };
+      }
+    }
+    res.status(201).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(400).json({ message });
