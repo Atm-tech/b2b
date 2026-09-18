@@ -167,6 +167,19 @@ async function resetAttendanceOnce(seasonId, marker) {
   }
 }
 
+// lib/match-schedule.ts
+function matchStart(s) {
+  return Date.parse(s.date + "T00:01:00+05:30") + 24 * 60 * 60 * 1e3;
+}
+function matchStartLabel(s) {
+  return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short" }).format(matchStart(s)) + " \xB7 12:01 AM IST";
+}
+function nightReminderSlot(s, now = Date.now()) {
+  const start = matchStart(s);
+  const slots = [{ name: "21", at: start - 181 * 6e4, end: start - 171 * 6e4 }, { name: "22", at: start - 121 * 6e4, end: start - 111 * 6e4 }, { name: "23", at: start - 61 * 6e4, end: start - 51 * 6e4 }, { name: "midnight", at: start - 6e4, end: start }];
+  return slots.find((slot) => now >= slot.at && now < slot.end);
+}
+
 // lib/cricket.ts
 var TEAMS = ["White", "Black", "Blue"];
 var defaultPoints = { halfCentury: 15, century: 30, wicketHatTrick: 15, sixHatTrick: 15, run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
@@ -572,28 +585,23 @@ function changedNotifications(before, after) {
   return tournamentNotifications(after).filter((event) => !previous.some((p) => JSON.stringify(p) === JSON.stringify(event))).filter((event) => !event.key.startsWith("squads:") || !!(before?.squadsPublishedAt || before?.publishedAt || before && published(before)));
 }
 function matchDayReminder(s, now = Date.now()) {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now);
-  const get = (key) => parts.find((p) => p.type === key).value;
-  const today = `${get("year")}-${get("month")}-${get("day")}`, hour = Number(get("hour"));
-  const days = (Date.parse(s.date + "T00:00:00Z") - Date.parse(today + "T00:00:00Z")) / 864e5;
-  if (days < 0 || days > 7 || s.matches.some((m) => m.started)) return null;
-  if (days === 0 ? hour < 8 || hour >= 12 : hour < 19 || hour >= 22) return null;
-  const title = days === 0 ? "It is match day!" : days === 1 ? "Cricket tomorrow!" : "Your Saturday cricket reminder";
-  const body = published(s) ? `Royal Rangers play on ${s.date}. Check your latest squad and fixtures. See you at the ground!` : `Royal Rangers play on ${s.date}. Mark your attendance so Alpha can finalise the squads.`;
-  return { key: "reminder:" + today, type: "match-reminder", title, body, url: link(s, published(s) ? "teams" : "attendance"), tag: `rr-reminder-${s.id}-${today}` };
+  if (s.matches.some((m) => m.started)) return null;
+  const slot = nightReminderSlot(s, now);
+  if (!slot) return null;
+  const title = slot.name === "midnight" ? "Are you there yet?" : slot.name === "23" ? "One hour to Saturday-night cricket!" : slot.name === "22" ? "Saturday night: get match-ready!" : "Saturday night cricket is on!";
+  const body = slot.name === "midnight" ? `First ball in one minute: ${matchStartLabel(s)}. Are you at the ground? Let Alpha know if you are running late.` : `First ball: ${matchStartLabel(s)} (Saturday night). ${published(s) ? "Check your squad and get ready to take the field." : "Mark your attendance and get ready for the game."}`;
+  return { key: `reminder:${s.date}:${slot.name}`, type: "match-reminder", title, body, url: link(s, published(s) ? "teams" : "attendance"), tag: `rr-reminder-${s.id}-${s.date}-${slot.name}`, expiresAt: slot.end };
 }
 
 // lib/attendance.ts
 var ATTENDANCE_REMINDER_MS = 60 * 60 * 1e3;
 function attendanceOpen(season, now = Date.now()) {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  return season.date >= today && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
+  return now < matchStart(season) && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
 }
 function attendanceReminder(season, playerId, now = Date.now(), name) {
-  if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
+  if (now >= matchStart(season) - 181 * 6e4 || !attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
   const firstName = name?.trim().split(/\s+/)[0] || "Ranger";
-  const date = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(/* @__PURE__ */ new Date(season.date + "T12:00:00+05:30"));
-  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers take the field on ${date}. Let the skipper know if you\u2019re joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
+  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `Saturday-night cricket starts ${matchStartLabel(season)}. Let Alpha know if you are joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
 }
 
 // server/render/push.ts
@@ -707,7 +715,7 @@ async function notifyClubEvents(now = Date.now()) {
   const current = seasons.slice().sort((a, b) => (b.number || 0) - (a.number || 0) || b.date.localeCompare(a.date))[0];
   if (current) {
     const message = matchDayReminder(current, now);
-    if (message) await db.prepare("INSERT OR IGNORE INTO push_settings (id,data) VALUES (?,?)").bind(`notification:daily:${current.id}:${message.key}`, JSON.stringify({ seasonId: current.id, message, expires: now + 4 * 36e5 })).run();
+    if (message) await db.prepare("INSERT OR IGNORE INTO push_settings (id,data) VALUES (?,?)").bind(`notification:daily:${current.id}:${message.key}`, JSON.stringify({ seasonId: current.id, message, expires: message.expiresAt ?? now + 4 * 36e5 })).run();
   }
   const jobs = await db.prepare("SELECT id,data FROM push_settings WHERE id LIKE 'notification:%'").all();
   if (!jobs.results.length) return { sent: 0, failed: 0, pending: 0 };
