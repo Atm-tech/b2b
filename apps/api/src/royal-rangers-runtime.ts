@@ -312,7 +312,7 @@ function syncFinal(s) {
   }
   s.matches.push({ id: crypto.randomUUID(), home: a.team, away: b.team, first: a.team, overs: s.overs, label: "Final", started: false, innings: [[], []] });
 }
-function apply(state, c) {
+function apply(state, c, permissions = {}) {
   const next = structuredClone(state);
   const s = next.seasons.find((x) => x.id === c.season);
   if (c.type === "season") {
@@ -325,7 +325,7 @@ function apply(state, c) {
   }
   check(s, "Season not found.");
   if (c.type === "availability") {
-    check(!s.availabilityClosed && !s.squadsPublishedAt && !s.publishedAt && !s.squadsPublished && !s.published && !s.matches.some((m) => m.started), "Squads are already published. Contact Alpha to arrange any change.");
+    check((permissions.manageAttendance || !s.availabilityClosed && !s.squadsPublishedAt && !s.publishedAt && !s.squadsPublished && !s.published) && !s.matches.some((m) => m.started), "Squads are already published. Contact Alpha to arrange any change.");
     check(c.status === "available" || c.status === "unavailable", "Choose Available or Not available.");
     check(typeof c.playerId === "string" && c.playerId.length > 0, "Player not found.");
     s.availability = { ...s.availability, [c.playerId]: c.status };
@@ -965,7 +965,7 @@ async function POST2(req) {
       state.seasons.find((s) => s.id === command.season).published = false;
       state.seasons.find((s) => s.id === command.season).squadsPublished = false;
       state.seasons.find((s) => s.id === command.season).fixturesPublished = false;
-    } else state = apply(current.state, command);
+    } else state = apply(current.state, command, { manageAttendance: a.user?.userId === "committee-alpha" && a.committee === "Alpha" });
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
     const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
     if (!saved[1].meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
