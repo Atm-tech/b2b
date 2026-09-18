@@ -167,19 +167,6 @@ async function resetAttendanceOnce(seasonId, marker) {
   }
 }
 
-// lib/attendance.ts
-var ATTENDANCE_REMINDER_MS = 60 * 60 * 1e3;
-function attendanceOpen(season, now = Date.now()) {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  return season.date >= today && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
-}
-function attendanceReminder(season, playerId, now = Date.now(), name) {
-  if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
-  const firstName = name?.trim().split(/\s+/)[0] || "Ranger";
-  const date = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(/* @__PURE__ */ new Date(season.date + "T12:00:00+05:30"));
-  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers take the field on ${date}. Let the skipper know if you\u2019re joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
-}
-
 // lib/cricket.ts
 var TEAMS = ["White", "Black", "Blue"];
 var defaultPoints = { halfCentury: 15, century: 30, wicketHatTrick: 15, sixHatTrick: 15, run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
@@ -204,6 +191,9 @@ function bowlerBalls(m, id) {
 function total(b) {
   return b.runs + (wide(b) || noBall(b) ? 1 : 0);
 }
+function batRuns(b) {
+  return b.kind === "run" || b.kind === "nb" || b.kind === "wicket" && b.dismissal === "Run out" && !wide(b) ? b.runs : 0;
+}
 function summary(e) {
   return { runs: e.reduce((n, b) => n + total(b), 0), wickets: e.filter((b) => b.kind === "wicket").length, balls: e.filter(legal).length };
 }
@@ -219,6 +209,12 @@ function inningsDone(s, m, i) {
 }
 function phase(s, m) {
   return !m.started ? -1 : !inningsDone(s, m, 0) ? 0 : !inningsDone(s, m, 1) ? 1 : 2;
+}
+function result(s, m) {
+  if (phase(s, m) !== 2) return "";
+  const a = summary(m.innings[0]), b = summary(m.innings[1]);
+  if (a.runs === b.runs) return "Match tied";
+  return b.runs > a.runs ? `${batting(m, 1)} won by ${wicketLimit(s, m, 1) - b.wickets} wickets` : `${batting(m, 0)} won by ${a.runs - b.runs} runs`;
 }
 function nextPair(events) {
   const b = events.at(-1);
@@ -265,7 +261,79 @@ function validateBall(s, m, b) {
     if (["Caught", "Run out", "Stumped"].includes(b.dismissal)) check(s.players.some((p) => p.id === b.fielder && p.team === batting(m, 1 - i)), "Choose the fielder to award points.");
   } else check(!b.out && !b.dismissal && !b.fielder && !b.extra, "Invalid delivery fields.");
 }
+function bowlingCharge(b) {
+  return b.kind === "bye" || b.kind === "legbye" ? 0 : total(b);
+}
+function economyBonus(runs, balls, points) {
+  if (balls < Math.max(1, points.economyMinOvers) * 6) return 0;
+  const e = runs * 6 / balls;
+  return e <= 4 ? points.economyExcellent : e <= 6 ? points.economyGood : e <= 8 ? points.economyFair : e > 10 ? points.economyExpensive : 0;
+}
+function statistics(s, matches = s.matches) {
+  const rules = { ...defaultPoints, ...s.points };
+  const rows = s.players.map((p) => ({ ...p, battingBonus: 0, bowlingBonus: 0, runs: 0, balls: 0, fours: 0, sixes: 0, wickets: 0, bowled: 0, conceded: 0, catches: 0, runouts: 0, stumpings: 0, maidens: 0, economy: null, strikeRate: null, economyPoints: 0, battingPoints: 0, bowlingPoints: 0, fieldingPoints: 0, points: 0 }));
+  const lookup = new Map(rows.map((p) => [p.id, p]));
+  for (const m of matches) for (const innings of m.innings) {
+    const inningsRuns = /* @__PURE__ */ new Map(), sixStreak = /* @__PURE__ */ new Map(), wicketStreak = /* @__PURE__ */ new Map();
+    const spells = /* @__PURE__ */ new Map();
+    let over = { bowler: "", runs: 0, balls: 0 };
+    for (const b of innings) {
+      const batsman = lookup.get(b.striker), bowler = lookup.get(b.bowler), fielder = lookup.get(b.fielder || "");
+      if (!batsman || !bowler) continue;
+      inningsRuns.set(b.striker, (inningsRuns.get(b.striker) || 0) + batRuns(b));
+      if (!wide(b)) {
+        const six = !b.overthrow && (b.kind === "run" || b.kind === "nb") && batRuns(b) === 6;
+        const count = six ? (sixStreak.get(b.striker) || 0) + 1 : 0;
+        if (count === 3) batsman.battingBonus += rules.sixHatTrick;
+        sixStreak.set(b.striker, count === 3 ? 0 : count);
+      }
+      const creditedWicket = b.kind === "wicket" && b.dismissal !== "Run out";
+      if (creditedWicket || legal(b) || b.kind === "wicket") {
+        const count = creditedWicket ? (wicketStreak.get(b.bowler) || 0) + 1 : 0;
+        if (count === 3) bowler.bowlingBonus += rules.wicketHatTrick;
+        wicketStreak.set(b.bowler, count === 3 ? 0 : count);
+      }
+      batsman.runs += batRuns(b);
+      if (!wide(b) && !noBall(b)) batsman.balls++;
+      if (!b.overthrow && (b.kind === "run" || b.kind === "nb")) {
+        if (batRuns(b) === 4) batsman.fours++;
+        if (batRuns(b) === 6) batsman.sixes++;
+      }
+      if (legal(b)) bowler.bowled++;
+      bowler.conceded += bowlingCharge(b);
+      if (b.kind === "wicket" && b.dismissal !== "Run out") bowler.wickets++;
+      if (fielder && b.kind === "wicket") {
+        if (b.dismissal === "Caught") fielder.catches++;
+        if (b.dismissal === "Run out") fielder.runouts++;
+        if (b.dismissal === "Stumped") fielder.stumpings++;
+      }
+      const spell = spells.get(b.bowler) || { runs: 0, balls: 0 };
+      spell.runs += bowlingCharge(b);
+      if (legal(b)) spell.balls++;
+      spells.set(b.bowler, spell);
+      over.bowler = b.bowler;
+      over.runs += bowlingCharge(b);
+      if (legal(b)) over.balls++;
+      if (over.balls === 6) {
+        if (over.runs === 0) bowler.maidens++;
+        over = { bowler: "", runs: 0, balls: 0 };
+      }
+    }
+    for (const [id, runs] of inningsRuns) lookup.get(id).battingBonus += runs >= 100 ? rules.century : runs >= 50 ? rules.halfCentury : 0;
+    for (const [id, spell] of spells) lookup.get(id).economyPoints += economyBonus(spell.runs, spell.balls, rules);
+  }
+  for (const p of rows) {
+    p.economy = p.bowled ? p.conceded * 6 / p.bowled : null;
+    p.strikeRate = p.balls ? p.runs * 100 / p.balls : null;
+    p.battingPoints = p.runs * rules.run + p.battingBonus;
+    p.bowlingPoints = p.wickets * rules.wicket + p.maidens * rules.maiden + p.economyPoints + p.bowlingBonus;
+    p.fieldingPoints = p.catches * rules.catch + p.runouts * rules.runout + p.stumpings * rules.stumping;
+    p.points = p.battingPoints + p.bowlingPoints + p.fieldingPoints;
+  }
+  return rows.sort((a, b) => b.points - a.points || b.runs - a.runs || a.name.localeCompare(b.name));
+}
 var TEAM_INFO = { White: { name: "Frost Dragons", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimeras", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reapers", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "/teams/azure-reaper-refined.webp", color: "#6397ff" } };
+var teamName = (t) => TEAM_INFO[t].name;
 var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
 function shuffled(items) {
   const a = [...items];
@@ -466,6 +534,68 @@ function apply(state, c, permissions = {}) {
   return next;
 }
 
+// lib/awards.ts
+function performanceAward(season, match) {
+  const matches = match ? [match] : season.matches;
+  const participants = new Set(matches.flatMap((m) => m.innings.flatMap((i) => i.flatMap((b) => [b.striker, b.partner, b.bowler, b.fielder].filter((id) => !!id)))));
+  const rows = statistics(season, matches).filter((p) => participants.has(p.id));
+  const winners = rows.length ? rows.filter((p) => p.points === rows[0].points) : [];
+  const complete = match ? phase(season, match) === 2 : matches.some((m) => m.label === "Final") && matches.every((m) => phase(season, m) === 2);
+  return { winners, complete, points: winners[0]?.points ?? 0 };
+}
+
+// lib/notifications.ts
+var link = (s, page) => `/?${new URLSearchParams({ page, season: s.id })}`;
+var published = (s) => !!(s.squadsPublished ?? s.published);
+function tournamentNotifications(s) {
+  if (!published(s)) return [];
+  const events = [];
+  const add = (key, title, body, page, type = "club-update") => events.push({ key, type, title, body, url: link(s, page), tag: `rr-${s.id}-${key}` });
+  const roster = s.players.map((p) => `${p.id}:${p.name}:${p.team}`).sort().join("|");
+  add("squads", "Squads updated", `Season ${s.number || ""}: the latest team selection is ready. Tap to check your squad.`, "teams");
+  events[0].key = "squads:" + roster;
+  if (s.fixturesPublished ?? s.published) {
+    const fixtures = s.matches.map((m) => `${m.id}:${m.home}:${m.away}:${m.overs}`).join("|");
+    add("fixtures:" + fixtures, "Fixtures updated", `Season ${s.number || ""}: check the match order and overs before you take the field.`, "matches");
+    for (const m of s.matches.filter((m2) => phase(s, m2) === 2)) {
+      const award = performanceAward(s, m), names = award.winners.map((p) => p.name).join(", ");
+      const score = result(s, m).replace(/^(White|Black|Blue)/, (t) => teamName(t));
+      add("match:" + m.id, `${m.label}: ${score}`, names ? `${award.winners.length > 1 ? "Joint Men" : "Man"} of the Match: ${names} (${award.points} MVP points). Tap for the scorecard.` : "Tap for the final scorecard.", "matches", "match-result");
+    }
+    const series = performanceAward(s);
+    if (series.complete && series.winners.length) add("series", `Season ${s.number || ""} awards are in`, `${series.winners.length > 1 ? "Joint Men" : "Man"} of the Series: ${series.winners.map((p) => p.name).join(", ")} (${series.points} MVP points).`, "stats", "series-award");
+  }
+  return events;
+}
+function changedNotifications(before, after) {
+  const previous = before ? tournamentNotifications(before) : [];
+  return tournamentNotifications(after).filter((event) => !previous.some((p) => JSON.stringify(p) === JSON.stringify(event))).filter((event) => !event.key.startsWith("squads:") || !!(before?.squadsPublishedAt || before?.publishedAt || before && published(before)));
+}
+function matchDayReminder(s, now = Date.now()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const get = (key) => parts.find((p) => p.type === key).value;
+  const today = `${get("year")}-${get("month")}-${get("day")}`, hour = Number(get("hour"));
+  const days = (Date.parse(s.date + "T00:00:00Z") - Date.parse(today + "T00:00:00Z")) / 864e5;
+  if (days < 0 || days > 7 || s.matches.some((m) => m.started)) return null;
+  if (days === 0 ? hour < 8 || hour >= 12 : hour < 19 || hour >= 22) return null;
+  const title = days === 0 ? "It is match day!" : days === 1 ? "Cricket tomorrow!" : "Your Saturday cricket reminder";
+  const body = published(s) ? `Royal Rangers play on ${s.date}. Check your latest squad and fixtures. See you at the ground!` : `Royal Rangers play on ${s.date}. Mark your attendance so Alpha can finalise the squads.`;
+  return { key: "reminder:" + today, type: "match-reminder", title, body, url: link(s, published(s) ? "teams" : "attendance"), tag: `rr-reminder-${s.id}-${today}` };
+}
+
+// lib/attendance.ts
+var ATTENDANCE_REMINDER_MS = 60 * 60 * 1e3;
+function attendanceOpen(season, now = Date.now()) {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return season.date >= today && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
+}
+function attendanceReminder(season, playerId, now = Date.now(), name) {
+  if (!attendanceOpen(season, now) || season.availability?.[playerId] === "available") return null;
+  const firstName = name?.trim().split(/\s+/)[0] || "Ranger";
+  const date = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(/* @__PURE__ */ new Date(season.date + "T12:00:00+05:30"));
+  return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `The Rangers take the field on ${date}. Let the skipper know if you\u2019re joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
+}
+
 // server/render/push.ts
 var moduleName = "web-push";
 async function provider() {
@@ -567,9 +697,56 @@ async function notifyClubUpdateOnce() {
       if (e.statusCode === 404 || e.statusCode === 410) await db.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
     }
   }
-  const result = { status: "complete", sent, failed, subscribed: rows.results.length };
-  await db.prepare("UPDATE push_settings SET data=? WHERE id=?").bind(JSON.stringify(result), id).run();
-  return result;
+  const result2 = { status: "complete", sent, failed, subscribed: rows.results.length };
+  await db.prepare("UPDATE push_settings SET data=? WHERE id=?").bind(JSON.stringify(result2), id).run();
+  return result2;
+}
+async function notifyClubEvents(now = Date.now()) {
+  const db = database();
+  const seasons = (await db.prepare("SELECT data FROM seasons").all()).results.map((r) => JSON.parse(r.data));
+  const current = seasons.slice().sort((a, b) => (b.number || 0) - (a.number || 0) || b.date.localeCompare(a.date))[0];
+  if (current) {
+    const message = matchDayReminder(current, now);
+    if (message) await db.prepare("INSERT OR IGNORE INTO push_settings (id,data) VALUES (?,?)").bind(`notification:daily:${current.id}:${message.key}`, JSON.stringify({ seasonId: current.id, message, expires: now + 4 * 36e5 })).run();
+  }
+  const jobs = await db.prepare("SELECT id,data FROM push_settings WHERE id LIKE 'notification:%'").all();
+  if (!jobs.results.length) return { sent: 0, failed: 0, pending: 0 };
+  const rows = await db.prepare("SELECT s.endpoint,s.player_id,s.data,p.name FROM push_subscriptions s JOIN player_registrations r ON r.player_id=s.player_id AND r.user_id=s.user_id JOIN approved_players p ON p.id=r.player_id").all();
+  const wp = await provider(), vapid = await keys();
+  let sent = 0, failed = 0, pending = 0;
+  for (const job of jobs.results) {
+    const entry = JSON.parse(job.data);
+    const fresh = await db.prepare("SELECT data FROM seasons WHERE id=?").bind(entry.seasonId).first();
+    const season = fresh ? JSON.parse(fresh.data) : void 0;
+    const candidates = season ? entry.message.type === "match-reminder" ? [matchDayReminder(season, now)] : tournamentNotifications(season) : [];
+    if (entry.expires <= now || !candidates.some((m) => m && JSON.stringify(m) === JSON.stringify(entry.message))) {
+      await db.prepare("DELETE FROM push_settings WHERE id=?").bind(job.id).run();
+      continue;
+    }
+    let complete = true;
+    for (const row of rows.results) {
+      const delivery = job.id + ":" + row.endpoint;
+      if (await db.prepare("SELECT id FROM push_deliveries WHERE id=?").bind(delivery).first()) continue;
+      const claim = await db.prepare("INSERT INTO push_deliveries (id,created_at) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET created_at=excluded.created_at WHERE push_deliveries.created_at<=? RETURNING id").bind(delivery + ":lease", now, now - 3e5).first();
+      if (!claim) {
+        complete = false;
+        continue;
+      }
+      try {
+        const { key: _key, ...payload } = entry.message;
+        await wp.sendNotification(JSON.parse(row.data), JSON.stringify(payload), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: Math.max(1, Math.min(86400, Math.floor((entry.expires - now) / 1e3))), timeout: 5e3 });
+        await db.prepare("INSERT OR IGNORE INTO push_deliveries (id,created_at) VALUES (?,?)").bind(delivery, now).run();
+        sent++;
+      } catch (e) {
+        failed++;
+        if (e.statusCode === 404 || e.statusCode === 410) await db.prepare("DELETE FROM push_subscriptions WHERE endpoint=?").bind(row.endpoint).run();
+        else complete = false;
+      }
+    }
+    if (complete) await db.prepare("DELETE FROM push_settings WHERE id=?").bind(job.id).run();
+    else pending++;
+  }
+  return { sent, failed, pending };
 }
 
 // server/render/attendance-worker.ts
@@ -583,6 +760,7 @@ function startAttendanceReminders() {
     running = true;
     try {
       if (!await migrationStatus()) return;
+      attendanceWorkerStatus.clubEvents = await notifyClubEvents();
       attendanceWorkerStatus.clubUpdate = await notifyClubUpdateOnce();
       const reset = await resetAttendanceOnce("rr-season-3", "attendance-reset-2026-09-16-v1");
       attendanceWorkerStatus.resetCount = reset.count;
@@ -985,8 +1163,13 @@ async function POST2(req) {
       state.seasons.find((s) => s.id === command.season).fixturesPublished = false;
     } else state = apply(current.state, command, { manageAttendance: a.user?.userId === "committee-alpha" && a.committee === "Alpha", latePlayerOverride: a.user?.userId === "committee-alpha" && a.committee === "Alpha" });
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
-    const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
-    if (!saved[1].meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
+    const notificationJobs = await Promise.all(changedNotifications(current.state.seasons.find((s) => s.id === changed.id), changed).map(async (message) => {
+      const data = JSON.stringify({ seasonId: changed.id, message });
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data))), (x) => x.toString(16).padStart(2, "0")).join("");
+      return db.prepare("INSERT INTO push_settings (id,data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO NOTHING").bind("notification:" + hash, JSON.stringify({ seasonId: changed.id, message, expires: Date.now() + 864e5 }), "royal-rangers", revision);
+    }));
+    const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), ...notificationJobs, db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
+    if (!saved.at(-1).meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
     await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee || a.member.name, command.type === "availability" ? `availability: ${command.playerId} ${command.status}` : command.type === "late-player" ? `Late player override: ${command.player.name} (${command.playerId}) to ${command.team}, marked Present` : command.type, changed.id, Date.now()).run();
     const pushDelivery = ["publish-squads", "publish"].includes(command.type) ? await notifySquads(changed).catch(() => ({ sent: 0, failed: 1 })) : void 0;
     return Response.json({ state: visibleTournament(state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }), revision: revision + 1, pushDelivery }, { headers: headers2 });
