@@ -89,6 +89,8 @@ import {
   packingService,
   deliveryExceptionService,
   processDeliveryExceptions,
+  whatsappOutbox,
+  orderClosureService,
   processWhatsAppPackingReviews,
   confirmationService,
   processWhatsAppConfirmations,
@@ -1248,6 +1250,8 @@ app.get("/whatsapp/catalog/images/:sku", async (req, res) => {
   }
 });
 
+app.get('/whatsapp/message-failures',async(req,res)=>wrap(res,async()=>{const user=await requireWhatsAppPilot(req,['Admin','Sales']);return whatsappOutbox.list(user,isWhatsAppAdminUser(user));}));
+app.post('/whatsapp/message-failures/:id/:action',async(req,res)=>wrap(res,async()=>{const user=await requireWhatsAppPilot(req,['Admin','Sales']);await whatsappOutbox.act(req.params.id,req.params.action,optionalString(req.body?.note)||'',user,isWhatsAppAdminUser(user));return whatsappOutbox.list(user,isWhatsAppAdminUser(user));}));
 app.get("/whatsapp/dashboard", async (req, res) => {
   try {
     const currentUser = await requireWhatsAppPilot(req, ["Admin", "Sales"]);
@@ -1768,6 +1772,10 @@ app.listen(port, () => {
   if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) {
     void ensureDcoCheckboxFlow().catch((error) => console.error("DCO checkbox Flow setup failed:", error instanceof Error ? error.message : "Unknown error"));
   }
+  let messageSweep=false,closureSweep=false;
+  const retryWhatsApp=async()=>{if(messageSweep)return;messageSweep=true;try{await whatsappOutbox.sweep();}catch(error){console.error('WhatsApp retry failed',error);}finally{messageSweep=false;}};
+  const closeWhatsApp=async()=>{if(closureSweep)return;closureSweep=true;try{await orderClosureService.sweep();}catch(error){console.error('WhatsApp final closure failed',error);}finally{closureSweep=false;}};
+  void retryWhatsApp();void closeWhatsApp();setInterval(()=>{void retryWhatsApp();void closeWhatsApp();},30_000).unref();
   void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
   void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));

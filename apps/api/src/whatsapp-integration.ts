@@ -1,3 +1,5 @@
+import {createWhatsAppOutbox} from './whatsapp-outbox.js';
+import {createOrderClosureService} from './whatsapp-order-closure.js';
 import { createPackingService } from "./whatsapp-packing.js";
 import { createDeliveryExceptionService } from "./delivery-exceptions.js";
 import { createConfirmationService } from "./whatsapp-confirmations.js";
@@ -194,55 +196,20 @@ async function recordMessage(input: {
   return result.rows[0]?.id || "";
 }
 
-async function updateMessageStatus(waMessageId: string, status: string, errorMessage = "") {
-  if (!waMessageId) return;
-  await executeDatabaseQuery(
-    `UPDATE whatsapp_messages SET status = $2, error_message = NULLIF($3, '') WHERE wa_message_id = $1`,
-    [waMessageId, status, errorMessage]
-  );
+async function updateMessageStatus(waMessageId:string,status:string,errorMessage=''){
+  await whatsappOutbox.receipt(waMessageId,status,errorMessage);
 }
 
-async function sendGraphMessage(phoneValue: string, message: JsonObject, relatedEntityType?: string, relatedEntityId?: string) {
-  message = prepareWhatsAppListMessage(message);
-  const phone = normalizeWhatsAppPhone(phoneValue);
-  const localMessageId = `simulated-${randomUUID()}`;
-  if (!configured()) {
-    await recordMessage({
-      waMessageId: localMessageId,
-      direction: "Outbound",
-      phone,
-      type: text(message.type) || "text",
-      relatedEntityType,
-      relatedEntityId,
-      status: "Simulated",
-      payload: message
-    });
-    return { messageId: localMessageId, simulated: true };
-  }
-
-  const response = await fetch(`${graphBase}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: phone, ...message })
-  });
-  const body = await response.json() as { messages?: Array<{ id?: string }>; error?: { message?: string } };
-  const messageId = body.messages?.[0]?.id || localMessageId;
-  await recordMessage({
-    waMessageId: messageId,
-    direction: "Outbound",
-    phone,
-    type: text(message.type) || "text",
-    relatedEntityType,
-    relatedEntityId,
-    status: response.ok ? "Sent" : "Failed",
-    payload: { request: message, response: body },
-    errorMessage: response.ok ? "" : text(body.error?.message) || `Meta returned HTTP ${response.status}`
-  });
-  if (!response.ok) throw new Error(text(body.error?.message) || `WhatsApp send failed (${response.status}).`);
-  return { messageId, simulated: false };
+export const whatsappOutbox=createWhatsAppOutbox({query:executeDatabaseQuery,transaction:executeDatabaseTransaction},async row=>{
+  if(!configured())return {messageId:`simulated-${row.id}`,simulated:true};
+  const response=await fetch(`${graphBase}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{authorization:`Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',recipient_type:'individual',to:row.phone_e164,...row.payload_json}),signal:AbortSignal.timeout(20000)});
+  const body=await response.json() as {messages?:Array<{id?:string}>;error?:{message?:string}};
+  if(!response.ok||!body.messages?.[0]?.id)throw Error(body.error?.message||`WhatsApp send failed (${response.status}).`);
+  return {messageId:body.messages[0].id,response:body};
+});
+export const orderClosureService=createOrderClosureService({query:executeDatabaseQuery,transaction:executeDatabaseTransaction});
+async function sendGraphMessage(phoneValue:string,message:JsonObject,relatedEntityType?:string,relatedEntityId?:string){
+  return whatsappOutbox.send(normalizeWhatsAppPhone(phoneValue),prepareWhatsAppListMessage(message),relatedEntityType,relatedEntityId);
 }
 
 async function sendText(phone: string, body: string, relatedEntityType?: string, relatedEntityId?: string) {
@@ -581,7 +548,7 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
   if (!retailer.optedInAt) return;
   const alreadyWelcomed = await executeDatabaseQuery(
     `SELECT id FROM whatsapp_messages
-     WHERE related_entity_type='BroadcastWelcome' AND related_entity_id=$1 AND status<>'Failed'
+     WHERE related_entity_type='BroadcastWelcome' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))
      LIMIT 1`, [counterpartyId]
   );
   if (alreadyWelcomed.rowCount) return;
@@ -600,7 +567,7 @@ async function sendFirstTimeWelcome(counterpartyId: string) {
 }
 
 async function sendFirstStaffTraining(phone: string, user: StaffUser) {
-  const alreadySent = await executeDatabaseQuery(`SELECT id FROM whatsapp_messages WHERE related_entity_type='StaffTraining' AND related_entity_id=$1 AND status<>'Failed' LIMIT 1`, [String(user.id)]);
+  const alreadySent = await executeDatabaseQuery(`SELECT id FROM whatsapp_messages WHERE related_entity_type='StaffTraining' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id)) LIMIT 1`, [String(user.id)]);
   if (alreadySent.rowCount) return;
   const reply = trainingLinkReply("guide", user.roles.length ? user.roles : [user.role], isWhatsAppAdminUser(user));
   if (reply) await sendText(phone, `Welcome ${user.fullName}. Aapke assigned modules ki training yahan hai:\n\n${reply}`, "StaffTraining", String(user.id));
@@ -660,7 +627,7 @@ async function sendLatestOrderStatus(profile: RetailerProfile) {
 async function offerLatestReorder(profile: RetailerProfile) {
   const result = await executeDatabaseQuery<Record<string, unknown>>(
     `SELECT id,sales_cart_id,created_at FROM whatsapp_order_drafts
-     WHERE counterparty_id=$1 AND status='Completed'
+     WHERE counterparty_id=$1 AND status IN ('Order Created','Completed')
      ORDER BY completed_at DESC NULLS LAST,created_at DESC LIMIT 1`,
     [profile.counterpartyId]
   );
@@ -682,7 +649,7 @@ async function offerLatestReorder(profile: RetailerProfile) {
 
 async function createReorder(profile: RetailerProfile, previousDraftId: string, messageId: string) {
   const previous = await executeDatabaseQuery<Record<string, unknown>>(
-    `SELECT id FROM whatsapp_order_drafts WHERE id=$1 AND counterparty_id=$2 AND status='Completed'`,
+    `SELECT id FROM whatsapp_order_drafts WHERE id=$1 AND counterparty_id=$2 AND status IN ('Order Created','Completed')`,
     [previousDraftId, profile.counterpartyId]
   );
   if (!previous.rows[0]) throw new Error("Previous order is unavailable.");
@@ -1503,7 +1470,7 @@ async function sendDraftForRetailerApproval(draftId: string, shortagePrepared = 
   await executeDatabaseQuery(
     `UPDATE whatsapp_order_drafts
      SET status='Awaiting Retailer', confirmation_message_id=$2, reviewed_at=NOW()
-     WHERE id=$1 AND status NOT IN ('Completed','Denied','Superseded','Processing')`, [draftId, sent.messageId]
+     WHERE id=$1 AND status NOT IN ('Order Created','Completed','Denied','Superseded','Processing')`, [draftId, sent.messageId]
   );
   await confirmationService.begin(draftId);
 }
@@ -1576,7 +1543,7 @@ async function clearRetailerProforma(profile: RetailerProfile, draftId: string) 
   if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
   const loaded = await loadDraft(draftId);
   if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
-  if (["Processing", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be cleared.");
+  if (["Processing", "Order Created", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be cleared.");
   if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_confirmation_followups WHERE draft_id=$1",[draftId])).rowCount) {
     await confirmationService.cancelByRetailer(draftId,profile.counterpartyId);
     return;
@@ -1588,84 +1555,13 @@ async function clearRetailerProforma(profile: RetailerProfile, draftId: string) 
   await sendText(profile.phoneE164, "Temporary proforma clear ho gayi. Naya order shuru karne ke liye product ka naam type karein, ya catalogue kholiye.", "Draft", draftId);
 }
 
-async function finalizeDraft(draftId: string) {
-  const tracked = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId]);
-  if (tracked.rowCount) {
-    try { await shortageService.confirm(draftId); }
-    catch (error) { await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Sales Action Required',decision_note=$2,next_action_at=NOW() WHERE id=$1",[tracked.rows[0].id,error instanceof Error?error.message:"Confirmation requires review."]); throw error; }
-    return;
-  }
-  if (await shortageService.detect(draftId)) return;
-
-  const claimed = await executeDatabaseQuery(
-    `UPDATE whatsapp_order_drafts SET status = 'Processing', retailer_confirmed_at = NOW()
-     WHERE id = $1 AND status = 'Awaiting Retailer' RETURNING id`, [draftId]
-  );
-  if (!claimed.rowCount) return;
-  try {
-    const { draft, lines } = await loadDraft(draftId);
-    const snapshot = await getSnapshot();
-    const stockBySku = new Map(snapshot.stockSummary
-      .filter((item) => item.warehouseId === text(draft.warehouse_id))
-      .map((item) => [item.productSku, item.availableQuantity]));
-    const shortages = lines.filter((line) => numberValue(line.approved_quantity) > (stockBySku.get(text(line.product_sku)) || 0));
-    if (shortages.length) {
-      for (const line of lines) {
-        await executeDatabaseQuery(
-          `UPDATE whatsapp_order_draft_lines SET stock_at_review=$3 WHERE id=$1 AND draft_id=$2`,
-          [text(line.id), draftId, stockBySku.get(text(line.product_sku)) || 0]
-        );
-      }
-      const shortageNames = shortages.map((line) => `${text(line.product_name)} (requested ${numberValue(line.approved_quantity)}, available ${stockBySku.get(text(line.product_sku)) || 0})`).join(", ");
-      await executeDatabaseQuery(
-        `UPDATE whatsapp_order_drafts
-         SET status='Needs Review', reviewed_at=NOW(), confirmation_message_id=NULL,
-             note=$2
-         WHERE id=$1`,
-        [draftId, compact(`${text(draft.note)} | Stock review: ${shortageNames}`, 1000)]
-      );
-      await sendText(text(draft.phone_e164),
-        `Order mil gaya hai. ${text(draft.salesman_name)} se stock check aur final order confirmation pending hai. Confirmation isi WhatsApp par bheja jayega.`,
-        "Draft", draftId
-      );
-      return;
-    }
-    const salesperson = snapshot.users.find((item) => item.id === numberValue(draft.salesman_id));
-    if (!salesperson) throw new Error("Assigned salesperson is unavailable.");
-    await createSalesCart({
-      allowProbationarySale: false,
-      shopId: text(draft.counterparty_id),
-      billingType: text(draft.billing_type) === "B2C" ? "B2C" : "B2B",
-      warehouseId: text(draft.warehouse_id),
-      paymentMode: text(draft.payment_mode) as PaymentMode,
-      cashTiming: text(draft.cash_timing) as "In Hand" | "At Delivery" | "Later" || undefined,
-      deliveryMode: text(draft.delivery_mode) === "Self Collection" ? "Self Collection" : "Delivery",
-      note: `WhatsApp confirmed order ${draftId}`,
-      lines: lines.map((line) => {
-        const amounts = lineAmounts(line as never);
-        return {
-          productSku: text(line.product_sku), quantity: numberValue(line.approved_quantity), rate: numberValue(line.rate),
-          cdTodRate: amounts.cdTodRate, cdAmount: amounts.cdAmount, todAmount: amounts.todAmount,
-          gstRate: amounts.gstRate, taxMode: amounts.taxMode, note: text(line.note)
-        };
-      })
-    }, salesperson);
-    const order = await executeDatabaseQuery<{ order_id: string }>(
-      `SELECT COALESCE(cart_id, id) AS order_id FROM sales_orders WHERE note LIKE $1 ORDER BY created_at DESC LIMIT 1`,
-      [`%${draftId}%`]
-    );
-    const salesCartId = order.rows[0]?.order_id || "";
-    await executeDatabaseQuery(
-      `UPDATE whatsapp_order_drafts SET status = 'Completed', sales_cart_id = $2, completed_at = NOW() WHERE id = $1`,
-      [draftId, salesCartId]
-    );
-    await sendText(text(draft.phone_e164),
-      `✅ Order confirmed${salesCartId ? `: ${salesCartId}` : ""}. Aapoorti team will share dispatch and final invoice updates here.`,
-      "Draft", draftId);
-  } catch (error) {
-    await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status = 'Awaiting Retailer', note = note || $2 WHERE id = $1 AND status='Processing'`, [draftId, ` | Finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`]);
-    throw error;
-  }
+async function finalizeDraft(draftId:string){
+  const current=await loadDraft(draftId);if(current.draft.sales_cart_id)return;
+  const tracked=await executeDatabaseQuery('SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)',[draftId]);
+  if(!tracked.rowCount&&await shortageService.detect(draftId))return;
+  // All SO lines, ledger, draft linkage and acknowledgement queue commit together.
+  try{await shortageService.confirm(draftId);void whatsappOutbox.dispatch(`${draftId}:order-confirmed`).catch(error=>console.error('Order acknowledgement retry pending',error));}
+  catch(error){if(tracked.rowCount)await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Sales Action Required',decision_note=$2,next_action_at=NOW() WHERE id=$1",[tracked.rows[0].id,error instanceof Error?error.message:'Confirmation requires review.']);throw error;}
 }
 
 async function acceptOffer(offerId: string, profile: RetailerProfile, inboundMessageId: string, quantityOverride?: number) {
@@ -2785,7 +2681,7 @@ async function handleInboundMessage(message: JsonObject) {
         await sendText(from, "This proforma does not belong to your retailer account.");
         return;
       }
-      if(["Denied","Superseded","Processing","Completed"].includes(text(loaded.draft.status))) {
+      if(["Denied","Superseded","Processing","Order Created", "Completed"].includes(text(loaded.draft.status))) {
         await sendText(from,"This order no longer has an active confirmation. Contact Sales for its current status.");
         return;
       }
@@ -2852,7 +2748,7 @@ async function handleInboundMessage(message: JsonObject) {
       const loaded = await loadDraft(draftId);
       const line = loaded.lines.find((candidate) => text(candidate.product_sku) === productSku);
       if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || !line) throw new Error("That product is not part of this proforma.");
-      if (["Processing", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be edited.");
+      if (["Processing", "Order Created", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be edited.");
       if (loaded.lines.length === 1) {
         await clearRetailerProforma(profile, draftId);
         return;
@@ -3670,7 +3566,7 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
     if (text(existing.draft.counterparty_id) !== profile.counterpartyId || text(existing.draft.source) !== "Live chat") {
       throw new Error("This live-chat order cannot be updated from the selected conversation.");
     }
-    if (["Processing", "Completed", "Denied"].includes(text(existing.draft.status))) {
+    if (["Processing", "Order Created", "Completed", "Denied"].includes(text(existing.draft.status))) {
       throw new Error("This order is already closed. Start a new order instead.");
     }
     const replacementLines = draftLines.map((line) => ({
@@ -4275,7 +4171,7 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
   if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
   const loaded = await loadDraft(draftId);
   if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
-  if (["Processing", "Completed"].includes(text(loaded.draft.status))) throw new Error("A confirmed order cannot be edited.");
+  if (["Processing", "Order Created", "Completed"].includes(text(loaded.draft.status))) throw new Error("A confirmed order cannot be edited.");
   if (!input.lines.length) throw new Error("Keep at least one product, or deny the complete order.");
   if (input.lines.length > loaded.lines.length || new Set(input.lines.map((line) => line.id)).size !== input.lines.length) throw new Error("Review contains invalid order lines.");
   if (await shortageService.detect(draftId)) return getWhatsAppDashboard(currentUser);
@@ -4314,7 +4210,7 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
       { id: `wa-change:${draftId}`, title: "Request Change" },
       { id: `wa-proforma:${draftId}`, title: "View Proforma" }
     ], "Draft", draftId);
-  await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status='Awaiting Retailer',confirmation_message_id=$2 WHERE id=$1 AND status NOT IN ('Completed','Denied','Superseded','Processing')`, [draftId, sent.messageId]);
+  await executeDatabaseQuery(`UPDATE whatsapp_order_drafts SET status='Awaiting Retailer',confirmation_message_id=$2 WHERE id=$1 AND status NOT IN ('Order Created','Completed','Denied','Superseded','Processing')`, [draftId, sent.messageId]);
   await confirmationService.begin(draftId);
   return getWhatsAppDashboard(currentUser);
 }
@@ -4359,15 +4255,16 @@ export async function sendWhatsAppOrderUpdate(draftId: string, status: string, n
     throw new Error("This order belongs to another salesperson.");
   }
   const cleanStatus = compact(status, 80);
+  if(cleanStatus.toLowerCase()==='completed')await orderClosureService.assertComplete(draftId);
   if (!cleanStatus) throw new Error("Order status is required.");
   const eventId = id("WAE");
   const template = text(process.env.WHATSAPP_ORDER_STATUS_TEMPLATE);
   const orderNumber = text(loaded.draft.sales_cart_id) || draftId;
   const sent = template
-    ? await sendTemplate(text(loaded.draft.phone_e164), template, [text(loaded.draft.retailer_name), orderNumber, cleanStatus, compact(note || "-", 300)], "OrderStatus", eventId)
+    ? await sendTemplate(text(loaded.draft.phone_e164), template, [text(loaded.draft.retailer_name), orderNumber, cleanStatus, compact(note || "-", 300)], "OrderStatus", draftId)
     : await sendText(text(loaded.draft.phone_e164),
       `Order update\n${orderNumber}\nStatus: *${cleanStatus}*${note ? `\n${compact(note, 500)}` : ""}`,
-      "OrderStatus", eventId);
+      "OrderStatus", draftId);
   await executeDatabaseQuery(
     `INSERT INTO whatsapp_order_events (id,draft_id,sales_cart_id,event_type,status_label,note,outbound_message_id,created_by,created_at)
      VALUES ($1,$2,$3,'Status',$4,$5,$6,$7,NOW())`,
@@ -4386,6 +4283,7 @@ export async function notifyWhatsAppOrderLifecycle(salesOrderId: string, status:
   );
   const draftId = text(result.rows[0]?.id);
   if (!draftId) return { sent: false, reason: "Not a WhatsApp order" };
+  if(status.toLowerCase()==='completed')await orderClosureService.assertComplete(draftId);
   const duplicate = await executeDatabaseQuery(
     `SELECT id FROM whatsapp_order_events WHERE draft_id=$1 AND status_label=$2 ORDER BY created_at DESC LIMIT 1`,
     [draftId, status]
@@ -4397,8 +4295,8 @@ export async function notifyWhatsAppOrderLifecycle(salesOrderId: string, status:
   try {
     const template = text(process.env.WHATSAPP_ORDER_STATUS_TEMPLATE);
     const sent = template
-      ? await sendTemplate(text(loaded.draft.phone_e164), template, [text(loaded.draft.retailer_name), orderNumber, status, compact(note || "-", 300)], "OrderStatus", eventId)
-      : await sendText(text(loaded.draft.phone_e164), `Order update\n${orderNumber}\nStatus: *${compact(status, 80)}*${note ? `\n${compact(note, 500)}` : ""}`, "OrderStatus", eventId);
+      ? await sendTemplate(text(loaded.draft.phone_e164), template, [text(loaded.draft.retailer_name), orderNumber, status, compact(note || "-", 300)], "OrderStatus", draftId)
+      : await sendText(text(loaded.draft.phone_e164), `Order update\n${orderNumber}\nStatus: *${compact(status, 80)}*${note ? `\n${compact(note, 500)}` : ""}`, "OrderStatus", draftId);
     await executeDatabaseQuery(
       `INSERT INTO whatsapp_order_events (id,draft_id,sales_cart_id,event_type,status_label,note,outbound_message_id,created_by,created_at)
        VALUES ($1,$2,$3,'Automatic',$4,$5,$6,'System',NOW())`,
@@ -4589,22 +4487,7 @@ export async function processWhatsAppShortages() {
         }
         await shortageService.monitorSupply(text(row.id));
         await shortageService.release(text(row.id));
-        const linked = await executeDatabaseQuery<Record<string, unknown>>("SELECT d.id,d.status,d.sales_cart_id FROM whatsapp_order_drafts d WHERE d.id=$1 OR d.id IN (SELECT draft_id FROM whatsapp_shortage_portions WHERE case_id=$2)",[row.draft_id,row.id]);
-        const drafts = linked.rows.filter(d => !["Superseded","Denied"].includes(String(d.status)));
-        const noBalance = !(await executeDatabaseQuery("SELECT 1 FROM whatsapp_shortage_lines WHERE case_id=$1 AND pending_quantity>released_quantity",[row.id])).rowCount;
-        const allCreated = linked.rows.length > 0 && drafts.every(d => d.status === "Completed" && d.sales_cart_id);
-        if (noBalance && allCreated) {
-          const cartIds = drafts.map(d=>d.sales_cart_id);
-          const unsettled = await executeDatabaseQuery(`SELECT id FROM sales_orders WHERE cart_id=ANY($1::text[]) AND status NOT IN ('Delivered','Closed') AND NOT (status='Cancelled' AND quantity=0)
-            UNION ALL SELECT id FROM ledger_entries WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND pending_amount>0`,[cartIds]);
-          const unverified = await executeDatabaseQuery("SELECT id FROM payments WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND verification_status NOT IN ('Verified','Resolved','Rejected')",[cartIds]);
-          const unsent = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_notifications WHERE case_id=$1 AND status<>'Sent' UNION ALL SELECT id FROM whatsapp_confirmation_notifications WHERE draft_id=ANY($2::text[]) AND status NOT IN ('Sent','Superseded')",[row.id,linked.rows.map(d=>d.id)]);
-          const supplierOpen = await executeDatabaseQuery("SELECT 1 FROM purchase_orders WHERE cart_id=$1 AND status NOT IN ('Cancelled','Closed') AND quantity_received<quantity_ordered",[row.purchase_order_id||null]);
-          const packingOpen=await executeDatabaseQuery(`SELECT 1 FROM whatsapp_packing_reviews p WHERE p.cart_id=ANY($1::text[]) AND
-            (p.status<>'Finalized' OR EXISTS(SELECT 1 FROM whatsapp_packing_notifications n WHERE n.case_id=p.id AND n.status NOT IN ('Sent','Superseded')) OR (p.balance_draft_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM whatsapp_shortage_cases s WHERE s.draft_id=p.balance_draft_id AND s.closed_at IS NOT NULL)))`,[cartIds]);
-          const deliveryOpen=await executeDatabaseQuery("SELECT 1 FROM delivery_exceptions WHERE order_id=ANY($1::text[]) AND status NOT IN ('Withdrawn','Retry Scheduled','Closed')",[cartIds]);
-          if (!deliveryOpen.rowCount && !packingOpen.rowCount && !supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
-        }
+        await orderClosureService.reconcile(text(row.draft_id));
       } catch (error) {
         console.error("Shortage reconciliation failed", {caseId:row.id,error: error instanceof Error?error.message:"Unknown error"});
       }
@@ -4644,7 +4527,7 @@ async function sendShortageNotification(notification: Record<string, unknown>) {
   if(notification.kind==='AvailableConfirmation'||notification.kind==='BalanceConfirmation') {
     if(notification.kind==='AvailableConfirmation'&&row.retailer_choice==='Wait')return;
     const draftId=text(payload.draftId);const draft=await loadDraft(draftId);
-    if(['Completed','Denied','Superseded','Processing'].includes(text(draft.draft.status)))return;
+    if(['Order Created','Completed','Denied','Superseded','Processing'].includes(text(draft.draft.status)))return;
     await sendDraftForRetailerApproval(draftId,true);return;
   }
   if(notification.kind==='PurchaserAlert') {
@@ -4653,7 +4536,7 @@ async function sendShortageNotification(notification: Record<string, unknown>) {
     if(!purchasers.rows.length)throw new Error('No active Purchaser is available. Assign a Purchaser to resolve this draft PO.');
     const publicWeb=(process.env.PUBLIC_WEB_URL||'https://b2b-api-theta.vercel.app').replace(/\/$/,'');
     for(const purchaser of purchasers.rows) {
-      const already=await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ShortagePurchaseAlert' AND related_entity_id=$1 AND status<>'Failed'",[`${notification.id}:${purchaser.id}`]);
+      const already=await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ShortagePurchaseAlert' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))",[`${notification.id}:${purchaser.id}`]);
       if(already.rowCount)continue;
       if(!text(purchaser.mobile_number))throw new Error(`Purchaser ${purchaser.id} has no WhatsApp number. The draft PO remains visible in the purchase workspace.`);
       await sendText(text(purchaser.mobile_number),`Purchase approval required\nDraft PO: ${row.id}\nRetailer: ${row.retailer_name}\nWarehouse: ${row.warehouse_id}\n${procurement}\n\nOpen Purchase > Shortage register to select the supplier, rate and expected arrival date.\n${publicWeb}`,'ShortagePurchaseAlert',`${notification.id}:${purchaser.id}`);
@@ -4669,7 +4552,7 @@ async function sendShortageNotification(notification: Record<string, unknown>) {
     for(const recipient of recipients.rows){
       try {
       const related=`${notification.id}:${recipient.id}`;
-      if((await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ShortageSupplyAlert' AND related_entity_id=$1 AND status<>'Failed'",[related])).rowCount)continue;
+      if((await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ShortageSupplyAlert' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))",[related])).rowCount)continue;
       if(!text(recipient.mobile_number))throw new Error(`Staff member ${recipient.id} has no WhatsApp number. Supplier follow-up remains visible in the shortage register.`);
       await sendText(text(recipient.mobile_number),`Supplier follow-up required: ${payload.status}\nCase: ${row.id}\nRetailer: ${row.retailer_name}\nPO: ${row.purchase_order_id}\n${detail}\n${payload.retailerCancelled?'The retailer balance is cancelled. Purchaser must resolve the outstanding supplier PO.':'Sales must agree a revised date, dispatch available stock, or cancel the unallocated balance with the retailer.'} Open the shortage register to record the decision.`,'ShortageSupplyAlert',related);
       } catch(error) { failures.push(error instanceof Error?error.message:'Staff alert failed'); }
@@ -4746,7 +4629,7 @@ async function sendConfirmationFollowupNotification(notification:Record<string,u
     for(const recipient of recipients) {
       try {
         const reference=`${notification.id}:${recipient.id}`;
-        if((await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ConfirmationOverdue' AND related_entity_id=$1 AND status<>'Failed'",[reference])).rowCount)continue;
+        if((await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ConfirmationOverdue' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))",[reference])).rowCount)continue;
         if(!text(recipient.mobile_number))throw new Error(`Staff member ${recipient.id} has no WhatsApp number. The overdue order remains in the confirmation follow-up queue.`);
         await sendText(text(recipient.mobile_number),`Retailer confirmation overdue\nOrder: ${row.id}\nRetailer: ${row.retailer_name}\nSales owner: ${row.salesman_name||'Assignment required'}\nFollow-up was due: ${new Date(String(row.due_at)).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} IST.\nOpen WhatsApp > Orders > Retailer confirmation follow-up to resend the confirmation, set a new date, or cancel the unconfirmed portion with a reason. The order has not been automatically cancelled.`,'ConfirmationOverdue',reference);
       } catch(error) {failures.push(error instanceof Error?error.message:'Overdue alert failed');}
@@ -4795,7 +4678,7 @@ async function sendPackingReviewNotification(notification:Record<string,unknown>
   }
   const recipients=(await executeDatabaseQuery<Record<string,unknown>>(`SELECT id,mobile_number FROM users WHERE active=TRUE AND (id=$1 OR id=$2 OR role='Admin' OR roles_json ? 'Admin' OR lower(username)=ANY($3::text[])) ORDER BY id`,[row.salesman_id,row.reported_by,[...whatsappAdminUsernames()]])).rows;
   const failures:string[]=[];
-  for(const recipient of recipients){try{const ref=`${notification.id}:${recipient.id}`;if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='PackingStaffUpdate' AND related_entity_id=$1 AND status<>'Failed'",[ref])).rowCount)continue;if(!recipient.mobile_number)throw new Error(`Staff member ${recipient.id} has no WhatsApp number. The packing review remains visible in the register.`);await sendText(text(recipient.mobile_number),`Packing review ${row.id}\nSO: ${row.cart_id}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.reason||'Warehouse recheck is required.'}\nOpen Packing rechecks in your workspace. ${['Finalized','Financial Review'].includes(row.status)?'Packing is finalized.'+(Number(row.credit_amount)>0?` Credit/refund review required: Rs.${Number(row.credit_amount).toFixed(2)}.`:''):'Packing stays on hold until the required approvals and final confirmation are complete.'}`,'PackingStaffUpdate',ref);}catch(error){failures.push(error instanceof Error?error.message:'Staff notification failed');}}
+  for(const recipient of recipients){try{const ref=`${notification.id}:${recipient.id}`;if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='PackingStaffUpdate' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))",[ref])).rowCount)continue;if(!recipient.mobile_number)throw new Error(`Staff member ${recipient.id} has no WhatsApp number. The packing review remains visible in the register.`);await sendText(text(recipient.mobile_number),`Packing review ${row.id}\nSO: ${row.cart_id}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.reason||'Warehouse recheck is required.'}\nOpen Packing rechecks in your workspace. ${['Finalized','Financial Review'].includes(row.status)?'Packing is finalized.'+(Number(row.credit_amount)>0?` Credit/refund review required: Rs.${Number(row.credit_amount).toFixed(2)}.`:''):'Packing stays on hold until the required approvals and final confirmation are complete.'}`,'PackingStaffUpdate',ref);}catch(error){failures.push(error instanceof Error?error.message:'Staff notification failed');}}
   if(!recipients.length)failures.push('No staff recipient is available.');if(failures.length)throw new Error(failures.join(' '));return true;
 }
 
@@ -4916,7 +4799,7 @@ export async function processDeliveryExceptions(){
     try{const row=(await executeDatabaseQuery<any>(`SELECT e.*,c.name AS retailer_name,COALESCE((SELECT SUM(amount) FROM payments WHERE side='Sales' AND linked_order_id=e.order_id AND verification_status IN ('Submitted','Verified','Resolved')),0) AS paid_amount FROM delivery_exceptions e JOIN counterparties c ON c.id=e.shop_id WHERE e.id=$1`,[n.case_id])).rows[0];if(!row||row.revision!==n.revision){await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status='Superseded' WHERE id=$1",[n.id]);continue;}
       const due=Math.max(0,Number(row.adjusted_total||0)-Number(row.paid_amount||0));
       const recipients=(await executeDatabaseQuery<any>("SELECT id,username,mobile_number FROM users WHERE active=TRUE AND (id=$1 OR username=$2 OR role='Admin' OR roles_json ? 'Admin' OR lower(username)=ANY($3::text[]) OR id=$4 OR ($5 AND (role='Warehouse Manager' OR roles_json ? 'Warehouse Manager') AND (warehouse_ids_json='[]'::jsonb OR warehouse_ids_json ? $6)))",[row.salesman_id,row.agent_username,[...whatsappAdminUsernames()],row.warehouse_received_by,!!row.handover_at&&String(row.original_json[0]?.note).startsWith('WhatsApp confirmed order WAD-'),row.warehouse_id])).rows;const failures=[];
-      for(const u of recipients){const ref=`${n.id}:${u.id}`;try{if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='DeliveryExceptionAlert' AND related_entity_id=$1 AND status<>'Failed'",[ref])).rowCount)continue;if(!u.mobile_number)throw Error(`Staff member ${u.id} has no WhatsApp number.`);await sendButtons(u.mobile_number,compact(`Delivery exception: ${row.report_json.kind}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.bill_adjusted_at?`Revised bill: Rs.${Number(row.adjusted_total).toFixed(2)}\nAlready paid: Rs.${Number(row.paid_amount).toFixed(2)}\nCollect now: Rs.${due.toFixed(2)}\n`:''}Goods custody: ${row.warehouse_received_at?"Warehouse received":row.agent_username}\n${row.report_json.reason}\n${row.decision_note||'Seller decision required after submission.'}\nOpen the report to review products, quantities and next action.`,1024),[...(row.bill_adjusted_at&&due>0&&u.username===row.agent_username?[{id:`wa-ex:collect:${row.id}`,title:'Collect payment'}]:[]),{id:`wa-ex:view:${row.id}`,title:'Open report'}],'DeliveryExceptionAlert',ref);}catch(error){failures.push(error instanceof Error?error.message:'Notification failed');}}
+      for(const u of recipients){const ref=`${n.id}:${u.id}`;try{if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='DeliveryExceptionAlert' AND related_entity_id=$1 AND (status<>'Failed' OR EXISTS(SELECT 1 FROM whatsapp_outbox o WHERE o.id=whatsapp_messages.id))",[ref])).rowCount)continue;if(!u.mobile_number)throw Error(`Staff member ${u.id} has no WhatsApp number.`);await sendButtons(u.mobile_number,compact(`Delivery exception: ${row.report_json.kind}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.bill_adjusted_at?`Revised bill: Rs.${Number(row.adjusted_total).toFixed(2)}\nAlready paid: Rs.${Number(row.paid_amount).toFixed(2)}\nCollect now: Rs.${due.toFixed(2)}\n`:''}Goods custody: ${row.warehouse_received_at?"Warehouse received":row.agent_username}\n${row.report_json.reason}\n${row.decision_note||'Seller decision required after submission.'}\nOpen the report to review products, quantities and next action.`,1024),[...(row.bill_adjusted_at&&due>0&&u.username===row.agent_username?[{id:`wa-ex:collect:${row.id}`,title:'Collect payment'}]:[]),{id:`wa-ex:view:${row.id}`,title:'Open report'}],'DeliveryExceptionAlert',ref);}catch(error){failures.push(error instanceof Error?error.message:'Notification failed');}}
       if(!recipients.length||failures.length)throw Error(failures.join(' ')||'No staff recipients.');await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status='Sent',last_error='' WHERE id=$1",[n.id]);
     }catch(error){await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status=$2,last_error=$3,available_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",[n.id,n.attempts>=5?'Failed':'Pending',error instanceof Error?error.message:'Notification failed']);}
   }}finally{deliveryExceptionSweep=false;}

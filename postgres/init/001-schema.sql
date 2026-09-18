@@ -802,3 +802,34 @@ ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS warehouse_received_by B
 ALTER TABLE delivery_exceptions ADD COLUMN IF NOT EXISTS receipt_finalized_revision INTEGER;
 
 CREATE INDEX IF NOT EXISTS delivery_exception_photos_case_idx ON delivery_exception_photos(case_id,stage,line_id);
+
+
+CREATE TABLE IF NOT EXISTS whatsapp_outbox (
+ id TEXT PRIMARY KEY, phone_e164 TEXT NOT NULL, payload_json JSONB NOT NULL,
+ related_entity_type TEXT, related_entity_id TEXT,
+ status TEXT NOT NULL DEFAULT 'Pending', attempts INTEGER NOT NULL DEFAULT 0,
+ available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), wa_message_id TEXT,
+ last_error TEXT NOT NULL DEFAULT '', manual_note TEXT NOT NULL DEFAULT '',
+ manual_by TEXT, manual_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_outbox_due_idx ON whatsapp_outbox(available_at) WHERE status IN ('Pending','Sending');
+CREATE INDEX IF NOT EXISTS whatsapp_outbox_message_idx ON whatsapp_outbox(wa_message_id);
+CREATE TABLE IF NOT EXISTS whatsapp_outbox_events (
+ id BIGSERIAL PRIMARY KEY,outbox_id TEXT NOT NULL REFERENCES whatsapp_outbox(id),action TEXT NOT NULL,
+ actor TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE whatsapp_order_drafts ADD COLUMN IF NOT EXISTS order_created_at TIMESTAMPTZ;
+ALTER TABLE whatsapp_order_drafts ADD COLUMN IF NOT EXISTS closure_checked_at TIMESTAMPTZ;
+ALTER TABLE whatsapp_order_drafts ADD COLUMN IF NOT EXISTS closure_reasons_json JSONB NOT NULL DEFAULT '[]';
+UPDATE whatsapp_order_drafts SET status='Order Created',order_created_at=COALESCE(order_created_at,completed_at,created_at),completed_at=NULL
+ WHERE status='Completed' AND closure_checked_at IS NULL;
+
+-- Historical failures stay manual until staff explicitly retries them.
+INSERT INTO whatsapp_outbox(id,phone_e164,payload_json,related_entity_type,related_entity_id,status,attempts,wa_message_id,last_error,created_at)
+ SELECT id,phone_e164,payload_json->'request',related_entity_type,related_entity_id,'Failed',5,wa_message_id,COALESCE(error_message,'Historical WhatsApp send failure'),created_at
+ FROM whatsapp_messages WHERE direction='Outbound' AND LOWER(status)='failed' AND jsonb_typeof(payload_json->'request')='object'
+ ON CONFLICT(id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS whatsapp_delivery_receipts (
+ wa_message_id TEXT PRIMARY KEY,status TEXT NOT NULL,last_error TEXT NOT NULL DEFAULT '',updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

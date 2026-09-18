@@ -1,3 +1,4 @@
+import {enqueueWhatsApp} from './whatsapp-outbox.js';
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { calculateSalesAmounts, calculateTaxAmounts } from "@aapoorti-b2b/domain";
@@ -38,7 +39,7 @@ export function createShortageService(deps: Dependencies) {
   async function detect(draftId: string) {
     return deps.transaction(async db => {
       const draft = (await db.query("SELECT * FROM whatsapp_order_drafts WHERE id=$1 FOR UPDATE", [draftId])).rows[0];
-      if (!draft || ["Completed","Denied","Processing"].includes(draft.status)) return null;
+      if (!draft || ["Order Created","Completed","Denied","Processing"].includes(draft.status)) return null;
       const existing = (await db.query("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)",[draftId])).rows[0];
       if (existing) return existing.id as string;
       const lines = (await db.query("SELECT * FROM whatsapp_order_draft_lines WHERE draft_id=$1 ORDER BY id",[draftId])).rows;
@@ -70,7 +71,7 @@ export function createShortageService(deps: Dependencies) {
       const root=(await db.query("SELECT status FROM whatsapp_order_drafts WHERE id=$1 FOR UPDATE",[row.draft_id])).rows[0];
       if (row.retailer_choice===choice && "counterpartyId" in actor) return;
       if(row.balance_draft_id)throw new Error("Use supplier follow-up to change the unallocated balance; existing confirmation portions stay active.");
-      if(choice==="Wait" && ["Completed","Processing"].includes(root.status))throw new Error("The available portion is already confirmed; only the remaining quantity can be changed.");
+      if(choice==="Wait" && ["Order Created","Completed","Processing"].includes(root.status))throw new Error("The available portion is already confirmed; only the remaining quantity can be changed.");
       if(row.retailer_choice==="Cancel Balance")throw new Error("The balance is already cancelled. Place a new order for additional quantities.");
       if(!("counterpartyId" in actor) && !note.trim())throw new Error("Record the retailer agreement before updating the choice.");
       if (!("counterpartyId" in actor) && row.purchase_status==="Cancelled" && choice!=="Cancel Balance") await db.query("UPDATE whatsapp_shortage_cases SET sales_resolution='Keep Pending' WHERE id=$1",[id]);
@@ -78,15 +79,15 @@ export function createShortageService(deps: Dependencies) {
         await db.query("UPDATE whatsapp_shortage_lines SET cancelled_quantity=cancelled_quantity+pending_quantity-released_quantity,pending_quantity=released_quantity,procurement_quantity=0 WHERE case_id=$1",[id]);
         await db.query("UPDATE whatsapp_shortage_cases SET purchase_status=CASE WHEN purchase_status='Draft' THEN 'Cancelled' ELSE purchase_status END WHERE id=$1",[id]);
       }
-      await db.query("UPDATE whatsapp_shortage_cases SET retailer_choice=$2,status=$3,updated_at=NOW(),next_action_at=NOW() WHERE id=$1",[id,choice,choice==="Wait"?"Awaiting Stock":root.status==="Completed"?(choice==="Cancel Balance"?"Fulfilment Pending":row.purchase_status==="Cancelled"?("counterpartyId" in actor?"Sales Action Required":"Awaiting Stock"):"Balance Pending"):"Available Confirmation Pending"]);
-      if(!["Completed","Processing"].includes(root.status))await db.query("UPDATE whatsapp_order_drafts SET status=$2,confirmation_message_id=NULL WHERE id=$1",[row.draft_id,choice==="Wait"?"Awaiting Stock":"Shortage Pending"]);
+      await db.query("UPDATE whatsapp_shortage_cases SET retailer_choice=$2,status=$3,updated_at=NOW(),next_action_at=NOW() WHERE id=$1",[id,choice,choice==="Wait"?"Awaiting Stock":["Order Created","Completed"].includes(root.status)?(choice==="Cancel Balance"?"Fulfilment Pending":row.purchase_status==="Cancelled"?("counterpartyId" in actor?"Sales Action Required":"Awaiting Stock"):"Balance Pending"):"Available Confirmation Pending"]);
+      if(!["Order Created","Completed","Processing"].includes(root.status))await db.query("UPDATE whatsapp_order_drafts SET status=$2,confirmation_message_id=NULL WHERE id=$1",[row.draft_id,choice==="Wait"?"Awaiting Stock":"Shortage Pending"]);
       if(choice==='Cancel Balance' && !row.balance_draft_id && !(await db.query("SELECT product_sku FROM whatsapp_shortage_lines WHERE case_id=$1 AND available_quantity>0",[id])).rowCount){
         await db.query("UPDATE whatsapp_order_drafts SET status='Denied',confirmation_message_id=NULL WHERE id=$1",[row.draft_id]);
         await db.query("UPDATE whatsapp_shortage_cases SET status=CASE WHEN purchase_status='Approved' THEN 'Supplier PO resolution required' ELSE 'Cancelled' END,closed_at=CASE WHEN purchase_status='Approved' THEN NULL ELSE NOW() END WHERE id=$1",[id]);
       }
       await event(db,id,"Retailer choice", "counterpartyId" in actor?"Retailer":actor.fullName,`${choice}${note?`: ${note}`:""}`);
       await enqueue(db,id,"ChoiceRecorded",{choice},`choice:${key("event")}`);
-      if(choice!=="Wait" && !["Completed","Processing"].includes(root.status)) await enqueue(db,id,"AvailableConfirmation",{draftId:row.draft_id},`available:${key("event")}`);
+      if(choice!=="Wait" && !["Order Created","Completed","Processing"].includes(root.status)) await enqueue(db,id,"AvailableConfirmation",{draftId:row.draft_id},`available:${key("event")}`);
     });
   }
   async function purchase(id:string, input:{decision:"Approve"|"Cancel";supplierId:string;expectedAt:string;note:string;lines:Array<{productSku:string;rate:number;gstRate:number}>},actor:Actor,admin=false){
@@ -170,7 +171,7 @@ export function createShortageService(deps: Dependencies) {
       if(row.closed_at||!['Approved','Cancelled'].includes(row.purchase_status)||row.retailer_choice==='Cancel Balance')throw new Error('This case has no active supplier follow-up.');
       if(!(await db.query('SELECT 1 FROM whatsapp_shortage_lines WHERE case_id=$1 AND pending_quantity>released_quantity',[id])).rowCount)throw new Error('All remaining quantities already have confirmation portions.');
       const root=(await db.query('SELECT * FROM whatsapp_order_drafts WHERE id=$1 FOR UPDATE',[row.draft_id])).rows[0];
-      const originalOpen=!['Completed','Superseded'].includes(root.status);
+      const originalOpen=!['Order Created','Completed','Superseded'].includes(root.status);
       if(input.decision==='Cancel'){
         await db.query('UPDATE whatsapp_shortage_lines SET cancelled_quantity=cancelled_quantity+pending_quantity-released_quantity,pending_quantity=released_quantity WHERE case_id=$1',[id]);
       }
@@ -204,11 +205,11 @@ export function createShortageService(deps: Dependencies) {
       if(row.closed_at || row.retailer_choice==="Pending" || row.retailer_choice==="Cancel Balance" || row.supply_review_required) return;
       if(!["Approved","Not Required"].includes(row.purchase_status) && !(row.purchase_status==="Cancelled" && row.sales_resolution==="Keep Pending"))return;
       // Only one unconfirmed replenishment portion is offered at a time.
-      if((await db.query("SELECT 1 FROM whatsapp_shortage_portions p JOIN whatsapp_order_drafts d ON d.id=p.draft_id WHERE p.case_id=$1 AND d.status NOT IN ('Completed','Denied')",[id])).rowCount)return;
+      if((await db.query("SELECT 1 FROM whatsapp_shortage_portions p JOIN whatsapp_order_drafts d ON d.id=p.draft_id WHERE p.case_id=$1 AND d.status NOT IN ('Order Created','Completed','Denied')",[id])).rowCount)return;
       const root=(await db.query("SELECT * FROM whatsapp_order_drafts WHERE id=$1 FOR UPDATE",[row.draft_id])).rows[0];
       const all=(await db.query("SELECT s.*,l.rate,l.cd_percent,l.tod_percent,l.gst_rate,l.tax_mode FROM whatsapp_shortage_lines s JOIN whatsapp_order_draft_lines l ON l.id=s.draft_line_id WHERE s.case_id=$1 ORDER BY s.product_sku",[id])).rows;
-      if(row.retailer_choice==='Split' && all.some(l=>Number(l.available_quantity)>0) && !['Completed','Superseded'].includes(root.status))return;
-      const includeOriginal=row.retailer_choice==='Wait'&&!['Completed','Superseded'].includes(root.status);
+      if(row.retailer_choice==='Split' && all.some(l=>Number(l.available_quantity)>0) && !['Order Created','Completed','Superseded'].includes(root.status))return;
+      const includeOriginal=row.retailer_choice==='Wait'&&!['Order Created','Completed','Superseded'].includes(root.status);
       const received=await receipts(db,row.purchase_order_id);
       const required=[];
       for(const line of all){
@@ -248,7 +249,7 @@ export function createShortageService(deps: Dependencies) {
       const lines=(await db.query('SELECT * FROM whatsapp_shortage_lines WHERE case_id=$1',[id])).rows;
       let total=0;
       for(const line of lines){
-        const original=['Completed','Superseded'].includes(root.status)?0:Number(line.available_quantity);
+        const original=['Order Created','Completed','Superseded'].includes(root.status)?0:Number(line.available_quantity);
         const needed=Math.max(0,Number(line.pending_quantity)-Number(line.released_quantity)+original-await stock(db,row.warehouse_id,line.product_sku));
         total+=needed;
         await db.query('UPDATE whatsapp_shortage_lines SET procurement_quantity=$3 WHERE case_id=$1 AND product_sku=$2',[id,line.product_sku,needed]);
@@ -266,7 +267,7 @@ export function createShortageService(deps: Dependencies) {
       await db.query("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1) FOR UPDATE",[draftId]);
       const draft=(await db.query("SELECT d.*,c.name AS retailer_name FROM whatsapp_order_drafts d JOIN counterparties c ON c.id=d.counterparty_id WHERE d.id=$1 FOR UPDATE OF d",[draftId])).rows[0];
       if(!draft)throw new Error("Order confirmation not found.");
-      if(draft.status==='Completed')return draft.sales_cart_id as string;
+      if(['Order Created','Completed'].includes(draft.status)){if(!draft.sales_cart_id)throw Error('The order reference is missing. Sales must review this existing confirmation.');return draft.sales_cart_id as string;}
       if(draft.status!=='Awaiting Retailer')throw new Error("This confirmation is no longer active. Please use the latest confirmation.");
       const caseRow=(await db.query("SELECT * FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)",[draftId])).rows[0];
       if(caseRow && caseRow.draft_id===draftId && caseRow.retailer_choice==='Wait')throw new Error("The order is waiting for the full quantity. Sales will send a new confirmation when stock arrives.");
@@ -290,13 +291,14 @@ export function createShortageService(deps: Dependencies) {
       const charge=draft.delivery_mode==='Delivery' && firstPortion && !draft.delivery_charge_waived ? Number(setting?.amount||0):0;
       if(charge>0){await db.query("UPDATE sales_orders SET delivery_charge=$2 WHERE id=(SELECT id FROM sales_orders WHERE cart_id=$1 ORDER BY id LIMIT 1)",[cartId,charge]);total+=charge;}
       await db.query("INSERT INTO ledger_entries(id,side,linked_order_id,party_name,goods_value,paid_amount,pending_amount,status) VALUES($1,'Sales',$2,$3,$4,0,$4,'Pending')",[key('LED'),cartId,draft.retailer_name,total]);
-      await db.query("UPDATE whatsapp_order_drafts SET status='Completed',sales_cart_id=$2,retailer_confirmed_at=NOW(),completed_at=NOW() WHERE id=$1",[draftId,cartId]);
+      await db.query("UPDATE whatsapp_order_drafts SET status='Order Created',sales_cart_id=$2,retailer_confirmed_at=NOW(),order_created_at=NOW(),completed_at=NULL WHERE id=$1",[draftId,cartId]);
       if(caseRow){
         if(caseRow.retailer_choice==='Pending')await db.query("UPDATE whatsapp_shortage_cases SET retailer_choice='Split' WHERE id=$1",[caseRow.id]);
         await db.query("UPDATE whatsapp_shortage_cases SET status=$2,updated_at=NOW(),next_action_at=COALESCE(expected_at,NOW()) WHERE id=$1",[caseRow.id,!(await db.query('SELECT 1 FROM whatsapp_shortage_lines WHERE case_id=$1 AND pending_quantity>released_quantity',[caseRow.id])).rowCount?'Fulfilment Pending':caseRow.purchase_status==='Cancelled'?'Sales Action Required':'Balance Pending']);
         await event(db,caseRow.id,'Sales order created','Retailer',cartId);
         await enqueue(db,caseRow.id,'OrderConfirmed',{cartId},`confirmed:${draftId}`);
       }
+      if(!caseRow)await enqueueWhatsApp(db,draft.phone_e164,{type:'text',text:{body:`Order confirmed: ${cartId}. Delivery and collection remain pending. Aapoorti will share updates here.`}},'Draft',draftId,`${draftId}:order-confirmed`);
       return cartId;
     });
   }

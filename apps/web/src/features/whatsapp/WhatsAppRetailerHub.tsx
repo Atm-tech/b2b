@@ -1,3 +1,4 @@
+import {MessageFailures} from './MessageFailures';
 import { PackingRegister } from "./PackingRegister";
 import { DeliveryExceptionRegister } from "../operations/DeliveryExceptionRegister";
 import { ConfirmationRegister } from "./ConfirmationRegister";
@@ -103,6 +104,7 @@ type WhatsAppDraft = {
   delivery_mode: "Delivery" | "Self Collection";
   note: string;
   sales_cart_id?: string;
+  closure_reasons_json?: string[];
   created_at: string;
   lines: DraftLine[];
 };
@@ -227,9 +229,10 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
   return <article className="panel">
     <div className="section-heading">
       <div><span className="eyebrow">{draft.source} · {formatDateTimeIst(draft.created_at)}</span><h3>{draft.retailer_name}</h3></div>
-      <span className={`status-pill ${draft.status === "Completed" ? "success" : "pending"}`}>{draft.status === "Completed" ? "SO Created" : draft.status}</span>
+      <span className={`status-pill ${draft.status === "Completed" ? "success" : "pending"}`}>{draft.status}</span>
     </div>
     <p className="helper-text">{draft.id} · {draft.phone_e164} · Assigned to {draft.salesman_name}{draft.sales_cart_id ? ` · SO ${draft.sales_cart_id}` : ""}</p>
+    {draft.sales_cart_id&&draft.status!=="Completed"?<p className="helper-text"><strong>Still open:</strong> {(draft.closure_reasons_json?.length?draft.closure_reasons_json:["Delivery and financial closure checks pending"]).join("; ")}</p>:null}
     {draft.status === "Needs Review" && /Stock review:/i.test(draft.note || "") ? <p className="helper-text"><strong>Stock confirmation required:</strong> edit the quantity/rate below and send confirmation, or deny the order. The retailer is waiting for {draft.salesman_name}.</p> : null}
     <div className="table-wrap"><table><thead><tr><th>Product</th><th>Requested</th><th>Approved</th><th>Rate</th><th>CD %</th><th>TOD %</th>{canReview ? <th /> : null}</tr></thead><tbody>
       {draft.lines.filter((line) => lines.some((item) => item.id === line.id)).map((line) => {
@@ -263,8 +266,8 @@ function DraftReviewCard({ draft, snapshot, busy, onReview, onDeny, onInvoice, o
       <label className="wide-field">Reason if denying<input value={denialReason} onChange={(event) => setDenialReason(event.target.value)} placeholder="Explain why this order cannot be fulfilled" /></label>
       <button className="ghost-button" type="button" disabled={busy || !denialReason.trim()} onClick={() => void onDeny(draft, denialReason)}>Deny order</button>
     </form> : null}
-    {draft.status === "Completed" && onInvoice ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void onInvoice(draft)}>Send invoice summary</button> : null}
-    {draft.status === "Completed" && onStatus ? <form className="wa-lifecycle-row" onSubmit={(event) => { event.preventDefault(); void onStatus(draft, lifecycleStatus, lifecycleNote); }}>
+    {draft.sales_cart_id && onInvoice ? <button className="ghost-button" type="button" disabled={busy} onClick={() => void onInvoice(draft)}>Send invoice summary</button> : null}
+    {draft.sales_cart_id && onStatus ? <form className="wa-lifecycle-row" onSubmit={(event) => { event.preventDefault(); void onStatus(draft, lifecycleStatus, lifecycleNote); }}>
       <label>Retailer update<select value={lifecycleStatus} onChange={(event) => setLifecycleStatus(event.target.value)}><option>Order received</option><option>Approved</option><option>Packed</option><option>Dispatched</option><option>Out for delivery</option><option>Delivered</option><option>Payment received</option></select></label>
       <label>Note<input value={lifecycleNote} onChange={(event) => setLifecycleNote(event.target.value)} placeholder="Vehicle, ETA or payment reference" /></label>
       <button className="primary-button" disabled={busy}>Send update</button>
@@ -750,7 +753,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     && visibleBroadcastRetailerIds.every((counterpartyId) => broadcastRetailerIds.includes(counterpartyId));
   const whatsappAdmin = Boolean(dashboard?.permissions.whatsappAdmin);
   const activeDrafts = (dashboard?.drafts || []).filter((item) => ["Needs Review", "Change Requested", "Staff Approved", "Awaiting Retailer", "Processing"].includes(item.status));
-  const completedDrafts = (dashboard?.drafts || []).filter((item) => item.status === "Completed");
+  const completedDrafts = (dashboard?.drafts || []).filter((item) => Boolean(item.sales_cart_id));
   const pendingWishlists = (dashboard?.wishlists || []).filter((item) => item.status === "Pending");
   const pendingRegistrations = (dashboard?.registrations || []).filter((item) => item.status === "Pending");
   const operationalRoles: UserRole[] = ["Sales", "Purchaser", "Warehouse Manager", "Delivery Manager", "Collection Agent", "In Delivery", "Out Delivery", "Delivery"];
@@ -812,6 +815,7 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </nav>
 
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <PackingRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
+    {!isMarketingWorkspace&&(activeSection==='Home'||activeSection==='Orders'||activeSection==='Chat')?<MessageFailures sessionToken={sessionToken}/>:null}
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <DeliveryExceptionRegister snapshot={snapshot} sessionToken={sessionToken} currentUser={currentUser} /> : null}
     {!isMarketingWorkspace && (whatsappAdmin || (currentUser.roles || [currentUser.role]).includes("Sales")) && (activeSection === "Home" || activeSection === "Orders") ? <ConfirmationRegister sessionToken={sessionToken} /> : null}
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <ShortageRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}

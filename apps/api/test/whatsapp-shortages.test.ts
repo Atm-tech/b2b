@@ -351,7 +351,7 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
       const id=await draft();await service.detect(id);await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[id]);
       const results=await Promise.allSettled([service.confirm(id),confirmations.act(id,{action:'cancel',note:'No response; Sales cancelled'},sales)]);
       assert.equal(results.filter(result=>result.status==='fulfilled').length,1);
-      const row=(await pool.query('SELECT status,sales_cart_id FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0];assert.ok(row.status==='Completed'||row.status==='Denied');assert.equal(Boolean(row.sales_cart_id),row.status==='Completed');
+      const row=(await pool.query('SELECT status,sales_cart_id FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0];assert.ok(row.status==='Order Created'||row.status==='Denied');assert.equal(Boolean(row.sales_cart_id),row.status==='Order Created');
     });
     await t.test("retailer clear preserves follow-up history and a stale edit button cannot reopen the cancelled order",async()=>{
       const id=await unconfirmed();await assert.rejects(()=>confirmations.cancelByRetailer(id,'WRONG'));
