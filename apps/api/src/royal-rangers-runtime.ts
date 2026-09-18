@@ -210,9 +210,12 @@ function summary(e) {
 function batting(m, i) {
   return i === 0 ? m.first : m.first === m.home ? m.away : m.home;
 }
+function wicketLimit(s, m, i) {
+  return m.closedInningsWickets?.[i] ?? Math.max(1, s.players.filter((p) => p.team === batting(m, i)).length - 1);
+}
 function inningsDone(s, m, i) {
   const x = summary(m.innings[i]);
-  return x.balls >= m.overs * 6 || x.wickets >= Math.max(1, s.players.filter((p) => p.team === batting(m, i)).length - 1) || i === 1 && x.runs > summary(m.innings[0]).runs;
+  return x.balls >= m.overs * 6 || x.wickets >= wicketLimit(s, m, i) || i === 1 && x.runs > summary(m.innings[0]).runs;
 }
 function phase(s, m) {
   return !m.started ? -1 : !inningsDone(s, m, 0) ? 0 : !inningsDone(s, m, 1) ? 1 : 2;
@@ -281,7 +284,7 @@ function standings(s) {
       if (a === b) tied++;
       else if (batting(m, a > b ? 0 : 1) === team) won++;
       for (const i of [0, 1]) {
-        const x = summary(m.innings[i]), bat = batting(m, i), allOut = x.wickets >= Math.max(1, s.players.filter((p) => p.team === bat).length - 1), balls = allOut ? m.overs * 6 : x.balls;
+        const x = summary(m.innings[i]), bat = batting(m, i), allOut = x.wickets >= wicketLimit(s, m, i), balls = allOut ? m.overs * 6 : x.balls;
         if (bat === team) {
           runsFor += x.runs;
           ballsFor += balls;
@@ -329,6 +332,21 @@ function apply(state, c, permissions = {}) {
     check(c.status === "available" || c.status === "unavailable", "Choose Available or Not available.");
     check(typeof c.playerId === "string" && c.playerId.length > 0, "Player not found.");
     s.availability = { ...s.availability, [c.playerId]: c.status };
+    return next;
+  }
+  if (c.type === "late-player") {
+    check(permissions.latePlayerOverride, "Only Alpha can override squad locks.");
+    check(TEAMS.includes(c.team), "Choose a valid team.");
+    check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
+    check(!s.players.some((p) => p.id === c.player.id), "This player already has a team. Override only adds unassigned players.");
+    check(!captains.some((p) => p.id === c.player.id), "Captains stay with their own teams.");
+    check(s.players.filter((p) => p.team === c.team).length < 11, "A squad can have at most 11 players.");
+    for (const m of s.matches.filter((m2) => m2.started)) for (const i of [0, 1]) if (inningsDone(s, m, i)) {
+      const limit = wicketLimit(s, m, i);
+      (m.closedInningsWickets ??= [null, null])[i] = limit;
+    }
+    s.players.push({ id: c.player.id, name: c.player.name, team: c.team });
+    s.availability = { ...s.availability, [c.player.id]: "available" };
     return next;
   }
   if (["player", "assign", "remove"].includes(c.type)) {
@@ -943,7 +961,7 @@ async function POST2(req) {
       if (!match) throw new Error("Match not found.");
       if (!scoringAllowed(a.user.userId, a.committee, match)) throw new AccessError("Only alpha can start, score or undo this match.");
     }
-    if (command.type === "assign") {
+    if (command.type === "assign" || command.type === "late-player") {
       const ratings = await readRatings();
       const player = ratings.players.find((p) => p.id === command.playerId);
       if (!player) throw new Error("Player not found in the private selection pool.");
@@ -965,11 +983,11 @@ async function POST2(req) {
       state.seasons.find((s) => s.id === command.season).published = false;
       state.seasons.find((s) => s.id === command.season).squadsPublished = false;
       state.seasons.find((s) => s.id === command.season).fixturesPublished = false;
-    } else state = apply(current.state, command, { manageAttendance: a.user?.userId === "committee-alpha" && a.committee === "Alpha" });
+    } else state = apply(current.state, command, { manageAttendance: a.user?.userId === "committee-alpha" && a.committee === "Alpha", latePlayerOverride: a.user?.userId === "committee-alpha" && a.committee === "Alpha" });
     const changed = command.type === "season" ? state.seasons[0] : state.seasons.find((s) => s.id === command.season);
     const saved = await db.batch([db.prepare("INSERT INTO seasons (id, data) SELECT ?, ? WHERE (SELECT revision FROM tournaments WHERE id = ?) = ? ON CONFLICT(id) DO UPDATE SET data = excluded.data").bind(changed.id, JSON.stringify(changed), "royal-rangers", revision), db.prepare("UPDATE tournaments SET revision = revision + 1 WHERE id = ? AND revision = ?").bind("royal-rangers", revision)]);
     if (!saved[1].meta.changes) return Response.json({ error: "Another scorer just saved. Reload before continuing." }, { status: 409 });
-    await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee || a.member.name, command.type === "availability" ? `availability: ${command.playerId} ${command.status}` : command.type, changed.id, Date.now()).run();
+    await db.prepare("INSERT INTO audit_log (id, actor, action, season, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), a.committee || a.member.name, command.type === "availability" ? `availability: ${command.playerId} ${command.status}` : command.type === "late-player" ? `Late player override: ${command.player.name} (${command.playerId}) to ${command.team}, marked Present` : command.type, changed.id, Date.now()).run();
     const pushDelivery = ["publish-squads", "publish"].includes(command.type) ? await notifySquads(changed).catch(() => ({ sent: 0, failed: 1 })) : void 0;
     return Response.json({ state: visibleTournament(state, { userId: a.user?.userId, committee: a.committee, playerId: a.member?.player_id }), revision: revision + 1, pushDelivery }, { headers: headers2 });
   } catch (e) {
