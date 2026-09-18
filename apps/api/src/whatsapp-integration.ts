@@ -1,4 +1,5 @@
 import { createPackingService } from "./whatsapp-packing.js";
+import { createDeliveryExceptionService } from "./delivery-exceptions.js";
 import { createConfirmationService } from "./whatsapp-confirmations.js";
 import { createShortageService, type ShortageChoice } from "./whatsapp-shortages.js";
 import { randomUUID } from "node:crypto";
@@ -17,6 +18,7 @@ import { isDeliveryCollectionAgent, discountPercentFromMrp, isValidMetaSignature
 
 type JsonObject = Record<string, unknown>;
 export const packingService = createPackingService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
+export const deliveryExceptionService = createDeliveryExceptionService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const confirmationService = createConfirmationService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const shortageService = createShortageService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles"> & { warehouseIds?: string[] };
@@ -1906,6 +1908,7 @@ async function sendStaffHelp(phone: string, user: StaffUser) {
 }
 
 async function handleStaffWhatsAppMessage(message: JsonObject, from: string, user: StaffUser): Promise<boolean> {
+  if(await handleDeliveryExceptionMessage(message,from,user))return true;
   const incomingCommand = text((message.text as JsonObject | undefined)?.body).toUpperCase();
   const incomingInteractive = message.interactive as JsonObject | undefined;
   const incomingAction = text(((incomingInteractive?.list_reply || incomingInteractive?.button_reply) as JsonObject | undefined)?.id);
@@ -2176,12 +2179,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stopIndex = Number(indexText); const stop = task?.routeStops[stopIndex];
     if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Stop unavailable hai. LIST type karein."); return true; }
     const party = (await getCollectionRetailer(stop.supplierId));
+    const exception=!stop.delivered ? (await deliveryExceptionService.list(user,isWhatsAppAdminUser(user))).cases.find(r=>r.task_id===task.id&&r.order_id===stop.orderId&&!['Retry Scheduled','Withdrawn'].includes(r.status)) : undefined;
+    if(exception){await sendDeliveryExceptionCard(from,exception);return true;}
     if (stop.delivered && stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")) {
       const privileged = party as { allowLaterCollection?: boolean } | undefined;
       const choices = privileged?.allowLaterCollection ? [{ id: `wa-collect:later:${task.id}:${stopIndex}`, title: "Collect later" }, { id: `wa-collect:now:${task.id}:${stopIndex}`, title: "Collect now" }] : [{ id: `wa-collect:now:${task.id}:${stopIndex}`, title: "Collect now" }];
       await sendButtons(from, `*${stop.supplierName}*\nDelivery complete. Collection due: Rs.${collectionRemaining(stop).toFixed(2)}.`, choices, "Collection", task.id); return true;
     }
-    await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${collectionRemaining(stop).toFixed(2)}\n\nRetailer ko stock handover karke Done dabayein.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Done" }], "Delivery", task.id); return true;
+    await sendButtons(from, `*${stop.supplierName}*\nAddress: ${stop.locationLabel || "Not recorded"}\nContact: ${party?.mobileNumber || "Not recorded"}\nOrder amount: Rs.${collectionRemaining(stop).toFixed(2)}\n\nConfirm delivery or record a delivery exception.`, [{ id: `wa-delivery:done:${task.id}:${stopIndex}`, title: "Delivered" },{id:`wa-ex:new:${task.id}:${stopIndex}:closed`,title:'Shop closed'},{id:`wa-ex:new:${task.id}:${stopIndex}:returned`,title:'Returned'}], "Delivery", task.id); return true;
   }
   if (action.startsWith("wa-delivery:done:")) { const [, , taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; if (!task || !deliveryTaskAllowed(task, user) || !stop) { await sendText(from, "Delivery task unavailable hai. LIST type karein."); return true; } deliveryProofPending.set(from, { taskId, stopIndex: Number(indexText) }); await sendText(from, "Ab retailer ko stock dete hue clear photo click karke isi WhatsApp chat mein send karein.", "Delivery", taskId); return true; }
   if (action.startsWith("wa-collect:now:")) {
@@ -4596,7 +4601,8 @@ export async function processWhatsAppShortages() {
           const supplierOpen = await executeDatabaseQuery("SELECT 1 FROM purchase_orders WHERE cart_id=$1 AND status NOT IN ('Cancelled','Closed') AND quantity_received<quantity_ordered",[row.purchase_order_id||null]);
           const packingOpen=await executeDatabaseQuery(`SELECT 1 FROM whatsapp_packing_reviews p WHERE p.cart_id=ANY($1::text[]) AND
             (p.status<>'Finalized' OR EXISTS(SELECT 1 FROM whatsapp_packing_notifications n WHERE n.case_id=p.id AND n.status NOT IN ('Sent','Superseded')) OR (p.balance_draft_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM whatsapp_shortage_cases s WHERE s.draft_id=p.balance_draft_id AND s.closed_at IS NOT NULL)))`,[cartIds]);
-          if (!packingOpen.rowCount && !supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
+          const deliveryOpen=await executeDatabaseQuery("SELECT 1 FROM delivery_exceptions WHERE order_id=ANY($1::text[]) AND status NOT IN ('Withdrawn','Retry Scheduled')",[cartIds]);
+          if (!deliveryOpen.rowCount && !packingOpen.rowCount && !supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
         }
       } catch (error) {
         console.error("Shortage reconciliation failed", {caseId:row.id,error: error instanceof Error?error.message:"Unknown error"});
@@ -4790,4 +4796,60 @@ async function sendPackingReviewNotification(notification:Record<string,unknown>
   const failures:string[]=[];
   for(const recipient of recipients){try{const ref=`${notification.id}:${recipient.id}`;if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='PackingStaffUpdate' AND related_entity_id=$1 AND status<>'Failed'",[ref])).rowCount)continue;if(!recipient.mobile_number)throw new Error(`Staff member ${recipient.id} has no WhatsApp number. The packing review remains visible in the register.`);await sendText(text(recipient.mobile_number),`Packing review ${row.id}\nSO: ${row.cart_id}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\n${row.reason||'Warehouse recheck is required.'}\nOpen Packing rechecks in your workspace. ${['Finalized','Financial Review'].includes(row.status)?'Packing is finalized.'+(Number(row.credit_amount)>0?` Credit/refund review required: Rs.${Number(row.credit_amount).toFixed(2)}.`:''):'Packing stays on hold until the required approvals and final confirmation are complete.'}`,'PackingStaffUpdate',ref);}catch(error){failures.push(error instanceof Error?error.message:'Staff notification failed');}}
   if(!recipients.length)failures.push('No staff recipient is available.');if(failures.length)throw new Error(failures.join(' '));return true;
+}
+
+async function sendDeliveryExceptionCard(phone:string,row:any){
+  const report=row.report_json;const lines=report.lines.map((l:any)=>{const original=row.original_json.find((o:any)=>o.id===l.id);return `${original?.product_name||l.id}: ${l.quantity} / ${original?.quantity} — ${l.reason}`;}).join('\n');
+  const body=compact(`${report.kind} — ${row.retailer_name||row.order_id}\nReport: ${row.id}\nStatus: ${row.status}\n${lines||'No return products selected yet.'}\nReason: ${report.reason||'Required'}\nGoods remain with ${row.agent_username}.\n${row.decision_note||''}${row.retry_at?`\nRetry: ${new Date(row.retry_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}`:''}`,1024);
+  const buttons=[];
+  if(['Draft','Correction Requested'].includes(row.status)&&row.canEdit!==false){buttons.push({id:`wa-ex:products:${row.id}:0`,title:'Add / edit products'},{id:`wa-ex:submit:${row.id}:${row.revision}`,title:'Confirm and send'},{id:`wa-ex:edit:${row.id}`,title:'Edit report'});}
+  else if(row.status==='Awaiting Seller'&&row.canDecide){buttons.push({id:`wa-ex:decision:${row.id}:${row.revision}:Return`,title:'Authorize return'},{id:`wa-ex:decision:${row.id}:${row.revision}:Correction`,title:'Request correction'});if(report.kind==='Shop closed')buttons.push({id:`wa-ex:decision:${row.id}:${row.revision}:Retry`,title:'Retry delivery'});}
+  if(buttons.length)await sendButtons(phone,body,buttons,'DeliveryException',row.id);else await sendText(phone,body,'DeliveryException',row.id);
+}
+async function handleDeliveryExceptionMessage(message:JsonObject,from:string,user:StaffUser){
+  const interactive=message.interactive as JsonObject|undefined;const action=text(((interactive?.button_reply||interactive?.list_reply) as JsonObject|undefined)?.id);const body=text((message.text as JsonObject|undefined)?.body);const admin=isWhatsAppAdminUser(user);const sessionKey=`delivery-exception-input:${user.id}`;
+  const setInput=async(value:Record<string,unknown>)=>{await executeDatabaseQuery('INSERT INTO settings(key,value_json) VALUES($1,$2::jsonb) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json',[sessionKey,JSON.stringify({...value,expiresAt:Date.now()+30*60_000})]);};
+  if(action.startsWith('wa-ex:')){
+    const [,kind,id,part,extra]=action.split(':');
+    if(kind==='new'){const snapshot=await getSnapshot(user);const task=snapshot.deliveryTasks.find(t=>t.id===id);const stop=task?.routeStops[Number(part)];if(!task||!stop||!deliveryTaskAllowed(task,user))throw Error('Delivery stop unavailable.');const row=await deliveryExceptionService.open(id,stop.orderId,extra==='closed'?'Shop closed':'Returned',user,admin);await sendDeliveryExceptionCard(from,await deliveryExceptionService.get(row.id,user,admin));return true;}
+    const row=await deliveryExceptionService.get(id,user,admin);
+    if(kind==='view'){await sendDeliveryExceptionCard(from,row);return true;}
+    if(kind==='products'){
+      if(!row.canEdit||!['Draft','Correction Requested'].includes(row.status))throw Error('This report is not editable.');if(row.report_json.kind==='Shop closed'){await sendText(from,'Shop closed includes every dispatched product. Use Edit report to change the reason or switch to Returned for selected products.');return true;}
+      const page=Math.max(0,Number(part)||0);const rows=row.original_json.slice(page*9,page*9+9).map((l:any)=>({id:`wa-ex:product:${id}:${l.id}`,title:compact(l.product_name,24),description:compact(`${l.product_sku} | Dispatched ${l.quantity} | Return ${row.report_json.lines.find((x:any)=>x.id===l.id)?.quantity||0}`,72)}));if(row.original_json.length>(page+1)*9)rows.push({id:`wa-ex:products:${id}:${page+1}`,title:'More products',description:'Select another product'});
+      await sendGraphMessage(from,{type:'interactive',interactive:{type:'list',body:{text:'Select a product to return. You can add another product after entering its quantity.'},action:{button:'Select product',sections:[{title:'Dispatched products',rows}]}}},'DeliveryException',id);return true;
+    }
+    if(kind==='product'){if(!row.canEdit||!row.original_json.some((l:any)=>l.id===part))throw Error('Product unavailable.');await setInput({id,revision:row.revision,stage:'quantity',lineId:part});await sendText(from,'Enter return quantity and reason, separated by |. Example: 2 | Damaged packaging. Use 0 | Remove to remove this product. Other reasons can be written in your own words.');return true;}
+    if(kind==='edit'){if(!row.canEdit)throw Error('Only the delivery agent can edit the report.');await sendButtons(from,'Choose the report type. The report remains a draft until Confirm and send.',[{id:`wa-ex:type:${id}:closed`,title:'Shop closed'},{id:`wa-ex:type:${id}:returned`,title:'Returned'},{id:`wa-ex:withdraw:${id}:${row.revision}`,title:'Discard draft'}],'DeliveryException',id);return true;}
+    if(kind==='type'){await setInput({id,revision:row.revision,stage:'reason',kind:part==='closed'?'Shop closed':'Returned'});await sendText(from,'Enter the delivery report reason or other details.');return true;}
+    if(kind==='submit'){await deliveryExceptionService.submit(id,Number(part),user,admin);await sendDeliveryExceptionCard(from,await deliveryExceptionService.get(id,user,admin));void processDeliveryExceptions();return true;}
+    if(kind==='withdraw'){await deliveryExceptionService.withdraw(id,Number(part),user,admin);await executeDatabaseQuery('DELETE FROM settings WHERE key=$1',[sessionKey]);await sendText(from,'Draft discarded. The delivery stop is available again.');return true;}
+    if(kind==='decision'){if(!row.canDecide)throw Error('Only the seller can decide this report.');await setInput({id,revision:Number(part),stage:'decision',decision:extra});await sendText(from,extra==='Retry'?'Enter the retry date and reason: YYYY-MM-DD HH:mm | reason. Time is India Standard Time.':'Enter the reason for this seller decision. You will review it before confirming.');return true;}
+    if(kind==='decide-confirm'){const pending=(await executeDatabaseQuery<any>('SELECT value_json FROM settings WHERE key=$1',[sessionKey])).rows[0]?.value_json;if(!pending||pending.id!==id||pending.stage!=='decision-confirm'||pending.expiresAt<Date.now()||pending.revision!==Number(part))throw Error('Decision expired. Open the report again.');await deliveryExceptionService.decide(id,{decision:pending.decision,note:pending.note,dueAt:pending.dueAt,revision:pending.revision},user,admin);await executeDatabaseQuery('DELETE FROM settings WHERE key=$1',[sessionKey]);await sendDeliveryExceptionCard(from,await deliveryExceptionService.get(id,user,admin));void processDeliveryExceptions();return true;}
+    throw Error('This delivery exception action is unavailable.');
+  }
+  if(!body)return false;
+  if(body.toUpperCase()==='EXCEPTIONS'){const {cases}=await deliveryExceptionService.list(user,admin);const rows=cases.slice(0,10).map((r:any)=>({id:`wa-ex:view:${r.id}`,title:compact(r.retailer_name,24),description:compact(`${r.status} | ${r.report_json.kind}`,72)}));if(!rows.length)await sendText(from,'No delivery exception reports.');else await sendGraphMessage(from,{type:'interactive',interactive:{type:'list',body:{text:'Select a delivery exception. All reports are also available in BConnect.'},action:{button:'Reports',sections:[{title:'Delivery exceptions',rows}]}}},'DeliveryException');return true;}
+  const pending=(await executeDatabaseQuery<any>('SELECT value_json FROM settings WHERE key=$1',[sessionKey])).rows[0]?.value_json;if(!pending||pending.expiresAt<Date.now()||['LIST','SO','DCO','HELP','MENU'].includes(body.toUpperCase()))return false;
+  if(body.toUpperCase()==='CANCEL'){await executeDatabaseQuery('DELETE FROM settings WHERE key=$1',[sessionKey]);await sendText(from,'Text entry cancelled. Your saved report is unchanged.');return true;}
+  const row=await deliveryExceptionService.get(pending.id,user,admin);
+  if(pending.stage==='decision'){const [date,...reason]=body.split('|');const note=pending.decision==='Retry'?reason.join('|').trim():body;const dueAt=pending.decision==='Retry'?`${date.trim().replace(' ','T')}:00+05:30`:undefined;if(!note||(dueAt&&!Number.isFinite(Date.parse(dueAt))))throw Error('Enter a valid date/time and decision reason.');await setInput({...pending,stage:'decision-confirm',note,dueAt});await sendButtons(from,compact(`Seller decision: ${pending.decision}\n${dueAt?`Retry: ${date.trim()} IST\n`:''}Reason: ${note}\nConfirm this decision?`,1024),[{id:`wa-ex:decide-confirm:${row.id}:${pending.revision}`,title:'Confirm decision'},{id:`wa-ex:decision:${row.id}:${pending.revision}:${pending.decision}`,title:'Edit decision'}],'DeliveryException',row.id);return true;}
+  if(pending.stage==='decision-confirm'){await sendText(from,'Use Confirm decision or Edit decision above. Send CANCEL to stop this text entry.');return true;}
+  let report={...row.report_json};
+  if(pending.stage==='quantity'){const [qty,...reason]=body.split('|');const quantity=Number(qty.trim());if(!Number.isFinite(quantity)||quantity<0||!reason.join('|').trim())throw Error('Enter quantity | reason.');report.lines=report.lines.filter((l:any)=>l.id!==pending.lineId);if(quantity>0)report.lines.push({id:pending.lineId,quantity,reason:reason.join('|').trim()});report.reason=report.reason||'Products returned at delivery';}
+  else if(pending.stage==='reason'){report={kind:pending.kind,reason:body,lines:pending.kind==='Shop closed'?row.original_json.map((l:any)=>({id:l.id,quantity:Number(l.quantity),reason:'Shop closed'})):row.report_json.lines};}
+  else return false;
+  await deliveryExceptionService.save(row.id,report,pending.revision,user,admin);await executeDatabaseQuery('DELETE FROM settings WHERE key=$1',[sessionKey]);await sendDeliveryExceptionCard(from,await deliveryExceptionService.get(row.id,user,admin));return true;
+}
+let deliveryExceptionSweep=false;
+export async function processDeliveryExceptions(){
+  if(deliveryExceptionSweep)return;deliveryExceptionSweep=true;
+  try{for(let i=0;i<30;i++){
+    const n=(await executeDatabaseQuery<any>(`UPDATE delivery_exception_notifications SET status='Sending',attempts=attempts+1,available_at=NOW()+INTERVAL '5 minutes' WHERE id=(SELECT id FROM delivery_exception_notifications WHERE status IN ('Pending','Sending') AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`)).rows[0];if(!n)break;
+    try{const row=(await executeDatabaseQuery<any>('SELECT e.*,c.name AS retailer_name FROM delivery_exceptions e JOIN counterparties c ON c.id=e.shop_id WHERE e.id=$1',[n.case_id])).rows[0];if(!row||row.revision!==n.revision){await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status='Superseded' WHERE id=$1",[n.id]);continue;}
+      const recipients=(await executeDatabaseQuery<any>("SELECT id,username,mobile_number FROM users WHERE active=TRUE AND (id=$1 OR username=$2 OR role='Admin' OR roles_json ? 'Admin' OR lower(username)=ANY($3::text[]))",[row.salesman_id,row.agent_username,[...whatsappAdminUsernames()]])).rows;const failures=[];
+      for(const u of recipients){const ref=`${n.id}:${u.id}`;try{if((await executeDatabaseQuery("SELECT 1 FROM whatsapp_messages WHERE related_entity_type='DeliveryExceptionAlert' AND related_entity_id=$1 AND status<>'Failed'",[ref])).rowCount)continue;if(!u.mobile_number)throw Error(`Staff member ${u.id} has no WhatsApp number.`);await sendButtons(u.mobile_number,compact(`Delivery exception: ${row.report_json.kind}\nRetailer: ${row.retailer_name}\nStatus: ${row.status}\nAgent / goods custody: ${row.agent_username}\n${row.report_json.reason}\n${row.decision_note||'Seller decision required after submission.'}\nOpen the report to review products, quantities and next action.`,1024),[{id:`wa-ex:view:${row.id}`,title:'Open report'}],'DeliveryExceptionAlert',ref);}catch(error){failures.push(error instanceof Error?error.message:'Notification failed');}}
+      if(!recipients.length||failures.length)throw Error(failures.join(' ')||'No staff recipients.');await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status='Sent',last_error='' WHERE id=$1",[n.id]);
+    }catch(error){await executeDatabaseQuery("UPDATE delivery_exception_notifications SET status=$2,last_error=$3,available_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",[n.id,n.attempts>=5?'Failed':'Pending',error instanceof Error?error.message:'Notification failed']);}
+  }}finally{deliveryExceptionSweep=false;}
 }

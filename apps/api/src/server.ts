@@ -87,6 +87,8 @@ import {
   isWhatsAppAdminUser,
   notifyWhatsAppOrderLifecycle,
   packingService,
+  deliveryExceptionService,
+  processDeliveryExceptions,
   processWhatsAppPackingReviews,
   confirmationService,
   processWhatsAppConfirmations,
@@ -1509,6 +1511,22 @@ app.post("/whatsapp/registrations/:id/approve", async (req, res) => wrap(res, as
   }, currentUser);
 }));
 
+app.get('/delivery-exceptions',async(req,res)=>{
+  try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);res.json(await deliveryExceptionService.list(user,isWhatsAppAdminUser(user)));}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Access denied.'});}
+});
+app.post('/delivery-exceptions/:id/:action',async(req,res)=>wrap(res,async()=>{
+  const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);const admin=isWhatsAppAdminUser(user);const {id,action}=req.params;const v=Number(req.body?.revision);
+  if(action==='open')await deliveryExceptionService.open(id,requiredString(req.body?.orderId,'Order'),requiredString(req.body?.kind,'Exception'),user,admin);
+  else if(action==='save')await deliveryExceptionService.save(id,req.body?.report,v,user,admin);
+  else if(action==='submit')await deliveryExceptionService.submit(id,v,user,admin);
+  else if(action==='withdraw')await deliveryExceptionService.withdraw(id,v,user,admin);
+  else if(action==='decide')await deliveryExceptionService.decide(id,{decision:requiredString(req.body?.decision,'Decision'),note:requiredString(req.body?.note,'Reason'),dueAt:optionalString(req.body?.dueAt),revision:v},user,admin);
+  else if(action==='retry')await deliveryExceptionService.retryNotifications(id,user,admin);
+  else throw Error('Unknown delivery exception action.');
+  void processDeliveryExceptions().catch(error=>console.error('Delivery exception notifications failed',error));
+  return deliveryExceptionService.list(user,admin);
+}));
+
 app.get("/whatsapp/packing-reviews",async(req,res)=>{
   try{const user=await requireWhatsAppPilot(req,["Admin","Sales","Warehouse Manager"]);res.json(await packingService.list(user,isWhatsAppAdminUser(user)));}
   catch(error){res.status(403).json({message:error instanceof Error?error.message:"Access denied."});}
@@ -1735,6 +1753,8 @@ app.listen(port, () => {
   void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();
   void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));
+  void processDeliveryExceptions().catch(error=>console.error('Delivery exception processing failed',error));
+  setInterval(()=>{void processDeliveryExceptions().catch(error=>console.error('Delivery exception processing failed',error));},30_000).unref();
   setInterval(()=>{void processWhatsAppPackingReviews().catch(error=>console.error('Packing review processing failed',error));},30_000).unref();
   void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));
   setInterval(()=>{void processWhatsAppConfirmations().catch(error=>console.error("Confirmation follow-up failed",error));},30_000).unref();

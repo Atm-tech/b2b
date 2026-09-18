@@ -13,7 +13,7 @@ function fixture(privileged = true) {
   const replies: any[] = []; const payments: any[] = [];
   const maps = Object.fromEntries(["staffProofs", "deliveryProofPending", "cashCollectionPending", "paymentProofPending", "packingPhotoPending", "packingWeightResults", "packingPhotoProofs", "packingManualWeightPending", "packingChangePending", "dcoBuildSessions", "dcoHandoverSelections", "receiptSessions", "collectionConfirmations"].map((name) => [name, new Map()]));
   const dependencies = {
-    ...maps, WHATSAPP_COLLECTION_TOLERANCE, shortId: (value: string) => value, cashDenominations: [500, 200, 100, 50, 20, 10],
+    ...maps, handleDeliveryExceptionMessage:async()=>false, isWhatsAppAdminUser:()=>false, deliveryExceptionService:{list:async()=>({cases:[]})}, WHATSAPP_COLLECTION_TOLERANCE, shortId: (value: string) => value, cashDenominations: [500, 200, 100, 50, 20, 10],
     text: (value: unknown) => String(value ?? ""), numberValue: (value: unknown) => Number(value || 0),
     staffHasRole: () => true, deliveryTaskAllowed: () => true,
     getSnapshot: async () => ({ deliveryTasks: [task], counterparties: [], salesOrders: [], purchaseOrders: [] }),

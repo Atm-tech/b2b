@@ -1,4 +1,5 @@
 import { assertNoPackingHold } from "./packing-guards.js";
+import { assertDeliveryExceptionUpdate } from "./delivery-exceptions.js";
 import "dotenv/config";
 import { isWhatsAppWarehouseUser, whatsappWarehouseSnapshot } from "./warehouse-order-visibility.js";
 import { isDeliveryCollectionAgent } from "./whatsapp-utils.js";
@@ -4421,6 +4422,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
   await withTransaction(async (client) => {
     const task = await one<Record<string, unknown>>("SELECT * FROM delivery_tasks WHERE id = $1 FOR UPDATE", [taskId], client);
     if (!task) throw new Error("Delivery task not found.");
+    await assertDeliveryExceptionUpdate(client,task,payload);
     if (payload.expectedStatus && task.status !== payload.expectedStatus) throw new Error("DCO status changed. Open a fresh DCO list before handover.");
     if (payload.expectedStatus === "Planned" && payload.status === "Handed Over") {
       const agent = await one<{ active: boolean; role: string; roles: string[]; mobileNumber: string }>('SELECT active,role,roles_json AS roles,mobile_number AS "mobileNumber" FROM users WHERE username=$1 AND active=TRUE AND (role=ANY($2::text[]) OR roles_json ?| $2::text[]) FOR SHARE', [payload.assignedTo, ["Delivery", "Out Delivery"]], client);

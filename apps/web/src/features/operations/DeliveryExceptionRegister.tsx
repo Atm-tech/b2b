@@ -1,0 +1,53 @@
+import {useCallback,useEffect,useRef,useState} from 'react';
+import axios from 'axios';
+import type {AppSnapshot,AppUser} from '@aapoorti-b2b/domain';
+import {api,formatDateTimeIst} from '../../app/shared';
+import {Panel} from '../../components/ui';
+type Report={kind:string;reason:string;lines:Array<{id:string;quantity:number;reason:string}>};
+type Case={id:string;task_id:string;order_id:string;retailer_name:string;seller_name:string;agent_username:string;status:string;revision:number;report_json:Report;original_json:Array<{id:string;product_sku:string;product_name:string;quantity:number}>;decision_note:string;retry_at?:string;canEdit:boolean;canDecide:boolean;failed_notifications:number;events:Array<{id:number;action:string;actor:string;note:string;created_at:string}>};
+type Act=(id:string,action:string,body:Record<string,unknown>)=>Promise<void>;
+function ExceptionCard({item,busy,act}:{item:Case;busy:boolean;act:Act}){
+ const [editing,setEditing]=useState(false);const [kind,setKind]=useState(item.report_json.kind);const [reason,setReason]=useState(item.report_json.reason);const [counts,setCounts]=useState<Record<string,string>>(()=>Object.fromEntries(item.report_json.lines.map(l=>[l.id,String(l.quantity)])));const [reasons,setReasons]=useState<Record<string,string>>(()=>Object.fromEntries(item.report_json.lines.map(l=>[l.id,l.reason])));const [decision,setDecision]=useState('Return');const [note,setNote]=useState('');const [due,setDue]=useState('');
+ const editable=item.canEdit&&['Draft','Correction Requested'].includes(item.status);
+ return <article className="panel shortage-card">
+  <div className="section-heading"><div><span className="eyebrow">{item.order_id}</span><h3>{item.retailer_name}</h3></div><span className="status-pill pending">{item.status}</span></div>
+  <p><strong>{item.report_json.kind}</strong> · Seller: {item.seller_name||'Unassigned'} · Goods custody: {item.agent_username}</p>
+  <div className="table-wrap"><table><thead><tr><th>Product</th><th>Dispatched</th><th>Reported return</th><th>Reason</th></tr></thead><tbody>{item.original_json.map(l=><tr key={l.id}><td>{l.product_name}<small>{l.product_sku}</small></td><td>{l.quantity}</td><td>{item.report_json.lines.find(r=>r.id===l.id)?.quantity||0}</td><td>{item.report_json.lines.find(r=>r.id===l.id)?.reason||'—'}</td></tr>)}</tbody></table></div>
+  <p>{item.report_json.reason||'Add products and a reason before sending.'}</p>
+  {item.decision_note?<p><strong>Seller decision:</strong> {item.decision_note}</p>:null}{item.retry_at?<p>Retry delivery: {formatDateTimeIst(item.retry_at)}</p>:null}
+  {item.status==='Return Authorized'?<p role="status">Return authorized. The agent must hand the listed goods to the warehouse for counting and condition checks. Stock and the bill have not been changed by this authorization.</p>:null}
+  {editable&&!editing?<div className="payment-card-actions"><button className="ghost-button" disabled={busy} onClick={()=>setEditing(true)}>Edit products / quantities</button><button className="primary-button" disabled={busy||!item.report_json.lines.length||!item.report_json.reason.trim()} onClick={()=>void act(item.id,'submit',{revision:item.revision})}>Confirm and send to seller</button><button className="ghost-button" disabled={busy} onClick={()=>void act(item.id,'withdraw',{revision:item.revision})}>Discard draft</button></div>:null}
+  {editable&&editing?<form className="form-grid" onSubmit={e=>{e.preventDefault();void act(item.id,'save',{revision:item.revision,report:{kind,reason,lines:item.original_json.flatMap(l=>{const quantity=kind==='Shop closed'?l.quantity:Number(counts[l.id]||0);return quantity>0?[{id:l.id,quantity,reason:kind==='Shop closed'?'Shop closed':reasons[l.id]||'Customer refused'}]:[];})}});}}>
+   <label>Delivery outcome<select value={kind} onChange={e=>setKind(e.target.value)}><option>Shop closed</option><option>Returned</option></select></label>
+   <label>Report reason / other details<input required value={reason} onChange={e=>setReason(e.target.value)}/></label>
+   {kind==='Returned'?item.original_json.map(l=><div className="form-grid wide-field" key={l.id}><label>{l.product_name} — return quantity<input type="number" min="0" max={l.quantity} step="any" value={counts[l.id]||''} placeholder="0 = not returned" onChange={e=>setCounts(c=>({...c,[l.id]:e.target.value}))}/></label><label>Reason (including other)<input required={Number(counts[l.id]||0)>0} value={reasons[l.id]||''} placeholder="Refused, damaged, wrong item, or other reason" onChange={e=>setReasons(r=>({...r,[l.id]:e.target.value}))}/></label></div>):<p className="wide-field">Every dispatched item stays with the delivery agent when the shop is closed.</p>}
+   <button className="primary-button" disabled={busy}>Save and review report</button><button type="button" className="ghost-button" onClick={()=>setEditing(false)}>Back to review</button>
+  </form>:null}
+  {item.status==='Awaiting Seller'&&item.canDecide?<form className="form-grid" onSubmit={e=>{e.preventDefault();void act(item.id,'decide',{revision:item.revision,decision,note,dueAt:decision==='Retry'?new Date(`${due}:00+05:30`).toISOString():undefined});}}>
+   <label>Seller final decision<select value={decision} onChange={e=>setDecision(e.target.value)}><option value="Return">Authorize return to warehouse</option><option value="Correction">Request agent correction</option>{item.report_json.kind==='Shop closed'?<option value="Retry">Retry delivery</option>:null}</select></label>
+   <label>Decision reason<input required value={note} onChange={e=>setNote(e.target.value)}/></label>
+   {decision==='Retry'?<label>Next delivery date / time (IST)<input required type="datetime-local" value={due} onChange={e=>setDue(e.target.value)}/></label>:null}
+   <button className="primary-button" disabled={busy}>Confirm seller decision</button>
+  </form>:null}
+  {item.failed_notifications>0?<p role="alert">{item.failed_notifications} notification(s) failed.{item.canDecide?<button className="ghost-button" disabled={busy} onClick={()=>void act(item.id,'retry',{})}>Retry notifications</button>:null}</p>:null}
+  <details><summary>Report history</summary><ul>{item.events.map(e=><li key={e.id}>{e.action} · {e.actor} · {formatDateTimeIst(e.created_at)} — {e.note}</li>)}</ul></details>
+ </article>;
+}
+export function DeliveryExceptionRegister({snapshot,sessionToken,currentUser}:{snapshot:AppSnapshot;sessionToken:string;currentUser:AppUser}){
+ const [items,setItems]=useState<Case[]>([]);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [loading,setLoading]=useState(true);const [selected,setSelected]=useState('');const [search,setSearch]=useState('');const seq=useRef(0);const busyRef=useRef(false);
+ const errorText=(e:unknown)=>axios.isAxiosError(e)?String(e.response?.data?.message||e.message):e instanceof Error?e.message:'Unable to update report.';
+ const refresh=useCallback(async()=>{if(busyRef.current)return;const n=++seq.current;try{const {data}=await api.get<{cases:Case[]}>('/delivery-exceptions',{headers:{authorization:`Bearer ${sessionToken}`}});if(n===seq.current){setItems(data.cases);setError('');}}catch(e){if(n===seq.current)setError(errorText(e));}finally{if(n===seq.current)setLoading(false);}},[sessionToken]);
+ useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),30000);return()=>{clearInterval(timer);seq.current++;};},[refresh]);
+ const act:Act=async(id,action,body)=>{if(busyRef.current)return;busyRef.current=true;setBusy(true);seq.current++;try{const {data}=await api.post<{cases:Case[]}>(`/delivery-exceptions/${encodeURIComponent(id)}/${action}`,body,{headers:{authorization:`Bearer ${sessionToken}`}});setItems(data.cases);setError('');}catch(e){setError(errorText(e));}finally{busyRef.current=false;setBusy(false);}};
+ const roles=[currentUser.role,...currentUser.roles];const canReport=roles.some(r=>['Admin','Delivery','Out Delivery'].includes(r));
+ const stops=canReport?snapshot.deliveryTasks.filter(t=>t.side==='Sales'&&t.status==='Handed Over'&&(roles.includes('Admin')||t.assignedTo.toLowerCase()===currentUser.username.toLowerCase())).flatMap(t=>t.routeStops.filter(s=>!s.delivered&&!s.picked).map(s=>({key:`${t.id}|${s.orderId}`,taskId:t.id,orderId:s.orderId,label:`${s.supplierName} / ${s.orderId}`}))):[];
+ const start=(kind:string)=>{const stop=stops.find(s=>s.key===selected);if(stop)void act(stop.taskId,'open',{orderId:stop.orderId,kind});};
+ return <div className="shortage-register"><Panel title="Delivery exceptions" eyebrow="Agent report / Seller decision / Goods custody">
+  <div className="section-heading"><p>Record shop closure or select the products and quantities returned. Review and edit before sending to the seller.</p><button className="ghost-button" disabled={busy} onClick={()=>void refresh()}>Refresh reports</button></div>
+  {error?<p role="alert">{error}</p>:null}{loading?<p role="status">Loading delivery reports…</p>:null}
+  {canReport?<div className="form-grid"><label className="wide-field">Assigned delivery stop<select value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Select retailer / order</option>{stops.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></label><button className="ghost-button" disabled={busy||!selected} onClick={()=>start('Shop closed')}>Shop closed</button><button className="ghost-button" disabled={busy||!selected} onClick={()=>start('Returned')}>Returned — select products</button></div>:null}
+  <div className="form-grid"><label className="wide-field">Find a report<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Retailer, order or status"/></label></div>
+  {!loading&&!items.length&&!error?<p>No delivery exceptions.</p>:null}
+  <div className="stacked-sections">{items.filter(r=>`${r.retailer_name} ${r.order_id} ${r.status}`.toLowerCase().includes(search.toLowerCase())).map(item=><ExceptionCard key={`${item.id}:${item.revision}`} item={item} busy={busy} act={act}/>)}</div>
+ </Panel></div>;
+}

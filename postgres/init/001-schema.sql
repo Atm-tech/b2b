@@ -758,3 +758,24 @@ CREATE INDEX IF NOT EXISTS whatsapp_packing_notification_due_idx ON whatsapp_pac
 ALTER TABLE whatsapp_order_drafts ADD COLUMN IF NOT EXISTS delivery_charge_waived BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE whatsapp_packing_reviews ADD COLUMN IF NOT EXISTS accepted_revision INTEGER;
+
+CREATE TABLE IF NOT EXISTS delivery_exceptions (
+ id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES delivery_tasks(id), order_id TEXT NOT NULL,
+ shop_id TEXT NOT NULL REFERENCES counterparties(id), warehouse_id TEXT NOT NULL,
+ salesman_id INTEGER, agent_username TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'Draft', original_json JSONB NOT NULL, report_json JSONB NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1, submitted_revision INTEGER,
+ decision TEXT, decision_note TEXT NOT NULL DEFAULT '', retry_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_exception_active_stop_idx ON delivery_exceptions(task_id,order_id) WHERE status NOT IN ('Retry Scheduled','Withdrawn');
+CREATE TABLE IF NOT EXISTS delivery_exception_events (
+ id BIGSERIAL PRIMARY KEY, case_id TEXT NOT NULL REFERENCES delivery_exceptions(id),
+ action TEXT NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS delivery_exception_notifications (
+ id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES delivery_exceptions(id), revision INTEGER NOT NULL,
+ status TEXT NOT NULL DEFAULT 'Pending', attempts INTEGER NOT NULL DEFAULT 0,
+ available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_error TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS delivery_exception_notification_due_idx ON delivery_exception_notifications(available_at) WHERE status IN ('Pending','Sending');

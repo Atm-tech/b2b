@@ -10,7 +10,7 @@ const source = ts.createSourceFile("db.ts", readFileSync(new URL("../src/db.ts",
 function loadFunction(name: string, dependencies: Record<string, unknown>) {
   const node = source.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name)!;
   const code = ts.transpileModule(node.getText(source).replace(/^export /, ""), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  return new Function(...Object.keys(dependencies), `${code}; return ${name};`)(...Object.values(dependencies));
+  dependencies.assertDeliveryExceptionUpdate ??= async()=>{}; return new Function(...Object.keys(dependencies), `${code}; return ${name};`)(...Object.values(dependencies));
 }
 
 function consignmentHarness(alreadyBundled = false) {
