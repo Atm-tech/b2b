@@ -379,6 +379,38 @@ function standings(s) {
     return { team, played, won, lost: played - won - tied, points: won * 2 + tied, nrr };
   }).sort((a, b) => b.points - a.points || (Math.abs(b.nrr - a.nrr) > 1e-9 ? b.nrr - a.nrr : 0) || (s.drawOrder || TEAMS).indexOf(a.team) - (s.drawOrder || TEAMS).indexOf(b.team));
 }
+function prepareFixtures(s) {
+  if (!s.fixtureFormat && s.matches.length === 3 && s.matches.every((m) => m.label !== "Final") && s.matches.some((m) => !m.started && !m.innings.some((i) => i.length))) s.fixtureFormat = "winner-stays";
+  if (s.fixtureFormat !== "winner-stays") return;
+  const league = s.matches.filter((m) => m.label !== "Final");
+  for (let i = 1; i < league.length; i++) {
+    const previous = league[i - 1], next = league[i];
+    if (next.started) continue;
+    const winner = advancingTeam(s, previous);
+    if (fixturePending(s, previous) || !winner) break;
+    next.home = winner;
+    next.away = TEAMS.find((t) => t !== previous.home && t !== previous.away);
+    next.first = winner;
+  }
+}
+function advancingTeam(s, m) {
+  if (phase(s, m) !== 2) return;
+  const a = summary(m.innings[0]).runs, b = summary(m.innings[1]).runs;
+  return a === b ? m.advancingTeam : batting(m, a > b ? 0 : 1);
+}
+function fixturePending(s, m) {
+  if (s.fixtureFormat !== "winner-stays" || m.started || m.label === "Final") return false;
+  const index = s.matches.findIndex((x) => x.id === m.id);
+  if (index <= 0) return false;
+  const previous = s.matches[index - 1];
+  return fixturePending(s, previous) || !advancingTeam(s, previous);
+}
+function fixtureLabel(s, m) {
+  if (!fixturePending(s, m)) return `${teamName(m.home)} vs ${teamName(m.away)}`;
+  const index = s.matches.findIndex((x) => x.id === m.id), previous = s.matches[index - 1];
+  const waiting = fixturePending(s, previous) ? "waiting team" : teamName(TEAMS.find((t) => t !== previous.home && t !== previous.away));
+  return `Winner of Match ${index} vs ${waiting}`;
+}
 function syncFinal(s) {
   const league = s.matches.filter((m) => m.label !== "Final"), final = s.matches.find((m) => m.label === "Final");
   if (final?.started) return;
@@ -408,6 +440,7 @@ function apply(state, c, permissions = {}) {
     return next;
   }
   check(s, "Season not found.");
+  prepareFixtures(s);
   if (c.type === "availability") {
     check((permissions.manageAttendance || !s.availabilityClosed && !s.squadsPublishedAt && !s.publishedAt && !s.squadsPublished && !s.published) && !s.matches.some((m) => m.started), "Squads are already published. Contact Alpha to arrange any change.");
     check(c.status === "available" || c.status === "unavailable", "Choose Available or Not available.");
@@ -477,6 +510,7 @@ function apply(state, c, permissions = {}) {
   } else if (c.type === "fixtures") {
     check(!s.matches.length, "Fixtures already exist.");
     for (const team of TEAMS) check(s.players.filter((p) => p.team === team).length >= 2, "Add at least two players to each squad first.");
+    s.fixtureFormat = "winner-stays";
     s.drawOrder = shuffled([...TEAMS]);
     s.matches = shuffled([[TEAMS[0], TEAMS[1]], [TEAMS[1], TEAMS[2]], [TEAMS[2], TEAMS[0]]]).map(([home, away], i) => ({ id: crypto.randomUUID(), home, away, first: home, overs: s.overs, label: `League ${i + 1}`, started: false, innings: [[], []] }));
   } else if (c.type === "edit-fixtures") {
@@ -485,6 +519,7 @@ function apply(state, c, permissions = {}) {
     check(new Set(ids).size === ids.length && ids.every((id) => typeof id === "string" && s.matches.some((m) => m.id === id)), "Invalid fixture list.");
     const reordered = c.fixtures.map((f, index) => {
       const match = s.matches.find((m) => m.id === f.id);
+      if (s.fixtureFormat === "winner-stays") check(s.matches[index]?.id === match.id, "Winner progression fixes the match order. You can still change overs.");
       check(Number.isInteger(f.overs) && f.overs >= 1 && f.overs <= 50, "Choose 1?50 overs.");
       if (match.started || match.innings.some((i) => i.length)) {
         check(s.matches[index]?.id === match.id && f.overs === match.overs, "Started matches cannot be moved or edited.");
@@ -511,6 +546,7 @@ function apply(state, c, permissions = {}) {
     check(m, "Match not found.");
     if (c.type === "start") {
       check(!m.started, "Match has already started.");
+      check(!fixturePending(s, m), "Finish the previous match and select the continuing team if tied.");
       check(s.matches.slice(0, s.matches.indexOf(m)).every((x) => phase(s, x) === 2), "Play the fixtures in their drawn order.");
       check(c.first === m.home || c.first === m.away, "Choose the batting team.");
       check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
@@ -532,6 +568,11 @@ function apply(state, c, permissions = {}) {
       check(i === 0 || i === 1, "Start a live innings first.");
       check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
       (m.deadBalls ??= []).push({ innings: i, afterBall: m.innings[i].length });
+    } else if (c.type === "advance-tie") {
+      check(s.fixtureFormat === "winner-stays" && m.label !== "Final" && s.matches.indexOf(m) < 2 && phase(s, m) === 2 && summary(m.innings[0]).runs === summary(m.innings[1]).runs, "Select a continuing team only after a tied opening or second match.");
+      check(c.team === m.home || c.team === m.away, "Choose a team from this match.");
+      check(!s.matches.slice(s.matches.indexOf(m) + 1).some((x) => x.started), "Cannot change progression after the next match has started.");
+      m.advancingTeam = c.team;
     } else if (c.type === "undo") {
       check(!s.matches.some((o) => o.id !== m.id && o.started && s.matches.indexOf(o) > s.matches.indexOf(m)), "Cannot undo after the next match has started.");
       const i = m.innings[1].length ? 1 : 0, d = m.deadBalls?.at(-1);
@@ -540,9 +581,11 @@ function apply(state, c, permissions = {}) {
         check(m.innings[i].length, "No deliveries to undo.");
         m.innings[i].pop();
       }
+      delete m.advancingTeam;
       if (phase(s, m) === 0) m.secondInningsStarted = false;
     } else throw new Error("Unknown action.");
   }
+  prepareFixtures(s);
   syncFinal(s);
   return next;
 }
@@ -568,7 +611,7 @@ function tournamentNotifications(s) {
   add("squads", "Squads updated", `Season ${s.number || ""}: the latest team selection is ready. Tap to check your squad.`, "teams");
   events[0].key = "squads:" + roster;
   if (s.fixturesPublished ?? s.published) {
-    const fixtures = s.matches.map((m) => `${m.id}:${m.home}:${m.away}:${m.overs}`).join("|");
+    const fixtures = s.matches.map((m) => `${m.id}:${fixtureLabel(s, m)}:${m.overs}`).join("|");
     add("fixtures:" + fixtures, "Fixtures updated", `Season ${s.number || ""}: check the match order and overs before you take the field.`, "matches");
     for (const m of s.matches.filter((m2) => phase(s, m2) === 2)) {
       const award = performanceAward(s, m), names = award.winners.map((p) => p.name).join(", ");
@@ -926,12 +969,14 @@ function seasonPublished(s) {
   return s.squadsPublished ?? s.published === true;
 }
 function visibleTournament(state, viewer) {
+  state = structuredClone(state);
+  state.seasons.forEach(prepareFixtures);
   const privileged = viewer.userId === "committee-alpha" && viewer.committee === "Alpha" || !!viewer.userId && captains.some((p) => p.id === viewer.playerId);
   return { seasons: state.seasons.map((s, index) => {
     const historical = index > 0 && s.published === void 0 && s.squadsPublished === void 0 && s.matches.some((m) => m.started);
     const squads = privileged || historical || seasonPublished(s);
     const fixtures = squads && (privileged || historical || (s.fixturesPublished ?? s.published === true));
-    return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
+    return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, fixtureFormat: s.fixtureFormat, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
   }) };
 }
 
@@ -1142,7 +1187,7 @@ async function POST2(req) {
     const db = database();
     const current = await read();
     if (current.revision !== revision) return Response.json({ error: "Scores changed in another tab. Reload the latest scores before continuing." }, { status: 409 });
-    if (["start", "next-innings", "ball", "undo", "dead"].includes(command.type)) {
+    if (["start", "next-innings", "ball", "undo", "dead", "advance-tie"].includes(command.type)) {
       const match = current.state.seasons.find((s) => s.id === command.season)?.matches.find((m) => m.id === command.match);
       if (!match) throw new Error("Match not found.");
       if (!scoringAllowed(a.user.userId, a.committee, match)) throw new AccessError("Only alpha can start, score or undo this match.");
