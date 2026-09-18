@@ -380,17 +380,19 @@ function standings(s) {
   }).sort((a, b) => b.points - a.points || (Math.abs(b.nrr - a.nrr) > 1e-9 ? b.nrr - a.nrr : 0) || (s.drawOrder || TEAMS).indexOf(a.team) - (s.drawOrder || TEAMS).indexOf(b.team));
 }
 function prepareFixtures(s) {
-  if (!s.fixtureFormat && s.matches.length === 3 && s.matches.every((m) => m.label !== "Final") && s.matches.some((m) => !m.started && !m.innings.some((i) => i.length))) s.fixtureFormat = "winner-stays";
-  if (s.fixtureFormat !== "winner-stays") return;
-  const league = s.matches.filter((m) => m.label !== "Final");
-  for (let i = 1; i < league.length; i++) {
-    const previous = league[i - 1], next = league[i];
-    if (next.started) continue;
-    const winner = advancingTeam(s, previous);
-    if (fixturePending(s, previous) || !winner) break;
-    next.home = winner;
-    next.away = TEAMS.find((t) => t !== previous.home && t !== previous.away);
-    next.first = winner;
+  if (s.fixtureFormat === "winner-stays" || !s.fixtureFormat && s.matches.length === 3 && s.matches.every((m) => m.label !== "Final") && s.matches.some((m) => !m.started && !m.innings.some((i) => i.length))) s.fixtureFormat = "winner-first";
+  if (s.fixtureFormat !== "winner-first") return;
+  const [opening, second, third] = s.matches.filter((m) => m.label !== "Final");
+  if (!opening) return;
+  const winner = advancingTeam(s, opening);
+  if (!winner) return;
+  const waiting = TEAMS.find((t) => t !== opening.home && t !== opening.away);
+  const loser = opening.home === winner ? opening.away : opening.home;
+  for (const [match, home, away] of [[second, winner, waiting], [third, waiting, loser]]) {
+    if (!match || match.started || match.innings.some((i) => i.length)) continue;
+    match.home = home;
+    match.away = away;
+    match.first = home;
   }
 }
 function advancingTeam(s, m) {
@@ -399,17 +401,14 @@ function advancingTeam(s, m) {
   return a === b ? m.advancingTeam : batting(m, a > b ? 0 : 1);
 }
 function fixturePending(s, m) {
-  if (s.fixtureFormat !== "winner-stays" || m.started || m.label === "Final") return false;
+  if (s.fixtureFormat !== "winner-first" || m.started || m.label === "Final") return false;
   const index = s.matches.findIndex((x) => x.id === m.id);
-  if (index <= 0) return false;
-  const previous = s.matches[index - 1];
-  return fixturePending(s, previous) || !advancingTeam(s, previous);
+  return (index === 1 || index === 2) && !advancingTeam(s, s.matches[0]);
 }
 function fixtureLabel(s, m) {
   if (!fixturePending(s, m)) return `${teamName(m.home)} vs ${teamName(m.away)}`;
-  const index = s.matches.findIndex((x) => x.id === m.id), previous = s.matches[index - 1];
-  const waiting = fixturePending(s, previous) ? "waiting team" : teamName(TEAMS.find((t) => t !== previous.home && t !== previous.away));
-  return `Winner of Match ${index} vs ${waiting}`;
+  const opening = s.matches[0], waiting = teamName(TEAMS.find((t) => t !== opening.home && t !== opening.away));
+  return s.matches.findIndex((x) => x.id === m.id) === 1 ? `Winner of Match 1 vs ${waiting}` : `${waiting} vs Loser of Match 1`;
 }
 function syncFinal(s) {
   const league = s.matches.filter((m) => m.label !== "Final"), final = s.matches.find((m) => m.label === "Final");
@@ -510,7 +509,7 @@ function apply(state, c, permissions = {}) {
   } else if (c.type === "fixtures") {
     check(!s.matches.length, "Fixtures already exist.");
     for (const team of TEAMS) check(s.players.filter((p) => p.team === team).length >= 2, "Add at least two players to each squad first.");
-    s.fixtureFormat = "winner-stays";
+    s.fixtureFormat = "winner-first";
     s.drawOrder = shuffled([...TEAMS]);
     s.matches = shuffled([[TEAMS[0], TEAMS[1]], [TEAMS[1], TEAMS[2]], [TEAMS[2], TEAMS[0]]]).map(([home, away], i) => ({ id: crypto.randomUUID(), home, away, first: home, overs: s.overs, label: `League ${i + 1}`, started: false, innings: [[], []] }));
   } else if (c.type === "edit-fixtures") {
@@ -519,7 +518,7 @@ function apply(state, c, permissions = {}) {
     check(new Set(ids).size === ids.length && ids.every((id) => typeof id === "string" && s.matches.some((m) => m.id === id)), "Invalid fixture list.");
     const reordered = c.fixtures.map((f, index) => {
       const match = s.matches.find((m) => m.id === f.id);
-      if (s.fixtureFormat === "winner-stays") check(s.matches[index]?.id === match.id, "Winner progression fixes the match order. You can still change overs.");
+      if (s.fixtureFormat === "winner-first") check(s.matches[index]?.id === match.id, "The opening result fixes the match order. You can still change overs.");
       check(Number.isInteger(f.overs) && f.overs >= 1 && f.overs <= 50, "Choose 1?50 overs.");
       if (match.started || match.innings.some((i) => i.length)) {
         check(s.matches[index]?.id === match.id && f.overs === match.overs, "Started matches cannot be moved or edited.");
@@ -569,7 +568,7 @@ function apply(state, c, permissions = {}) {
       check(i !== 1 || !m.pauseBetweenInnings || m.secondInningsStarted, "Start the next innings before scoring.");
       (m.deadBalls ??= []).push({ innings: i, afterBall: m.innings[i].length });
     } else if (c.type === "advance-tie") {
-      check(s.fixtureFormat === "winner-stays" && m.label !== "Final" && s.matches.indexOf(m) < 2 && phase(s, m) === 2 && summary(m.innings[0]).runs === summary(m.innings[1]).runs, "Select a continuing team only after a tied opening or second match.");
+      check(s.fixtureFormat === "winner-first" && m.label !== "Final" && s.matches.indexOf(m) === 0 && phase(s, m) === 2 && summary(m.innings[0]).runs === summary(m.innings[1]).runs, "Select a continuing team only after a tied opening match.");
       check(c.team === m.home || c.team === m.away, "Choose a team from this match.");
       check(!s.matches.slice(s.matches.indexOf(m) + 1).some((x) => x.started), "Cannot change progression after the next match has started.");
       m.advancingTeam = c.team;
