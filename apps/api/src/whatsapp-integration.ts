@@ -1144,7 +1144,7 @@ async function getRetailerOpenProforma(profile: RetailerProfile) {
     `SELECT id FROM whatsapp_order_drafts
      WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart')
        AND status IN ('Needs Review','Change Requested','Awaiting Retailer')
-       AND NOT EXISTS (SELECT 1 FROM whatsapp_shortage_cases sc WHERE sc.draft_id=whatsapp_order_drafts.id OR sc.balance_draft_id=whatsapp_order_drafts.id)
+       AND NOT EXISTS (SELECT 1 FROM whatsapp_shortage_cases sc WHERE sc.draft_id=whatsapp_order_drafts.id OR sc.id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=whatsapp_order_drafts.id))
      ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
   );
   return result.rows[0]?.id || "";
@@ -1238,7 +1238,7 @@ async function createDraft(profile: RetailerProfile, source: string, sourceMessa
       `SELECT id FROM whatsapp_order_drafts
        WHERE counterparty_id=$1 AND source IN ('Catalogue','Retailer cart')
          AND status IN ('Needs Review','Change Requested','Awaiting Retailer')
-       AND NOT EXISTS (SELECT 1 FROM whatsapp_shortage_cases sc WHERE sc.draft_id=whatsapp_order_drafts.id OR sc.balance_draft_id=whatsapp_order_drafts.id)
+       AND NOT EXISTS (SELECT 1 FROM whatsapp_shortage_cases sc WHERE sc.draft_id=whatsapp_order_drafts.id OR sc.id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=whatsapp_order_drafts.id))
        ORDER BY created_at DESC LIMIT 1`, [profile.counterpartyId]
     );
     if (openDraft.rows[0]?.id) {
@@ -1502,7 +1502,7 @@ async function sendDraftForRetailerApproval(draftId: string, shortagePrepared = 
 }
 
 async function sendDraftChangeProductPicker(profile: RetailerProfile, draftId: string) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) { await sendText(profile.phoneE164, "This order has tracked pending quantities. Please contact your salesperson to change the order."); return; }
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) { await sendText(profile.phoneE164, "This order has tracked pending quantities. Please contact your salesperson to change the order."); return; }
   const loaded = await loadDraft(draftId);
   if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
   await sendGraphMessage(profile.phoneE164, {
@@ -1551,7 +1551,7 @@ async function sendDraftRemoveProductPicker(profile: RetailerProfile, draftId: s
 }
 
 async function sendDraftEditOptions(profile: RetailerProfile, draftId: string) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
 
   const loaded = await loadDraft(draftId);
   if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
@@ -1565,7 +1565,7 @@ async function sendDraftEditOptions(profile: RetailerProfile, draftId: string) {
 }
 
 async function clearRetailerProforma(profile: RetailerProfile, draftId: string) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
   const loaded = await loadDraft(draftId);
   if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
   if (["Processing", "Completed", "Denied"].includes(text(loaded.draft.status))) throw new Error("This order is already being processed and cannot be cleared.");
@@ -1577,7 +1577,7 @@ async function clearRetailerProforma(profile: RetailerProfile, draftId: string) 
 }
 
 async function finalizeDraft(draftId: string) {
-  const tracked = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId]);
+  const tracked = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId]);
   if (tracked.rowCount) {
     try { await shortageService.confirm(draftId); }
     catch (error) { await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Sales Action Required',decision_note=$2,next_action_at=NOW() WHERE id=$1",[tracked.rows[0].id,error instanceof Error?error.message:"Confirmation requires review."]); throw error; }
@@ -2787,7 +2787,7 @@ async function handleInboundMessage(message: JsonObject) {
       if (!match) throw new Error("Invalid proforma edit action.");
       const action = match[1];
       const draftId = decodeURIComponent(match[2]);
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
       const loaded = await loadDraft(draftId);
       if (text(loaded.draft.counterparty_id) !== profile.counterpartyId) throw new Error("This proforma does not belong to your retailer account.");
       if (action === "clear") {
@@ -2804,7 +2804,7 @@ async function handleInboundMessage(message: JsonObject) {
       if (!match) throw new Error("Invalid product change selection.");
       const draftId = decodeURIComponent(match[1]);
       const productSku = decodeURIComponent(match[2]);
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
       const loaded = await loadDraft(draftId);
       const line = loaded.lines.find((candidate) => text(candidate.product_sku) === productSku);
       if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || !line) throw new Error("That product is not part of this proforma.");
@@ -2823,7 +2823,7 @@ async function handleInboundMessage(message: JsonObject) {
       if (!match) throw new Error("Invalid product removal selection.");
       const draftId = decodeURIComponent(match[1]);
       const productSku = decodeURIComponent(match[2]);
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
       const loaded = await loadDraft(draftId);
       const line = loaded.lines.find((candidate) => text(candidate.product_sku) === productSku);
       if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || !line) throw new Error("That product is not part of this proforma.");
@@ -3017,7 +3017,7 @@ async function handleInboundMessage(message: JsonObject) {
           return;
         }
         const draftId = draftChangeMatch[1];
-        if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Contact Sales to revise an order with tracked pending quantities.");
+        if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Contact Sales to revise an order with tracked pending quantities.");
         const loaded = await loadDraft(draftId);
         if (text(loaded.draft.counterparty_id) !== profile.counterpartyId || text(loaded.draft.status) !== "Change Requested") {
           await executeDatabaseQuery(`DELETE FROM whatsapp_cart_sessions WHERE phone_e164=$1`, [profile.phoneE164]);
@@ -3640,7 +3640,7 @@ export async function createWhatsAppDraftFromLiveChat(ticketId: string, input: {
   let draftId = text(input.draftId);
   const updatingExistingDraft = Boolean(draftId);
   if (updatingExistingDraft) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
     const existing = await loadDraft(draftId);
     if (text(existing.draft.counterparty_id) !== profile.counterpartyId || text(existing.draft.source) !== "Live chat") {
       throw new Error("This live-chat order cannot be updated from the selected conversation.");
@@ -4247,7 +4247,7 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
   warehouseId: string; billingType: "B2B" | "B2C"; paymentMode: PaymentMode; cashTiming?: string; deliveryMode: "Delivery" | "Self Collection";
   note?: string; lines: Array<{ id: string; quantity: number; rate: number; cdPercent: number; todPercent: number }>;
 }, currentUser: StaffUser) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
   const loaded = await loadDraft(draftId);
   if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) throw new Error("This order belongs to another salesperson.");
   if (["Processing", "Completed"].includes(text(loaded.draft.status))) throw new Error("A confirmed order cannot be edited.");
@@ -4294,7 +4294,7 @@ export async function reviewWhatsAppDraft(draftId: string, input: {
 }
 
 export async function denyWhatsAppDraft(draftId: string, reason: string, currentUser: StaffUser) {
-  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR balance_draft_id=$1", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
+  if ((await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_cases WHERE draft_id=$1 OR id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=$1)", [draftId])).rowCount) throw new Error("Manage this order from the shortage register so remaining quantities stay tracked.");
   const loaded = await loadDraft(draftId);
   if (!isWhatsAppAdminUser(currentUser) && numberValue(loaded.draft.salesman_id) !== currentUser.id) {
     throw new Error("This order belongs to another salesperson.");
@@ -4545,13 +4545,13 @@ export async function processWhatsAppShortages() {
     const legacy = await executeDatabaseQuery<{ id: string }>(`SELECT d.id FROM whatsapp_order_drafts d
       WHERE d.status IN ('Awaiting Retailer','Needs Review','Change Requested')
         AND (d.note LIKE '%Stock review:%' OR EXISTS(SELECT 1 FROM whatsapp_order_draft_lines l WHERE l.draft_id=d.id AND l.requested_quantity>l.approved_quantity))
-        AND NOT EXISTS(SELECT 1 FROM whatsapp_shortage_cases s WHERE s.draft_id=d.id OR s.balance_draft_id=d.id)
+        AND NOT EXISTS(SELECT 1 FROM whatsapp_shortage_cases s WHERE s.draft_id=d.id OR s.id IN (SELECT case_id FROM whatsapp_shortage_portions WHERE draft_id=d.id))
       ORDER BY d.created_at LIMIT 25`);
     for (const draft of legacy.rows) await shortageService.detect(draft.id);
     const active = await executeDatabaseQuery<Record<string, unknown>>("SELECT * FROM whatsapp_shortage_cases WHERE closed_at IS NULL ORDER BY created_at");
     for (const row of active.rows) {
       try {
-        if (row.purchase_status === "Approved" && !row.balance_draft_id) {
+        if (row.purchase_status === "Approved") {
           const cancelled = await executeDatabaseQuery("SELECT id FROM purchase_orders WHERE cart_id=$1 AND status='Cancelled'", [row.purchase_order_id]);
           if (cancelled.rowCount) await executeDatabaseTransaction(async db => {
             const changed=await db.query("UPDATE whatsapp_shortage_cases SET purchase_status='Cancelled',sales_resolution='',status='Sales Action Required',decision_note='The approved purchase order was cancelled. Sales must resolve the pending demand.',next_action_at=NOW(),updated_at=NOW() WHERE id=$1 AND purchase_status='Approved' RETURNING id",[row.id]);
@@ -4561,18 +4561,20 @@ export async function processWhatsAppShortages() {
             }
           });
         }
+        await shortageService.monitorSupply(text(row.id));
         await shortageService.release(text(row.id));
-        const linked = await executeDatabaseQuery<Record<string, unknown>>("SELECT d.id,d.status,d.sales_cart_id FROM whatsapp_order_drafts d WHERE d.id=$1 OR d.id=$2",[row.draft_id,row.balance_draft_id||null]);
-        const drafts = linked.rows.filter(d => d.status !== "Superseded");
-        const noBalance = row.retailer_choice === "Cancel Balance" || Boolean(row.balance_draft_id);
-        const allCreated = drafts.length > 0 && drafts.every(d => d.status === "Completed" && d.sales_cart_id);
+        const linked = await executeDatabaseQuery<Record<string, unknown>>("SELECT d.id,d.status,d.sales_cart_id FROM whatsapp_order_drafts d WHERE d.id=$1 OR d.id IN (SELECT draft_id FROM whatsapp_shortage_portions WHERE case_id=$2)",[row.draft_id,row.id]);
+        const drafts = linked.rows.filter(d => !["Superseded","Denied"].includes(String(d.status)));
+        const noBalance = !(await executeDatabaseQuery("SELECT 1 FROM whatsapp_shortage_lines WHERE case_id=$1 AND pending_quantity>released_quantity",[row.id])).rowCount;
+        const allCreated = linked.rows.length > 0 && drafts.every(d => d.status === "Completed" && d.sales_cart_id);
         if (noBalance && allCreated) {
           const cartIds = drafts.map(d=>d.sales_cart_id);
           const unsettled = await executeDatabaseQuery(`SELECT id FROM sales_orders WHERE cart_id=ANY($1::text[]) AND status NOT IN ('Delivered','Closed')
             UNION ALL SELECT id FROM ledger_entries WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND pending_amount>0`,[cartIds]);
           const unverified = await executeDatabaseQuery("SELECT id FROM payments WHERE side='Sales' AND linked_order_id=ANY($1::text[]) AND verification_status NOT IN ('Verified','Resolved','Rejected')",[cartIds]);
           const unsent = await executeDatabaseQuery("SELECT id FROM whatsapp_shortage_notifications WHERE case_id=$1 AND status<>'Sent'",[row.id]);
-          if (!unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
+          const supplierOpen = await executeDatabaseQuery("SELECT 1 FROM purchase_orders WHERE cart_id=$1 AND status NOT IN ('Cancelled','Closed') AND quantity_received<quantity_ordered",[row.purchase_order_id||null]);
+          if (!supplierOpen.rowCount && !unsettled.rowCount && !unverified.rowCount && !unsent.rowCount) await executeDatabaseQuery("UPDATE whatsapp_shortage_cases SET status='Closed',closed_at=NOW(),updated_at=NOW() WHERE id=$1",[row.id]);
         }
       } catch (error) {
         console.error("Shortage reconciliation failed", {caseId:row.id,error: error instanceof Error?error.message:"Unknown error"});
@@ -4598,7 +4600,7 @@ async function sendShortageNotification(notification: Record<string, unknown>) {
   const row=result.rows[0];if(!row)return;
   const lines=(await executeDatabaseQuery<Record<string, unknown>>("SELECT l.*,p.name FROM whatsapp_shortage_lines l JOIN products p ON p.sku=l.product_sku WHERE case_id=$1 ORDER BY product_sku",[row.id])).rows;
   const payload=(notification.payload_json||{}) as Record<string, unknown>;
-  const pending=lines.filter(l=>numberValue(l.pending_quantity)>0).map(l=>`${text(l.name)}: ${numberValue(l.pending_quantity)}`).join("\n");
+  const pending=lines.filter(l=>numberValue(l.pending_quantity)-numberValue(l.released_quantity)>0).map(l=>`${text(l.name)}: ${numberValue(l.pending_quantity)-numberValue(l.released_quantity)}`).join("\n");
   const procurement=lines.filter(l=>numberValue(l.procurement_quantity)>0).map(l=>`${text(l.name)}: ${numberValue(l.procurement_quantity)}`).join("\n");
   const available=lines.filter(l=>numberValue(l.available_quantity)>0).map(l=>`${text(l.name)}: ${numberValue(l.available_quantity)}`).join("\n");
   const phone=text(row.phone_e164);
@@ -4627,6 +4629,28 @@ async function sendShortageNotification(notification: Record<string, unknown>) {
       if(!text(purchaser.mobile_number))throw new Error(`Purchaser ${purchaser.id} has no WhatsApp number. The draft PO remains visible in the purchase workspace.`);
       await sendText(text(purchaser.mobile_number),`Purchase approval required\nDraft PO: ${row.id}\nRetailer: ${row.retailer_name}\nWarehouse: ${row.warehouse_id}\n${procurement}\n\nOpen Purchase > Shortage register to select the supplier, rate and expected arrival date.\n${publicWeb}`,'ShortagePurchaseAlert',`${notification.id}:${purchaser.id}`);
     }return;
+  }
+  if(notification.kind==='SupplyAlert') {
+    const recipients=await executeDatabaseQuery<Record<string,unknown>>(`SELECT id,mobile_number FROM users WHERE active=TRUE AND
+      (id=$1 OR id=$2 OR role='Admin' OR roles_json ? 'Admin' OR lower(username)=ANY($3::text[])) ORDER BY id`,[row.salesman_id,row.purchaser_id,[...whatsappAdminUsernames()]]);
+    if(!recipients.rowCount)throw new Error('No staff recipients are available for supplier follow-up.');
+    const items=Array.isArray(payload.items)?payload.items as Record<string,unknown>[]:[];
+    const detail=items.map(item=>`${item.product_sku}: ordered ${item.quantity_ordered}, received ${item.quantity_received}, outstanding ${Math.max(0,numberValue(item.quantity_ordered)-numberValue(item.quantity_received))}`).join('\n');
+    const failures:string[]=[];
+    for(const recipient of recipients.rows){
+      try {
+      const related=`${notification.id}:${recipient.id}`;
+      if((await executeDatabaseQuery("SELECT id FROM whatsapp_messages WHERE related_entity_type='ShortageSupplyAlert' AND related_entity_id=$1 AND status<>'Failed'",[related])).rowCount)continue;
+      if(!text(recipient.mobile_number))throw new Error(`Staff member ${recipient.id} has no WhatsApp number. Supplier follow-up remains visible in the shortage register.`);
+      await sendText(text(recipient.mobile_number),`Supplier follow-up required: ${payload.status}\nCase: ${row.id}\nRetailer: ${row.retailer_name}\nPO: ${row.purchase_order_id}\n${detail}\n${payload.retailerCancelled?'The retailer balance is cancelled. Purchaser must resolve the outstanding supplier PO.':'Sales must agree a revised date, dispatch available stock, or cancel the unallocated balance with the retailer.'} Open the shortage register to record the decision.`,'ShortageSupplyAlert',related);
+      } catch(error) { failures.push(error instanceof Error?error.message:'Staff alert failed'); }
+    }
+    if(failures.length)throw new Error(failures.join(' '));
+    return;
+  }
+  if(notification.kind==='SupplyDecision') {
+    const update=payload.decision==='Wait'?`The revised expected arrival is ${new Date(String(payload.expectedAt)).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} IST. The remaining quantity stays pending until received.`:payload.decision==='Dispatch'?'Sales has recorded your request to dispatch available stock. Available quantities will receive a separate confirmation; the remaining quantity stays pending.':'The remaining quantity without a prepared confirmation has been cancelled as agreed. Previously confirmed or prepared portions remain active.';
+    await sendText(phone,`Order ${row.draft_id}\n${update}`,'Shortage',text(row.id));return;
   }
   if(notification.kind==='PurchaseDecision') {
     if(payload.decision==='Approve')await sendText(phone,`Replenishment has been approved for the pending items in order ${row.draft_id}. Expected arrival: ${row.expected_at?new Date(String(row.expected_at)).toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata'}):'To be confirmed'}. This quantity remains pending until stock is received. Sales will send a separate confirmation when it is available.`,'Shortage',text(row.id));

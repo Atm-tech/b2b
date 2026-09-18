@@ -34,6 +34,23 @@ test("purchase cancellation endpoint accepts an empty item list and preserves th
   assert.equal(decision.decision,'Cancel');assert.equal(decision.note,'Supplier unavailable');assert.deepEqual(decision.lines,[]);
 });
 
+test("supplier alerts reach other staff despite one missing phone and retries do not resend successful alerts",async()=>{
+  const source=fs.readFileSync(path.join(root,'apps/api/src/whatsapp-integration.ts'),'utf8');
+  const snippet=source.slice(source.indexOf('async function sendShortageNotification('));
+  const sent=new Set<string>();const calls:string[]=[];
+  const deps={text:(v:any)=>String(v||''),numberValue:(v:any)=>Number(v||0),whatsappAdminUsernames:()=>new Set(['wa.sales']),
+    executeDatabaseQuery:async(sql:string,params:any[])=>{
+      if(sql.includes('SELECT s.*'))return {rows:[{id:'CASE',salesman_id:1,purchaser_id:2,draft_id:'WAD',retailer_name:'Retailer',purchase_order_id:'PO'}]};
+      if(sql.includes('SELECT l.*'))return {rows:[]};
+      if(sql.includes('FROM users'))return {rowCount:3,rows:[{id:3,mobile_number:''},{id:1,mobile_number:'911111111111'},{id:2,mobile_number:'912222222222'}]};
+      if(sql.includes('FROM whatsapp_messages'))return {rowCount:sent.has(params[0])?1:0,rows:[]};throw Error(sql);
+    },sendText:async(phone:string,body:string,_type:string,id:string)=>{calls.push(phone);sent.add(id);assert.match(body,/Supplier follow-up required/);}};
+  const send=new Function(...Object.keys(deps),ts.transpileModule(snippet,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText+';return sendShortageNotification;')(...Object.values(deps));
+  const notification={id:'ALERT',case_id:'CASE',kind:'SupplyAlert',payload_json:{status:'Supplier overdue',items:[]}};
+  await assert.rejects(()=>send(notification),/no WhatsApp number/);assert.equal(calls.length,2);
+  await assert.rejects(()=>send(notification),/no WhatsApp number/);assert.equal(calls.length,2);
+});
+
 test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SHORTAGE_TEST_LOCAL!=="1"},async t=>{
   const env=dotenv.parse(fs.readFileSync(path.join(root,".env")));
   // Intentionally ignore DATABASE_URL: this test must never connect to production.
@@ -137,6 +154,101 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
       await service.choose(caseId,'Split',sales,false,'Retailer agreed to keep the remaining quantity pending');
       await pool.query("UPDATE inventory_lots SET quantity_available=60");await service.release(caseId);
       assert.ok((await pool.query("SELECT balance_draft_id FROM whatsapp_shortage_cases WHERE id=$1",[caseId])).rows[0].balance_draft_id);
+    });
+    async function approvedSplit(){
+      const id=await draft();const caseId=(await service.detect(id))!;
+      await service.choose(caseId,'Split',sales,false,'Retailer agreed to separate deliveries');
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[id]);await service.confirm(id);
+      await service.purchase(caseId,approve,purchaser);
+      const po=(await pool.query('SELECT purchase_order_id FROM whatsapp_shortage_cases WHERE id=$1',[caseId])).rows[0].purchase_order_id;
+      return {id,caseId,po};
+    }
+    await t.test("partial receipts require Sales approval, exclude blocked stock and release repeated portions exactly once",async()=>{
+      const {id,caseId,po}=await approvedSplit();
+      const lineId=(await pool.query('SELECT id FROM purchase_orders WHERE cart_id=$1',[po])).rows[0].id;
+      await pool.query("UPDATE purchase_orders SET quantity_received=18,status='Partially Received' WHERE cart_id=$1",[po]);
+      await pool.query("INSERT INTO inventory_lots(lot_id,source_order_id,source_type,warehouse_id,product_sku,quantity_available,quantity_reserved,quantity_blocked,status) VALUES('BLOCKED', $1,'Purchase','C21','SOAP',0,0,18,'Blocked')",[lineId]);
+      await service.monitorSupply(caseId);await service.monitorSupply(caseId);
+      let view=(await service.list(sales)).cases.find(c=>c.id===caseId);
+      assert.equal(view.supply_review_required,true);assert.equal(view.receipts[0].outstanding,18);
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM whatsapp_shortage_notifications WHERE case_id=$1 AND kind='SupplyAlert'",[caseId])).rows[0].n,1);
+      await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer accepts partial delivery'},sales);
+      await pool.query("UPDATE inventory_lots SET quantity_available=100 WHERE lot_id='LOT'");
+      await service.release(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).portions.length,0);
+      await pool.query("UPDATE inventory_lots SET quantity_blocked=0,quantity_available=18,status='Available' WHERE lot_id='BLOCKED'");
+      await service.monitorSupply(caseId);await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer agreed after warehouse acceptance'},sales);
+      await Promise.all([service.release(caseId),service.release(caseId)]);
+      view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.portions.length,1);assert.equal(view.lines[0].pending,18);assert.equal(view.lines[0].released,18);
+      const first=view.portions[0].draftId;
+      await service.release(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).portions.length,1);
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[first]);const firstCart=await service.confirm(first);
+      await pool.query("UPDATE purchase_orders SET quantity_received=36,status='Received' WHERE cart_id=$1",[po]);
+      await service.monitorSupply(caseId);await service.release(caseId);
+      view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.portions.length,2);assert.equal(view.lines[0].pending,0);assert.equal(view.lines[0].released,36);
+      const second=view.portions.find((p:any)=>p.draftId!==first).draftId;
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[second]);await service.confirm(second);
+      assert.equal(await service.confirm(first),firstCart);
+      const totals=(await pool.query("SELECT sum(quantity) AS qty,sum(delivery_charge) AS freight FROM sales_orders WHERE cart_id IN (SELECT sales_cart_id FROM whatsapp_order_drafts WHERE id=$1 OR id IN (SELECT draft_id FROM whatsapp_shortage_portions WHERE case_id=$2))",[id,caseId])).rows[0];
+      assert.equal(totals.qty,60);assert.equal(totals.freight,10);
+      await pool.query("DELETE FROM inventory_lots WHERE lot_id='BLOCKED'");
+    });
+    await t.test("supplier overdue alerts are idempotent and recur only after the revised deadline",async()=>{
+      const {caseId}=await approvedSplit();
+      await pool.query("UPDATE whatsapp_shortage_cases SET expected_at=NOW()-INTERVAL '1 hour' WHERE id=$1",[caseId]);
+      await service.monitorSupply(caseId);await service.monitorSupply(caseId);
+      assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).supply_status,'Supplier overdue');
+      await assert.rejects(()=>service.supplyDecision(caseId,{decision:'Wait',note:'Wait',expectedAt:'2000-01-01'},sales));
+      await assert.rejects(()=>service.supplyDecision(caseId,{decision:'Dispatch',note:'Wait'},purchaser));
+      await assert.rejects(()=>service.supplyDecision(caseId,{decision:'Dispatch',note:'Wait'},{...sales,id:999}));
+      await service.supplyDecision(caseId,{decision:'Wait',note:'Retailer agreed to the revised date',expectedAt:approve.expectedAt},sales);
+      await service.monitorSupply(caseId);
+      assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).supply_review_required,false);
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM whatsapp_shortage_notifications WHERE case_id=$1 AND kind='SupplyAlert'",[caseId])).rows[0].n,1);
+      await pool.query("UPDATE whatsapp_shortage_cases SET expected_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[caseId]);await service.monitorSupply(caseId);
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM whatsapp_shortage_notifications WHERE case_id=$1 AND kind='SupplyAlert'",[caseId])).rows[0].n,2);
+    });
+    await t.test("cancelling the unallocated balance preserves an existing partial confirmation and the supplier PO",async()=>{
+      const {caseId,po}=await approvedSplit();
+      await pool.query("UPDATE purchase_orders SET quantity_received=12,status='Partially Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=36');
+      await service.monitorSupply(caseId);await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer accepts 12 now'},sales);await service.release(caseId);
+      await service.supplyDecision(caseId,{decision:'Cancel',note:'Retailer cancels only the unallocated 24'},sales);
+      const view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.lines[0].pending,0);assert.equal(view.lines[0].released,12);assert.equal(view.lines[0].cancelled,24);assert.equal(view.portions.length,1);assert.equal(view.closed_at,null);
+      assert.equal((await pool.query('SELECT quantity_ordered FROM purchase_orders WHERE cart_id=$1',[po])).rows[0].quantity_ordered,36);
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[view.portions[0].draftId]);await service.confirm(view.portions[0].draftId);
+      await service.release(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).portions.length,1);
+    });
+    await t.test("waiting on a partial receipt preserves the remaining demand and does not release prematurely",async()=>{
+      const {caseId,po}=await approvedSplit();
+      await pool.query("UPDATE purchase_orders SET quantity_received=12,status='Partially Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=60');
+      await service.monitorSupply(caseId);await service.supplyDecision(caseId,{decision:'Wait',note:'Retailer waits for remaining 36',expectedAt:approve.expectedAt},sales);await service.monitorSupply(caseId);await service.release(caseId);
+      const view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.lines[0].pending,36);assert.equal(view.portions.length,0);assert.equal(view.supply_review_required,false);
+    });
+    await t.test("schema reinitialization preserves partially released quantities",async()=>{
+      const {caseId,po}=await approvedSplit();await pool.query("UPDATE purchase_orders SET quantity_received=12,status='Partially Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=36');
+      await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer accepts first 12'},sales);await service.monitorSupply(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).supply_review_required,false);await service.release(caseId);
+      await pool.query(fs.readFileSync(path.join(root,'postgres/init/001-schema.sql'),'utf8'));
+      const view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.equal(view.lines[0].released,12);assert.equal(view.lines[0].pending,24);
+    });
+    await t.test("cancellation after a partial receipt can retain or repurchase only the unallocated remainder",async()=>{
+      const {caseId,po}=await approvedSplit();await pool.query("UPDATE purchase_orders SET quantity_received=12,status='Partially Received' WHERE cart_id=$1",[po]);await pool.query('UPDATE inventory_lots SET quantity_available=36');
+      await service.supplyDecision(caseId,{decision:'Dispatch',note:'Retailer accepts first 12'},sales);await service.monitorSupply(caseId);assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).supply_review_required,false);await service.release(caseId);
+      const portion=(await service.list(sales)).cases.find(c=>c.id===caseId).portions[0].draftId;
+      await pool.query("UPDATE whatsapp_order_drafts SET status='Awaiting Retailer' WHERE id=$1",[portion]);await service.confirm(portion);
+      await pool.query("UPDATE purchase_orders SET status='Cancelled' WHERE cart_id=$1",[po]);await pool.query("UPDATE whatsapp_shortage_cases SET purchase_status='Cancelled' WHERE id=$1",[caseId]);
+      await service.supplyDecision(caseId,{decision:'Wait',note:'Retailer keeps the 24 pending',expectedAt:approve.expectedAt},sales);
+      assert.equal((await service.list(sales)).cases.find(c=>c.id===caseId).sales_resolution,'Keep Pending');
+      await pool.query("UPDATE purchase_orders SET status='Partially Received' WHERE cart_id=$1",[po]);
+      await assert.rejects(()=>service.reopenPurchase(caseId,sales,false,'Replacement'),/resolve outstanding lines/);
+      await pool.query("UPDATE purchase_orders SET status='Cancelled' WHERE cart_id=$1",[po]);
+      await service.reopenPurchase(caseId,sales,false,'Alternate supplier for remaining 24');await service.purchase(caseId,approve,purchaser);
+      const nextPo=(await service.list(sales)).cases.find(c=>c.id===caseId).purchase_order_id;
+      assert.equal((await pool.query('SELECT quantity_ordered FROM purchase_orders WHERE cart_id=$1',[nextPo])).rows[0].quantity_ordered,24);
+    });
+    await t.test("a fully cancelled retailer order remains open while its approved supplier PO is unresolved",async()=>{
+      const id=await draft(0);const caseId=(await service.detect(id))!;await service.purchase(caseId,approve,purchaser);
+      await service.supplyDecision(caseId,{decision:'Cancel',note:'Retailer no longer wants the order'},sales);
+      const view=(await service.list(sales)).cases.find(c=>c.id===caseId);assert.ok(view);assert.equal(view.status,'Supplier PO resolution required');assert.equal(view.closed_at,null);
+      assert.equal((await pool.query('SELECT status FROM whatsapp_order_drafts WHERE id=$1',[id])).rows[0].status,'Denied');
     });
     await t.test("old cases remain visible and notification failures can be retried",async()=>{
       const id=await draft();const caseId=(await service.detect(id))!;await pool.query("UPDATE whatsapp_shortage_cases SET created_at=NOW()-INTERVAL '90 days' WHERE id=$1",[caseId]);

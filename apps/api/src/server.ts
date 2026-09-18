@@ -1519,6 +1519,7 @@ app.post("/whatsapp/shortages/:id/:action", async (req, res) => wrap(res, async 
     lines: (req.body?.decision === "Cancel" ? [] : parseCartLines(req.body?.lines)).map(line => ({ productSku: requiredString(line.productSku, "Product"), rate: requiredNumber(line.rate, "Rate"), gstRate: requiredNumber(line.gstRate, "GST rate") }))
   }, user, admin);
   else if (req.params.action === "choice") await shortageService.choose(caseId, req.body?.choice, user, admin, note);
+  else if (req.params.action === "supply") await shortageService.supplyDecision(caseId, { decision: req.body?.decision, expectedAt: optionalString(req.body?.expectedAt), note }, user, admin);
   else if (req.params.action === "followup") await shortageService.followup(caseId, requiredString(req.body?.date, "Follow-up date"), note, user, admin);
   else if (req.params.action === "resubmit") await shortageService.reopenPurchase(caseId, user, admin, note);
   else if (req.params.action === "retry") await shortageService.retryNotifications(caseId, user, admin);

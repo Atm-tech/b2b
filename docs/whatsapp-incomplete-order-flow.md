@@ -181,3 +181,16 @@ Acceptance scenarios:
 - Notifications use persistent retry records. Failed notifications remain attached to the case and can be retried by Sales/Admin.
 - The case remains in the register while confirmation, replenishment, fulfilment or payment verification is unresolved. No order-date cutoff applies to the register.
 - Follow-up dates are explicit Sales actions. Automatic reminder frequency, supplier-side messages and the later delivery-failure/refund workflows are outside this stage.
+
+
+## Supplier delay and partial receipt implementation
+
+- Approved shortage POs are checked every 30 seconds. The register shows ordered, physically received and supplier-outstanding quantities by SKU.
+- A partial receipt or missed expected-arrival date creates a persistent alert for the assigned Purchaser, Sales owner and WhatsApp Admin. Receipt/deadline signatures prevent a reminder on every poll. A changed receipt or a newly missed revised deadline creates a new alert.
+- Sales records the retailer agreement: wait until a future revised arrival date, confirm accepted available stock and retain the rest, or cancel only the quantity without a prepared confirmation. The retailer receives the decision update.
+- Warehouse-blocked quantities are not eligible for release. A partial receipt pauses release for Sales review. A complete accepted receipt can release the remaining balance automatically according to the existing choice.
+- Each replenishment confirmation has its own linked draft. Only one unconfirmed replenishment portion is offered at a time; earlier confirmations remain valid and idempotent. Remaining demand excludes released portions, and the delivery charge is applied once across all portions.
+- Cancelling retailer demand does not cancel a supplier commitment. The shortage case stays open while the linked supplier PO is unresolved; Purchaser resolves that PO through existing purchase controls.
+- If procurement is cancelled after a partial delivery, Sales can retain or cancel the unreleased balance. A resubmitted purchase request recalculates the needed quantity instead of buying the already released quantity again.
+- The additive schema migration links historical single-balance drafts once and does not reset partial allocations on restart.
+- Validation uses isolated local PostgreSQL for transaction, quantity, retry, access-control and migration scenarios, plus desktop/mobile browser checks for Sales actions. No production test PO or receipt is created.

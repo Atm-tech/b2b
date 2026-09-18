@@ -657,3 +657,23 @@ CREATE TABLE IF NOT EXISTS whatsapp_shortage_notifications (
 );
 CREATE INDEX IF NOT EXISTS whatsapp_shortage_open_idx ON whatsapp_shortage_cases(created_at) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS whatsapp_shortage_notifications_due_idx ON whatsapp_shortage_notifications(available_at) WHERE status IN ('Pending','Sending');
+
+-- Supplier exceptions and separately confirmed replenishment portions.
+ALTER TABLE whatsapp_shortage_cases ADD COLUMN IF NOT EXISTS supply_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE whatsapp_shortage_cases ADD COLUMN IF NOT EXISTS supply_issue_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE whatsapp_shortage_cases ADD COLUMN IF NOT EXISTS supply_review_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE whatsapp_shortage_cases ADD COLUMN IF NOT EXISTS partial_release BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE whatsapp_shortage_lines ADD COLUMN IF NOT EXISTS released_quantity DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (released_quantity>=0 AND released_quantity<=pending_quantity);
+CREATE TABLE IF NOT EXISTS whatsapp_shortage_portions (
+  draft_id TEXT PRIMARY KEY REFERENCES whatsapp_order_drafts(id),
+  case_id TEXT NOT NULL REFERENCES whatsapp_shortage_cases(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_shortage_portions_case_idx ON whatsapp_shortage_portions(case_id);
+-- Migrate the previous single-balance design once; subsequent receipts retain their own quantities.
+WITH migrated AS (
+  INSERT INTO whatsapp_shortage_portions(draft_id,case_id)
+  SELECT balance_draft_id,id FROM whatsapp_shortage_cases WHERE balance_draft_id IS NOT NULL
+  ON CONFLICT(draft_id) DO NOTHING RETURNING case_id
+)
+UPDATE whatsapp_shortage_lines SET released_quantity=pending_quantity WHERE case_id IN (SELECT case_id FROM migrated);
