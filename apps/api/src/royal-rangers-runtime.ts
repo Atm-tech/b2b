@@ -609,8 +609,27 @@ function apply(state, c, permissions = {}) {
 }
 
 // frontend/demo-data.ts
+var demoNames = {
+  Blue: ["Banne Miya", "Zafar Bhai", "Shakir Miya", "Rizwan Bhai", "Faisal Bhai"],
+  Black: ["Bashir Miya", "Jumman Bhai", "Nadeem Miya", "Farhan Bhai", "Imran Bhai"],
+  White: ["Rafiq Miya", "Nafees Bhai", "Salim Miya", "Aslam Bhai", "Arif Bhai"]
+};
+function renameDemoPlayers(state) {
+  let changed = false;
+  for (const season of state.seasons) for (const player of season.players) {
+    const match = /^demo-(blue|black|white)-([1-5])$/.exec(player.id);
+    if (!match) continue;
+    const team = match[1][0].toUpperCase() + match[1].slice(1);
+    const name = demoNames[team][Number(match[2]) - 1];
+    if (player.name !== name) {
+      player.name = name;
+      changed = true;
+    }
+  }
+  return changed;
+}
 function demoState() {
-  const players = ["Blue", "Black", "White"].flatMap((team) => Array.from({ length: 5 }, (_, n) => ({ id: `demo-${team.toLowerCase()}-${n + 1}`, name: n === 0 ? `Demo ${team}` : `${team} Player ${n + 1}`, team })));
+  const players = ["Blue", "Black", "White"].flatMap((team) => Array.from({ length: 5 }, (_, n) => ({ id: `demo-${team.toLowerCase()}-${n + 1}`, name: demoNames[team][n], team })));
   function innings(team, other, values) {
     const events = [];
     values.forEach((runs, n) => {
@@ -653,6 +672,11 @@ async function demoWindow(db, now = Date.now()) {
   const credentials = { salt: DEMO_PASSWORD_SALT, hash: DEMO_PASSWORD_HASH };
   if (row.credentials !== JSON.stringify(credentials)) {
     await db.query("UPDATE royal_rangers.demo_window SET credentials=$2 WHERE id=$1", [DEMO_WINDOW, JSON.stringify(credentials)]);
+  }
+  const saved = (await db.query("SELECT data,revision FROM royal_rangers.demo_state WHERE id=1 FOR UPDATE")).rows[0];
+  if (saved) {
+    const state = JSON.parse(saved.data);
+    if (renameDemoPlayers(state)) await db.query("UPDATE royal_rangers.demo_state SET data=$1,revision=revision+1 WHERE id=1", [JSON.stringify(state)]);
   }
   return { active: true, expiresAt: Number(row.expires), credentials };
 }
@@ -703,7 +727,7 @@ async function handleDemo(req) {
       const state = JSON.parse(row.data), revision = row.revision;
       if (req.method === "GET") {
         if (route === "tournament") return send({ state, revision, expiresAt: window.expiresAt });
-        if (route === "member") return send({ signedIn: !!role, registered: role === "user", name: admin ? "Demo Admin" : role === "user" ? "Demo Blue" : role === "visitor" ? "Demo Visitor" : "", playerId, committee: admin ? "Alpha" : null, scorer: admin ? "Alpha" : null, players: state.seasons[0].players.map((p) => ({ ...p, registered: true })) });
+        if (route === "member") return send({ signedIn: !!role, registered: role === "user", name: admin ? "Demo Admin" : role === "user" ? state.seasons[0].players.find((p) => p.id === playerId)?.name || "Test Player" : role === "visitor" ? "Demo Visitor" : "", playerId, committee: admin ? "Alpha" : null, scorer: admin ? "Alpha" : null, players: state.seasons[0].players.map((p) => ({ ...p, registered: true })) });
         if (route === "push") return send({ publicKey: null, demo: true });
         if (route === "committee") {
           if (!admin) return send({ error: "Test Alpha access required" }, 403);
