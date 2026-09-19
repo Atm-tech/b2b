@@ -628,8 +628,8 @@ function demoState() {
 
 // backend/server/render/demo-config.ts
 var DEMO_BOOTSTRAP_UNTIL = 1789814747688;
-var DEMO_PASSWORD_SALT = "5c7a3ed6110fdb241dd1ea99b56af3b2";
-var DEMO_PASSWORD_HASH = "9e71a47c6f0b6e73fe68bed6a2a9eb6b6b78a08507b96494313df4b9f087af5b";
+var DEMO_PASSWORD_SALT = "db4452ec0076f20d000201735255de7a";
+var DEMO_PASSWORD_HASH = "43e304114ec15b8f612e1df1e8c31e7561e6daa13ffab55a725ce10ca9820624";
 
 // backend/server/render/demo-lifecycle.ts
 var DEMO_WINDOW = "rehearsal-2026-09-19-six-hours";
@@ -650,7 +650,11 @@ async function demoWindow(db, now = Date.now()) {
     await db.query("UPDATE royal_rangers.demo_window SET credentials=NULL,purged_at=COALESCE(purged_at,$2) WHERE id=$1", [DEMO_WINDOW, now]);
     return { active: false, expiresAt: Number(row.expires), credentials: null };
   }
-  return { active: true, expiresAt: Number(row.expires), credentials: JSON.parse(row.credentials) };
+  const credentials = { salt: DEMO_PASSWORD_SALT, hash: DEMO_PASSWORD_HASH };
+  if (row.credentials !== JSON.stringify(credentials)) {
+    await db.query("UPDATE royal_rangers.demo_window SET credentials=$2 WHERE id=$1", [DEMO_WINDOW, JSON.stringify(credentials)]);
+  }
+  return { active: true, expiresAt: Number(row.expires), credentials };
 }
 var expiryTimer;
 async function maintainDemo() {
