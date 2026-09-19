@@ -240,8 +240,17 @@ function nextPair(events) {
   }
   const x = summary(events);
   if (legal(b) && x.balls % 6 === 0) [striker, partner] = [partner, striker];
+  if (b.kind === "wicket" && b.dismissal === "Run out" && b.runOutNext) {
+    const survivor = b.out === b.striker ? b.partner : b.striker;
+    striker = b.runOutNext === "survivor" ? survivor : "";
+    partner = b.runOutNext === "incoming" ? survivor : "";
+  }
   const freeHit = false;
   return { striker, partner, bowler: legal(b) && x.balls % 6 === 0 ? "" : b.bowler, freeHit };
+}
+function runOutNeedsNextBatter(s, m, b) {
+  const i = phase(s, m);
+  return b.kind === "wicket" && b.dismissal === "Run out" && (i === 0 || i === 1) && phase(s, { ...m, innings: m.innings.map((entries, n) => n === i ? [...entries, b] : entries) }) === i;
 }
 function check(ok, msg) {
   if (!ok) throw new Error(msg);
@@ -253,6 +262,7 @@ function validateBall(s, m, b) {
   check(["run", "wide", "nb", "bye", "legbye", "wicket"].includes(b.kind), "Invalid delivery.");
   check(Number.isInteger(b.runs) && b.runs >= 0 && b.runs <= (b.overthrow ? 20 : 6), "Use Overthrow for totals above six (maximum 20).");
   check(b.overthrow === void 0 || typeof b.overthrow === "boolean", "Invalid overthrow flag.");
+  check(b.runOutNext === void 0 || b.kind === "wicket" && b.dismissal === "Run out" && ["survivor", "incoming"].includes(b.runOutNext), "Choose who faces the next ball after the run-out.");
   const events = m.innings[i], pair = nextPair(events), available = s.players.filter((p) => p.team === batting(m, i) && !events.some((e) => e.out === p.id));
   check(b.striker !== b.partner && available.some((p) => p.id === b.striker) && available.some((p) => p.id === b.partner), "Choose two different available batsmen.");
   check(!pair.striker || pair.striker === b.striker, "The striker has changed.");
@@ -265,6 +275,7 @@ function validateBall(s, m, b) {
     check(["Bowled", "Caught", "Stumped", "Run out", "Hit wicket"].includes(b.dismissal || ""), "Choose a dismissal.");
     check(["legal", "wide", "nb"].includes(b.extra || "legal"), "Invalid extra.");
     check(b.out === b.striker || b.out === b.partner, "Choose the dismissed batsman.");
+    if (runOutNeedsNextBatter(s, m, b)) check(b.runOutNext !== void 0, "Choose who faces the next ball after the run-out. Refresh the app if this choice is missing.");
     if (b.dismissal !== "Run out") {
       check(b.out === b.striker, "Only the striker can be dismissed this way.");
       check(b.runs === 0, "Use zero completed runs for this dismissal.");
@@ -810,7 +821,6 @@ function startAttendanceReminders() {
     running = true;
     try {
       if (!await migrationStatus()) return;
-      await undoAccidentalStart(await getPool().connect());
       attendanceWorkerStatus.clubEvents = await notifyClubEvents();
       attendanceWorkerStatus.clubUpdate = await notifyClubUpdateOnce();
       const reset = await resetAttendanceOnce("rr-season-3", "attendance-reset-2026-09-16-v1");
@@ -1402,38 +1412,3 @@ export {
   handleRoyalRangers,
   startAttendanceReminders
 };
-
-// One-time user-requested empty fixture recovery.
-async function undoAccidentalStart(c, now = Date.now()) {
-  const marker = "undo-empty-start-2026-09-19-c8cc8151";
-  const seasonId = "rr-season-3", matchId = "c8cc8151-519a-449d-a0c5-8ee2883adfd7";
-  try {
-    await c.query("BEGIN");
-    await c.query("SELECT pg_advisory_xact_lock(82644193)");
-    await c.query("SET LOCAL search_path TO royal_rangers");
-    const done = await c.query("SELECT data FROM push_settings WHERE id=$1", [marker]);
-    if (done.rowCount) {
-      await c.query("COMMIT");
-      return;
-    }
-    const row = await c.query("SELECT data FROM seasons WHERE id=$1", [seasonId]);
-    const season = row.rowCount ? JSON.parse(row.rows[0].data) : null;
-    const m = season?.matches.find((x) => x.id === matchId);
-    const safe = now < Date.parse("2026-09-19T15:00:00Z") && m?.started === true && m.home === "Black" && m.away === "Blue" && m.innings.length === 2 && m.innings.every((x) => x.length === 0) && !m.deadBalls?.length && !m.secondInningsStarted && !m.advancingTeam && !m.closedInningsWickets?.some((x) => x != null) && !season.matches.some((x) => x.id !== matchId && x.started);
-    const backup = { at: now, applied: !!safe, previous: m ? structuredClone(m) : null };
-    if (safe) {
-      m.started = false;
-      m.secondInningsStarted = false;
-      await c.query("UPDATE seasons SET data=$1 WHERE id=$2", [JSON.stringify(season), seasonId]);
-      await c.query("UPDATE tournaments SET revision=revision+1 WHERE id=$1", ["royal-rangers"]);
-      await c.query("INSERT INTO audit_log (id,actor,action,season,created_at) VALUES ($1,$2,$3,$4,$5)", [crypto.randomUUID(), "Alpha", "Undo accidental start of empty Black vs Blue fixture (user requested)", seasonId, now]);
-    }
-    await c.query("INSERT INTO push_settings (id,data) VALUES ($1,$2)", [marker, JSON.stringify(backup)]);
-    await c.query("COMMIT");
-  } catch (e) {
-    await c.query("ROLLBACK");
-    throw e;
-  } finally {
-    c.release();
-  }
-}
