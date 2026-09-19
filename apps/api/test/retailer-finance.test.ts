@@ -75,5 +75,11 @@ test('retailer credit, refund, collection and all-age queue integration',{skip:p
    await pool.query("INSERT INTO delivery_tasks(id,side,linked_order_id,mode,source_location,destination_location,assigned_to,status,route_json) VALUES('PARTIAL-ROUTE','Sales',$1,'Delivery','WH','SHOP','agent','Handed Over',$2::jsonb)",[orderId,JSON.stringify([{orderId,delivered:true},{orderId:later,delivered:false}])]);await reconcile(orderId);
    assert.ok((await finance.list(seller)).collections.some(f=>f.order_id===orderId));assert.ok(!(await finance.list(seller)).collections.some(f=>f.order_id===later));
   });
+  await t.test('legacy retailer orders remain visible without a current WhatsApp profile',async()=>{
+   const s=await shop();await pool.query('DELETE FROM whatsapp_retailers WHERE counterparty_id=$1',[s]);const id=await order(s,200);await reconcile(id);
+   assert.ok((await finance.list(accounts)).collections.some(f=>f.order_id===id));assert.ok((await finance.list(seller)).collections.some(f=>f.order_id===id));
+   assert.ok(!(await finance.list({...seller,id:3,username:'other'})).collections.some(f=>f.order_id===id));
+   await pay(id,300);await reconcile(id);assert.ok((await finance.list(seller)).credits.some(f=>f.source_order_id===id));await finance.requestRefund(id,{amount:100,note:'Legacy retailer refund',requestKey:'legacy-refund'},seller);
+  });
  }finally{await pool.end();await setup.query(`DROP SCHEMA ${schema} CASCADE`);await setup.end();}
 });
