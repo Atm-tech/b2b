@@ -1,12 +1,12 @@
 // @ts-nocheck
-// Generated from Royal Rangers via scripts/build-render.mjs. Private ratings are runtime-only.
+// Generated from Royal Rangers via scripts/build-backend.mjs. Private ratings are runtime-only.
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// server/render/postgres.ts
+// backend/server/render/postgres.ts
 import pg from "pg";
 var tables = { push_settings: "id TEXT PRIMARY KEY,data TEXT NOT NULL", push_subscriptions: "endpoint TEXT PRIMARY KEY,user_id TEXT NOT NULL,player_id TEXT NOT NULL,data TEXT NOT NULL,updated_at BIGINT NOT NULL", push_deliveries: "id TEXT PRIMARY KEY,created_at BIGINT NOT NULL", tournaments: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", seasons: "id TEXT PRIMARY KEY,data TEXT NOT NULL", members: "id TEXT PRIMARY KEY,name TEXT NOT NULL,player_id TEXT,created_at BIGINT NOT NULL", committee_seats: "name TEXT PRIMARY KEY,user_id TEXT UNIQUE", committee_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,committee_name TEXT,expires BIGINT NOT NULL", access_attempts: "id TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at BIGINT NOT NULL", private_ratings: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", audit_log: "id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,season TEXT,created_at BIGINT NOT NULL", credentials: "user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at BIGINT NOT NULL", member_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires BIGINT NOT NULL", approved_players: "id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL", player_registrations: "player_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL" };
 var pool;
@@ -167,7 +167,7 @@ async function resetAttendanceOnce(seasonId, marker) {
   }
 }
 
-// lib/match-schedule.ts
+// shared/lib/match-schedule.ts
 function matchStart(s) {
   return Date.parse(s.date + "T00:01:00+05:30") + 24 * 60 * 60 * 1e3;
 }
@@ -180,7 +180,7 @@ function nightReminderSlot(s, now = Date.now()) {
   return slots.find((slot) => now >= slot.at && now < slot.end);
 }
 
-// lib/cricket.ts
+// shared/lib/cricket.ts
 var TEAMS = ["White", "Black", "Blue"];
 var defaultPoints = { halfCentury: 15, century: 30, wicketHatTrick: 15, sixHatTrick: 15, run: 1, wicket: 10, catch: 10, runout: 10, stumping: 10, maiden: 15, economyExcellent: 6, economyGood: 4, economyFair: 2, economyExpensive: -2, economyMinOvers: 2 };
 function saturday() {
@@ -345,7 +345,7 @@ function statistics(s, matches = s.matches) {
   }
   return rows.sort((a, b) => b.points - a.points || b.runs - a.runs || a.name.localeCompare(b.name));
 }
-var TEAM_INFO = { White: { name: "Frost Dragons", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimeras", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reapers", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "/teams/azure-reaper-refined.webp", color: "#6397ff" } };
+var TEAM_INFO = { White: { name: "Frost Dragons", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/2a6e7e47c6def9db/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimeras", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/c8586bb0980ae9cd/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reapers", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/313f7161f918af92/teams/azure-reaper-refined.webp", color: "#6397ff" } };
 var teamName = (t) => TEAM_INFO[t].name;
 var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
 function shuffled(items) {
@@ -589,7 +589,7 @@ function apply(state, c, permissions = {}) {
   return next;
 }
 
-// lib/awards.ts
+// shared/lib/awards.ts
 function performanceAward(season, match) {
   const matches = match ? [match] : season.matches;
   const participants = new Set(matches.flatMap((m) => m.innings.flatMap((i) => i.flatMap((b) => [b.striker, b.partner, b.bowler, b.fielder].filter((id) => !!id)))));
@@ -599,7 +599,7 @@ function performanceAward(season, match) {
   return { winners, complete, points: winners[0]?.points ?? 0 };
 }
 
-// lib/notifications.ts
+// shared/lib/notifications.ts
 var link = (s, page) => `/?${new URLSearchParams({ page, season: s.id })}`;
 var published = (s) => !!(s.squadsPublished ?? s.published);
 function tournamentNotifications(s) {
@@ -635,7 +635,7 @@ function matchDayReminder(s, now = Date.now()) {
   return { key: `reminder:${s.date}:${slot.name}`, type: "match-reminder", title, body, url: link(s, published(s) ? "teams" : "attendance"), tag: `rr-reminder-${s.id}-${s.date}-${slot.name}`, expiresAt: slot.end };
 }
 
-// lib/attendance.ts
+// shared/lib/attendance.ts
 var ATTENDANCE_REMINDER_MS = 60 * 60 * 1e3;
 function attendanceOpen(season, now = Date.now()) {
   return now < matchStart(season) && !season.availabilityClosed && !season.squadsPublishedAt && !season.publishedAt && !season.squadsPublished && !season.published && !season.matches.some((m) => m.started);
@@ -646,7 +646,7 @@ function attendanceReminder(season, playerId, now = Date.now(), name) {
   return { type: "attendance", title: `Ready for Saturday, ${firstName}? \u{1F3CF}`, body: `Saturday-night cricket starts ${matchStartLabel(season)}. Let Alpha know if you are joining us.`, tag: `attendance-${season.id}-${playerId}`, url: `/?page=attendance&season=${encodeURIComponent(season.id)}` };
 }
 
-// server/render/push.ts
+// backend/server/render/push.ts
 var moduleName = "web-push";
 async function provider() {
   const m = await import(moduleName);
@@ -740,7 +740,7 @@ async function notifyClubUpdateOnce() {
   let sent = 0, failed = 0;
   for (const row of rows.results) {
     try {
-      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: "A fresh look for match day", body: "Your Royal Rangers pavilion has a new crest. Remove the old bookmark or home-screen shortcut, then add it again. Tap for the steps. See you at the ground!", tag: id, url: "/?club-update=emblem-4", icon: "/icons/royal-icon-192.png?v=club-emblem-4" }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
+      await wp.sendNotification(JSON.parse(row.data), JSON.stringify({ title: "A fresh look for match day", body: "Your Royal Rangers pavilion has a new crest. Remove the old bookmark or home-screen shortcut, then add it again. Tap for the steps. See you at the ground!", tag: id, url: "/?club-update=emblem-4", icon: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/0b4bffe4c1e22857/icons/royal-icon-192.png?v=club-emblem-4" }), { vapidDetails: { subject: "https://royal-rangers.vercel.app", ...vapid }, TTL: 86400, timeout: 5e3 });
       sent++;
     } catch (e) {
       failed++;
@@ -799,7 +799,7 @@ async function notifyClubEvents(now = Date.now()) {
   return { sent, failed, pending };
 }
 
-// server/render/attendance-worker.ts
+// backend/server/render/attendance-worker.ts
 var timer;
 var running = false;
 var attendanceWorkerStatus = { lastRun: null, sent: 0, failed: 0, eligible: 0, resetCount: null, error: false };
@@ -827,19 +827,19 @@ function startAttendanceReminders() {
   void tick();
 }
 
-// app/api/push/route.ts
+// backend/app/api/push/route.ts
 var route_exports = {};
 __export(route_exports, {
   GET: () => GET,
   POST: () => POST
 });
 
-// server/render/env.ts
+// backend/server/render/env.ts
 var env = { get COMMITTEE_CODE_HASH() {
   return process.env.RR_COMMITTEE_CODE_HASH;
 } };
 
-// server/backend.ts
+// backend/server/backend.ts
 async function renderBackend(req) {
   const base = env.RR_RENDER_BACKEND;
   if (!base) return null;
@@ -854,7 +854,7 @@ async function renderBackend(req) {
   }
 }
 
-// server/access.ts
+// backend/server/access.ts
 var AccessError = class extends Error {
   constructor(message, status = 403) {
     super(message);
@@ -925,7 +925,7 @@ function failure(e) {
   return Response.json({ error: e instanceof Error ? e.message : "Request failed." }, { status: e instanceof AccessError ? e.status : 400, headers: { "Cache-Control": "no-store" } });
 }
 
-// app/api/push/route.ts
+// backend/app/api/push/route.ts
 var headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 async function GET(req) {
   const remote = await renderBackend(req);
@@ -955,7 +955,7 @@ async function POST(req) {
   }
 }
 
-// app/api/tournament/route.ts
+// backend/app/api/tournament/route.ts
 var route_exports2 = {};
 __export(route_exports2, {
   GET: () => GET2,
@@ -963,7 +963,7 @@ __export(route_exports2, {
   dynamic: () => dynamic
 });
 
-// server/publication.ts
+// backend/server/publication.ts
 function seasonPublished(s) {
   return s.squadsPublished ?? s.published === true;
 }
@@ -979,7 +979,7 @@ function visibleTournament(state, viewer) {
   }) };
 }
 
-// server/balance.ts
+// backend/server/balance.ts
 var attrs = ["batting", "bowling", "fielding"];
 function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
   const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
@@ -1027,15 +1027,15 @@ function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Ui
   return best;
 }
 
-// lib/scoring-access.ts
+// shared/lib/scoring-access.ts
 function scoringAllowed(userId, name, _match) {
   return userId === "committee-alpha" && name === "Alpha";
 }
 
-// server/ratings-source.json
+// backend/server/ratings-source.json
 var ratings_source_default = JSON.parse(process.env.RR_RATINGS_SOURCE || "{}");
 
-// server/players.ts
+// backend/server/players.ts
 var normalizeName = (name) => name.trim().toLowerCase().replace(/\s+/g, " ");
 var aliases = { saad: { id: "captain-saad", name: "Saad" }, muddi: { id: "captain-mudassar", name: "Mudassar" }, guddu: { id: "captain-javed", name: "Javed" } };
 async function approvedPlayers() {
@@ -1095,7 +1095,7 @@ async function unregisterPlayer(playerId, expectedUserId) {
   return { id: player.id, name: player.name };
 }
 
-// server/ratings.ts
+// backend/server/ratings.ts
 var ATTRIBUTES = ["batting", "bowling", "fielding"];
 var aliases2 = { saad: { id: "captain-saad", name: "Saad" }, muddi: { id: "captain-mudassar", name: "Mudassar" }, guddu: { id: "captain-javed", name: "Javed" } };
 var reviewers = { "SAAD": "Saad", "MUDDI": "Mudassar", "GUDDU BHAI": "Javed" };
@@ -1137,7 +1137,7 @@ async function readRatings() {
   return { data, revision, players };
 }
 
-// app/api/tournament/route.ts
+// backend/app/api/tournament/route.ts
 var dynamic = "force-dynamic";
 var headers2 = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 async function read() {
@@ -1230,7 +1230,7 @@ async function POST2(req) {
   }
 }
 
-// app/api/member/route.ts
+// backend/app/api/member/route.ts
 var route_exports3 = {};
 __export(route_exports3, {
   GET: () => GET3,
@@ -1317,7 +1317,7 @@ async function POST3(req) {
   }
 }
 
-// app/api/committee/route.ts
+// backend/app/api/committee/route.ts
 var route_exports4 = {};
 __export(route_exports4, {
   GET: () => GET4,
@@ -1367,7 +1367,7 @@ async function POST4(req) {
   }
 }
 
-// server/render/entry.ts
+// backend/server/render/entry.ts
 import { timingSafeEqual } from "node:crypto";
 async function handleRoyalRangers(req) {
   const path = new URL(req.url).pathname.split("/").at(-1);
