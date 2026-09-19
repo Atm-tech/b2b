@@ -1,3 +1,4 @@
+import {settlement} from './retailer-finance.js';
 import {randomUUID,createHash} from 'node:crypto';
 import sharp from 'sharp';
 import type {PoolClient} from 'pg';
@@ -9,7 +10,8 @@ const isWarehouse=(a:Actor,row:any)=>[a.role,...a.roles].includes('Warehouse Man
 export function canReceiveReturn(a:Actor,row:any){return isWarehouse(a,row);}
 export async function returnFinancialStatus(db:Db,row:any){
  const p=(await db.query("SELECT COALESCE(SUM(amount) FILTER (WHERE verification_status IN ('Verified','Resolved')),0) AS paid,COUNT(*) FILTER(WHERE verification_status NOT IN ('Verified','Resolved','Rejected'))::int AS unverified FROM payments WHERE side='Sales' AND linked_order_id=$1",[row.order_id])).rows[0];
- return Number(p.unverified)===0&&Math.abs(Number(p.paid)-Number(row.adjusted_total))<.005?'Closed':'Warehouse Received';
+ const b=await settlement(db,row.order_id);
+ return Number(p.unverified)===0&&(b?!b.refund_pending&&Number(b.pending)<=.005&&Math.abs(Number(b.pending)+Number(b.credit))<.005:Math.abs(Number(p.paid)-Number(row.adjusted_total))<.005)?'Closed':'Warehouse Received';
 }
 export async function requireAgentReturnPhotos(db:Db,row:any){
  const photos=(await db.query("SELECT line_id FROM delivery_exception_photos WHERE case_id=$1 AND stage='Agent report'",[row.id])).rows;

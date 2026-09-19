@@ -1,3 +1,6 @@
+import {createRetailerFinanceService} from './retailer-finance.js';
+import {createOpenCaseService} from './whatsapp-open-cases.js';
+import {executeDatabaseTransaction} from './db.js';
 import { isWhatsAppWarehouseUser } from "./warehouse-order-visibility.js";
 import {royalRangersRouter} from './royal-rangers-routes.js';
 import cors from "cors";
@@ -1250,6 +1253,21 @@ app.get("/whatsapp/catalog/images/:sku", async (req, res) => {
   }
 });
 
+const retailerFinance=createRetailerFinanceService({query:executeDatabaseQuery,transaction:executeDatabaseTransaction});
+const openCases=createOpenCaseService({query:executeDatabaseQuery,transaction:executeDatabaseTransaction});
+app.get('/whatsapp/finance',async(req,res)=>wrap(res,async()=>{const u=await requireWhatsAppPilot(req,['Admin','Sales','Accounts','Delivery','Out Delivery','Collection Agent']);return retailerFinance.list(u,isWhatsAppAdminUser(u));}));
+app.post('/whatsapp/finance/refunds',async(req,res)=>wrap(res,async()=>{const u=await requireWhatsAppPilot(req,['Admin','Sales','Accounts']);return retailerFinance.requestRefund(requiredString(req.body?.sourceOrderId,'Source order'),req.body,u,isWhatsAppAdminUser(u));}));
+app.post('/whatsapp/finance/refunds/:id/:action',async(req,res)=>wrap(res,async()=>{const u=await requireWhatsAppPilot(req,['Admin','Sales','Accounts']);await retailerFinance.refundAction(req.params.id,req.params.action,req.body,u,isWhatsAppAdminUser(u));return {ok:true};}));
+app.post('/whatsapp/finance/collections/:id',async(req,res)=>wrap(res,async()=>{const u=await requireWhatsAppPilot(req,['Admin','Sales','Accounts']);await retailerFinance.schedule(req.params.id,req.body,u,isWhatsAppAdminUser(u));return {ok:true};}));
+app.post('/whatsapp/finance/collections/:id/pay',async(req,res)=>wrap(res,async()=>{
+ const u=await requireWhatsAppPilot(req,['Admin','Sales','Accounts','Delivery','Out Delivery','Collection Agent']);
+ const f=(await retailerFinance.list(u,isWhatsAppAdminUser(u))).collections.find(f=>f.order_id===req.params.id);if(!f)throw Error('Collection follow-up unavailable.');
+ const mode=requiredString(req.body?.mode,'Payment mode');if(!['Cash','UPI','NEFT','RTGS','Cheque'].includes(mode))throw Error('Choose a supported payment mode.');
+ if(mode!=='Cash'&&!optionalString(req.body?.proof)?.trim())throw Error('Payment evidence is required.');
+ await createPayment({collectionFollowup:true,side:'Sales',linkedOrderId:req.params.id,amount:requiredNumber(req.body?.amount,'Amount'),mode:mode as PaymentMode,referenceNumber:requiredString(req.body?.reference,'Payment reference'),proofName:optionalString(req.body?.proof),verificationStatus:'Submitted',verificationNote:'Collection follow-up receipt; Accounts verification required.'},u);return {ok:true};
+}));
+app.get('/whatsapp/open-cases',async(req,res)=>wrap(res,async()=>{await requireWhatsAppAdmin(req);return openCases.list();}));
+app.post('/whatsapp/open-cases/assign',async(req,res)=>wrap(res,async()=>{const u=await requireWhatsAppAdmin(req);await openCases.assign(requiredString(req.body?.caseKey,'Case'),req.body,u.username);return openCases.list();}));
 app.get('/whatsapp/message-failures',async(req,res)=>wrap(res,async()=>{const user=await requireWhatsAppPilot(req,['Admin','Sales']);return whatsappOutbox.list(user,isWhatsAppAdminUser(user));}));
 app.post('/whatsapp/message-failures/:id/:action',async(req,res)=>wrap(res,async()=>{const user=await requireWhatsAppPilot(req,['Admin','Sales']);await whatsappOutbox.act(req.params.id,req.params.action,optionalString(req.body?.note)||'',user,isWhatsAppAdminUser(user));return whatsappOutbox.list(user,isWhatsAppAdminUser(user));}));
 app.get("/whatsapp/dashboard", async (req, res) => {
@@ -1775,6 +1793,7 @@ app.listen(port, () => {
   let messageSweep=false,closureSweep=false;
   const retryWhatsApp=async()=>{if(messageSweep)return;messageSweep=true;try{await whatsappOutbox.sweep();}catch(error){console.error('WhatsApp retry failed',error);}finally{messageSweep=false;}};
   const closeWhatsApp=async()=>{if(closureSweep)return;closureSweep=true;try{await orderClosureService.sweep();}catch(error){console.error('WhatsApp final closure failed',error);}finally{closureSweep=false;}};
+  let financeSweep=false;const reconcileFinance=async()=>{if(financeSweep)return;financeSweep=true;try{await retailerFinance.sweep();}catch(e){console.error('Retailer finance processing failed',e);}finally{financeSweep=false;}};void reconcileFinance();setInterval(()=>void reconcileFinance(),30_000).unref();
   void retryWhatsApp();void closeWhatsApp();setInterval(()=>{void retryWhatsApp();void closeWhatsApp();},30_000).unref();
   void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error));
   setInterval(() => { void processWhatsAppShortages().catch(error => console.error("Shortage processing failed", error)); }, 30_000).unref();

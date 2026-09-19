@@ -1,3 +1,4 @@
+import {reconcileRetailerFinance,settlement} from '../src/retailer-finance.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ test('delivery exception transactions and WhatsApp flow on isolated PostgreSQL',
 
   const dbSource=ts.createSourceFile('db.ts',fs.readFileSync(path.join(root,'apps/api/src/db.ts'),'utf8'),ts.ScriptTarget.Latest,true);
   const dbCode=ts.transpileModule(dbSource.statements.filter(node=>ts.isFunctionDeclaration(node)&&['createPayment','createSalesReturn','recalculateLedger','upsertLedger'].includes(node.name?.text||'')).map(node=>node.getText(dbSource).replace(/^export /,'')).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
-  const paymentDeps={ready:Promise.resolve(),withTransaction:deps.transaction,query:(sql:string,args:unknown[],client:any)=>(client||pool).query(sql,args),one:async(sql:string,args:unknown[],client:any)=>(await (client||pool).query(sql,args)).rows[0],operationalDate:()=>new Date().toISOString(),now:()=>new Date().toISOString(),isoValue:(v:any)=>v?new Date(v).toISOString():'',numberValue:(v:any)=>Number(v||0),stringValue:(v:any)=>String(v??''),makeId:(p:string)=>`${p}-${randomUUID()}`,getSnapshot:async()=>({}),invalidateSnapshotCacheForSql:()=>{},prepareDeliveryExceptionPayment,syncDeliveryExceptionPayment};
+  const paymentDeps={reconcileRetailerFinance,settlement,ready:Promise.resolve(),withTransaction:deps.transaction,query:(sql:string,args:unknown[],client:any)=>(client||pool).query(sql,args),one:async(sql:string,args:unknown[],client:any)=>(await (client||pool).query(sql,args)).rows[0],operationalDate:()=>new Date().toISOString(),now:()=>new Date().toISOString(),isoValue:(v:any)=>v?new Date(v).toISOString():'',numberValue:(v:any)=>Number(v||0),stringValue:(v:any)=>String(v??''),makeId:(p:string)=>`${p}-${randomUUID()}`,getSnapshot:async()=>({}),invalidateSnapshotCacheForSql:()=>{},prepareDeliveryExceptionPayment,syncDeliveryExceptionPayment};
   const pay=new Function(...Object.keys(paymentDeps),dbCode+';return createPayment;')(...Object.values(paymentDeps));
   const genericReturn=new Function(...Object.keys(paymentDeps),dbCode+';return createSalesReturn;')(...Object.values(paymentDeps));
   const payment=(order:string,amount:number,reference:string)=>({side:'Sales',linkedOrderId:order,amount,mode:'Cash',referenceNumber:reference,verificationStatus:'Submitted'});

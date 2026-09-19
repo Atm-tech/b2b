@@ -1,3 +1,4 @@
+import {reconcileRetailerFinance,settlement} from './retailer-finance.js';
 import { assertNoPackingHold } from "./packing-guards.js";
 import { assertDeliveryExceptionUpdate } from "./delivery-exceptions.js";
 import {prepareDeliveryExceptionPayment,syncDeliveryExceptionPayment} from './delivery-exception-billing.js';
@@ -1005,6 +1006,7 @@ async function mapLedgers(client?: DbClient): Promise<LedgerEntry[]> {
 
 async function mapDeliveryTasks(client?: DbClient): Promise<DeliveryTask[]> {
   const rows = await query<Record<string, unknown>>("SELECT * FROM delivery_tasks ORDER BY created_at DESC", [], client);
+  const balances=await query<Record<string,unknown>>("SELECT linked_order_id,goods_value,paid_amount,pending_amount FROM ledger_entries WHERE side='Sales'",[],client);
   return rows.rows.map((row) => ({
     id: stringValue(row.id),
     side: stringValue(row.side) as DeliveryTask["side"],
@@ -1021,7 +1023,10 @@ async function mapDeliveryTasks(client?: DbClient): Promise<DeliveryTask[]> {
     pickupAt: row.pickup_at ? isoValue(row.pickup_at) : undefined,
     dropAt: row.drop_at ? isoValue(row.drop_at) : undefined,
     routeHint: row.route_hint ? stringValue(row.route_hint) : undefined,
-    routeStops: Array.isArray(row.route_json) ? (row.route_json as DeliveryTask["routeStops"]) : [],
+    routeStops: Array.isArray(row.route_json) ? (row.route_json as DeliveryTask["routeStops"]).map(stop=>{
+      const b=row.side==='Sales'?balances.rows.find(b=>b.linked_order_id===stop.orderId):undefined;
+      return b?{...stop,amountToPay:numberValue(b.goods_value),collectionAmount:Math.max(0,numberValue(b.paid_amount)),paid:numberValue(b.pending_amount)<=.005,paymentRequired:numberValue(b.pending_amount)>.005}:stop;
+    }) : [],
     paymentAction: stringValue(row.payment_action) as DeliveryTask["paymentAction"],
     cashCollectionRequired: Boolean(row.cash_collection_required),
     cashHandoverMarked: Boolean(row.cash_handover_marked),
@@ -1149,9 +1154,14 @@ async function upsertLedger(side: "Purchase" | "Sales", linkedOrderId: string, p
 }
 
 async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: string, client?: DbClient) {
-  const payableStatuses = side === "Sales"
-    ? ["Submitted", "Verified", "Resolved"]
-    : ["Verified", "Resolved"];
+  if(side === "Sales") {
+    if(client) await reconcileRetailerFinance(client,linkedOrderId);
+    else await withTransaction(db=>reconcileRetailerFinance(db,linkedOrderId));
+    invalidateSnapshotCacheForSql('UPDATE ledger_entries SET');
+    invalidateSnapshotCacheForSql('UPDATE delivery_tasks SET');
+    return;
+  }
+  const payableStatuses = ["Verified", "Resolved"];
   const payments = await one<{ paid: number }>(
     `SELECT COALESCE(SUM(amount), 0) AS paid
      FROM payments
@@ -1194,32 +1204,6 @@ async function recalculateLedger(side: "Purchase" | "Sales", linkedOrderId: stri
     return;
   }
 
-  const order = await one<Record<string, unknown>>(
-    `SELECT so.*, c.name AS shop_name
-     FROM sales_orders so
-     JOIN counterparties c ON c.id = so.shop_id
-     WHERE so.id = $1`,
-    [linkedOrderId],
-    client
-  );
-  if (!order) {
-    const cart = await one<Record<string, unknown>>(
-      `SELECT so.cart_id, MIN(so.created_at) AS created_at, MAX(c.name) AS shop_name,
-              BOOL_AND(so.status = 'Cancelled') AS all_cancelled,
-              SUM(so.total_amount + so.delivery_charge) AS goods_value
-       FROM sales_orders so
-       JOIN counterparties c ON c.id = so.shop_id
-       WHERE so.cart_id = $1
-       GROUP BY so.cart_id`,
-      [linkedOrderId],
-      client
-    );
-    if (!cart) return;
-    await upsertLedger(side, linkedOrderId, stringValue(cart.shop_name), cart.all_cancelled === true || stringValue(cart.all_cancelled).toLowerCase() === "true" ? 0 : numberValue(cart.goods_value), paidAmount, client, isoValue(cart.created_at) || now());
-    return;
-  }
-  const goodsValue = stringValue(order.status) === "Cancelled" ? 0 : (numberValue(order.total_amount) + numberValue(order.delivery_charge));
-  await upsertLedger(side, linkedOrderId, stringValue(order.shop_name), goodsValue, paidAmount, client, isoValue(order.created_at) || now());
 }
 
 async function updateCounterpartyLocation(counterpartyId: string, location: { latitude: number; longitude: number; label?: string; address?: string; city?: string }, client?: DbClient) {
@@ -3090,6 +3074,7 @@ async function insertAdvancePayment(side: "Purchase" | "Sales", linkedOrderId: s
 }
 
 export async function createPayment(payload: {
+  collectionFollowup?: boolean;
   exceptionId?: string;
   exceptionRevision?: number;
   side: "Purchase" | "Sales";
@@ -3111,6 +3096,26 @@ export async function createPayment(payload: {
   await withTransaction(async (client) => {
     const exception=await prepareDeliveryExceptionPayment(client,payload,currentUser);
     if(exception?.duplicate)return;
+    if(payload.side==='Sales'){
+      await reconcileRetailerFinance(client,payload.linkedOrderId);
+      const canonical=(await client.query('SELECT COALESCE(cart_id,id) AS id FROM sales_orders WHERE id=$1',[payload.linkedOrderId])).rows[0]?.id||payload.linkedOrderId;
+      const balance=await settlement(client,canonical);
+      if(payload.collectionFollowup){
+        const f=(await client.query("SELECT f.*,r.salesman_id FROM retailer_collection_followups f LEFT JOIN whatsapp_retailers r ON r.counterparty_id=f.shop_id WHERE f.order_id=$1 AND f.status='Open'",[canonical])).rows[0];
+        const adminNames=String(process.env.WHATSAPP_ADMIN_USERNAMES||process.env.WHATSAPP_PILOT_USERNAMES||'wa.sales').split(',').map(s=>s.trim().toLowerCase());
+        const roles=[currentUser.role,...currentUser.roles];
+        if(!f||!(roles.some(r=>['Admin','Accounts'].includes(r))||adminNames.includes(currentUser.username.toLowerCase())||(roles.includes('Sales')&&(Number(f.salesman_id)===currentUser.id||Number(f.owner_id)===currentUser.id))||f.collector_username===currentUser.username))throw Error('This collection follow-up is not assigned to you.');
+      }
+      const liveCollection=(await client.query("SELECT 1 FROM sales_orders WHERE COALESCE(cart_id,id)=$1 AND status IN ('Out for Delivery','Delivered','Closed') LIMIT 1",[canonical])).rowCount;
+      if(liveCollection||Number(balance?.applied_credit)>0){
+        if(!Number.isFinite(payload.amount)||payload.amount<=0||Math.abs(payload.amount-Math.round(payload.amount*100)/100)>.000001||!payload.referenceNumber?.trim())throw Error('Enter a positive collection amount with two decimal places and a payment reference.');
+        const existing=(await client.query("SELECT amount,mode FROM payments WHERE side='Sales' AND linked_order_id=$1 AND reference_number=$2",[payload.linkedOrderId,payload.referenceNumber.trim()])).rows[0];
+        if(existing){if(Number(existing.amount)!==payload.amount||existing.mode!==payload.mode)throw Error('This payment reference was already used for another collection.');return;}
+        const reserved=Number((await client.query("SELECT COALESCE(SUM(amount),0) AS amount FROM payments WHERE side='Sales' AND verification_status<>'Rejected' AND (linked_order_id=$1 OR linked_order_id IN (SELECT id FROM sales_orders WHERE COALESCE(cart_id,id)=$1))",[canonical])).rows[0].amount);
+        const remaining=Math.max(0,Number(balance?.total||0)-reserved-Number(balance?.applied_credit||0));
+        if(payload.amount>remaining+.005)throw Error('Collection exceeds the balance after retailer credit and submitted receipts. Refresh the bill.');
+      }
+    }
     await query(
       `INSERT INTO payments (
         id, side, linked_order_id, payment_kind, amount, mode, cash_timing, reference_number, voucher_number, utr_number,
@@ -3224,7 +3229,7 @@ export async function clearPurchaseAdvancePayments() {
 
 export async function verifyPayment(paymentId: string, status: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved", note: string, currentUser: CurrentUser) {
   await ready;
-  return withTransaction(async (client) => {
+  await withTransaction(async (client) => {
     const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId], client);
     if (!payment) throw new Error("Payment not found.");
     const exception=payment.side==='Sales'?(await query<Record<string,any>>("SELECT * FROM delivery_exceptions WHERE order_id=$1 AND bill_adjusted_at IS NOT NULL ORDER BY created_at DESC LIMIT 1",[payment.linked_order_id],client)).rows[0]:null;
@@ -3252,8 +3257,8 @@ export async function verifyPayment(paymentId: string, status: "Pending" | "Subm
     }
     await syncDeliveryExceptionPayment(client,exception);
     invalidateSnapshotCacheForSql('UPDATE delivery_tasks SET');
-    return getSnapshot();
   });
+  return getSnapshot();
 }
 
 export async function createReceiptCheck(payload: {
@@ -4360,7 +4365,8 @@ export async function updatePayment(paymentId: string, payload: {
   operationDate?: string;
 }, currentUser: CurrentUser) {
   await ready;
-  const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId]);
+  await withTransaction(async client=>{
+  const payment = await one<Record<string, unknown>>("SELECT * FROM payments WHERE id = $1", [paymentId],client);
   if (!payment) throw new Error("Payment not found.");
   const submittedAt = payload.operationDate ? operationalDate(payload.operationDate) : now();
   await query(
@@ -4379,10 +4385,10 @@ export async function updatePayment(paymentId: string, payload: {
       payload.verificationStatus === "Verified" || payload.verificationStatus === "Resolved" ? currentUser.fullName : null,
       payload.verificationStatus === "Submitted" || payload.verificationStatus === "Disputed" ? submittedAt : null,
       paymentId
-    ]
+    ],client
   );
   if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Order") {
-    await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id));
+    await recalculateLedger(stringValue(payment.side) as "Purchase" | "Sales", stringValue(payment.linked_order_id),client);
   } else if ((payment.payment_kind ? stringValue(payment.payment_kind) : "Order") === "Advance") {
     await upsertLedger(
       stringValue(payment.side) as "Purchase" | "Sales",
@@ -4390,10 +4396,11 @@ export async function updatePayment(paymentId: string, payload: {
       payment.counterparty_name ? stringValue(payment.counterparty_name) : stringValue(payment.linked_order_id),
       0,
       payload.verificationStatus === "Rejected" ? 0 : payload.amount,
-      undefined,
+      client,
       isoValue(payment.created_at) || now()
     );
   }
+  });
   return getSnapshot();
 }
 
@@ -4587,10 +4594,16 @@ export async function updateDeliveryTask(taskId: string, payload: {
         [salesStatus, linkedOrderIds],
         client
       );
+      const financeShops=(await client.query('SELECT DISTINCT shop_id FROM sales_orders WHERE id=ANY($1::text[]) OR cart_id=ANY($1::text[]) ORDER BY shop_id',[linkedOrderIds])).rows;
+      for(const shop of financeShops)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('retailer-finance:'||$1,0))",[shop.shop_id]);
+      for(const id of [...linkedOrderIds].sort())await reconcileRetailerFinance(client,id);
       const completedCashStops = (payload.routeStops || [])
         .filter((stop) => stop.paymentRequired && stop.paymentMode === "Cash" && stop.paid && stop.amountToPay > 0 && !stop.collectionMode);
       if (completedCashStops.length > 0) {
         for (const stop of completedCashStops) {
+          const balance=await settlement(client,stop.orderId);
+          const cashDue=Math.max(0,Number(balance?.pending??stop.amountToPay));
+          if(cashDue<=.005)continue;
           const existingPayment = await one<Record<string, unknown>>(
             `SELECT *
              FROM payments
@@ -4614,7 +4627,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
                    submitted_at = $6
                WHERE id = $7`,
               [
-                stop.amountToPay,
+                cashDue,
                 stop.paymentReference?.trim() || "",
                 stop.paymentProofName?.trim() || null,
                 `Cash collected by ${assignedTo} during delivery.`,
@@ -4633,7 +4646,7 @@ export async function updateDeliveryTask(taskId: string, payload: {
               [
                 makeId("PAY"),
                 stop.orderId,
-                stop.amountToPay,
+                cashDue,
                 stop.cashTiming || null,
                 stop.paymentReference?.trim() || "",
                 stop.paymentProofName?.trim() || null,

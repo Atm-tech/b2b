@@ -13,6 +13,11 @@ export function createWhatsAppOutbox(deps:Deps,transport:(row:any)=>Promise<{mes
   const row=(await deps.query(`UPDATE whatsapp_outbox SET status='Sending',attempts=attempts+1,available_at=NOW()+INTERVAL '5 minutes',updated_at=NOW() WHERE id=$1 AND status IN ('Pending','Sending') AND available_at<=NOW() RETURNING *`,[id])).rows[0];
   if(!row)return;
   try{
+   if(row.related_entity_type==='CollectionFollowup'){
+    const followup=(await deps.query('SELECT status,version FROM retailer_collection_followups WHERE order_id=$1',[row.related_entity_id])).rows[0];
+    const version=Number(String(row.id).match(/:(\d+):\d+$/)?.[1]);
+    if(!followup||followup.status==='Closed'||followup.version!==version){await deps.query("UPDATE whatsapp_outbox SET status='Superseded',updated_at=NOW() WHERE id=$1",[id]);await deps.query("UPDATE whatsapp_messages SET status='Superseded' WHERE id=$1",[id]);return;}
+   }
    if((row.attempts>1||row.last_error)&&['Broadcast','Offer'].includes(row.related_entity_type)){
     const profile=(await deps.query('SELECT active,marketing_opt_in,paused_at FROM whatsapp_retailers WHERE phone_e164=$1',[row.phone_e164])).rows[0];
     const expired=row.related_entity_type==='Offer'&&!(await deps.query("SELECT 1 FROM whatsapp_offers WHERE id=$1 AND status='Sent' AND expires_at>NOW()",[row.related_entity_id])).rowCount;

@@ -1,3 +1,4 @@
+import {settlement} from './retailer-finance.js';
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 type Db=Pick<PoolClient,'query'>;
@@ -23,10 +24,13 @@ export function createOrderClosureService(deps:Deps){
    const lines=orders.filter(o=>(o.cart_id||o.id)===cart);const total=lines.reduce((sum,o)=>sum+Number(o.total_amount)+Number(o.delivery_charge),0);
    const payments=(await db.query("SELECT COALESCE(SUM(amount) FILTER(WHERE verification_status IN ('Verified','Resolved')),0) AS verified,COUNT(*) FILTER(WHERE verification_status NOT IN ('Verified','Resolved','Rejected'))::int AS unverified FROM payments WHERE side='Sales' AND (linked_order_id=$1 OR linked_order_id=ANY($2::text[]))",[cart,lines.map(o=>o.id)])).rows[0];
    if(Number(payments.unverified))reasons.push('Payment verification pending');
-   if(Number(payments.verified)<total-.005)reasons.push('Collection pending');
-   if(Number(payments.verified)>total+.005)reasons.push('Credit or refund resolution pending');
+   const balance=await settlement(db,cart);
+   const effectiveVerified=Number(payments.verified)+Number(balance?.applied_credit||0);
+   if(effectiveVerified<total-.005)reasons.push('Collection pending');
+   if(effectiveVerified>total+Number(balance?.credit||0)+Number(balance?.outgoing_credit||0)+Number(balance?.refunded||0)+.005)reasons.push('Credit or refund resolution pending');
+   if(balance?.refund_pending)reasons.push('Refund verification pending');
    const ledger=(await db.query("SELECT * FROM ledger_entries WHERE side='Sales' AND linked_order_id=$1",[cart])).rows;
-   if(ledger.length!==1||![total,Number(payments.verified),Number(ledger[0]?.goods_value),Number(ledger[0]?.pending_amount)].every(Number.isFinite)||Math.abs(Number(ledger[0]?.goods_value)-total)>.005||Math.abs(Number(ledger[0]?.pending_amount))>.005)reasons.push('Financial reconciliation pending');
+   if(ledger.length!==1||![total,Number(payments.verified),Number(ledger[0]?.goods_value),Number(ledger[0]?.pending_amount)].every(Number.isFinite)||Math.abs(Number(ledger[0]?.goods_value)-total)>.005||Math.abs(Number(ledger[0]?.pending_amount)+Number(balance?.credit||0))>.005)reasons.push('Financial reconciliation pending');
   }
   const packing=(await db.query('SELECT * FROM whatsapp_packing_reviews WHERE cart_id=ANY($1::text[])',[carts])).rows;
   if(packing.some(p=>p.status!=='Finalized'))reasons.push('Packing or packing credit resolution pending');

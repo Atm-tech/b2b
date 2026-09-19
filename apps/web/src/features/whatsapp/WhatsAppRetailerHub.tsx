@@ -1,3 +1,5 @@
+import {RetailerFinance} from './RetailerFinance';
+import {OpenCases} from './OpenCases';
 import {MessageFailures} from './MessageFailures';
 import { PackingRegister } from "./PackingRegister";
 import { DeliveryExceptionRegister } from "../operations/DeliveryExceptionRegister";
@@ -815,6 +817,8 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
     </nav>
 
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <PackingRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
+    {!isMarketingWorkspace && (activeSection==='Home'||activeSection==='Orders') ? <RetailerFinance sessionToken={sessionToken} roles={currentUser.roles||[currentUser.role]} admin={whatsappAdmin}/>:null}
+    {!isMarketingWorkspace && whatsappAdmin && activeSection==='Home' ? <OpenCases sessionToken={sessionToken}/>:null}
     {!isMarketingWorkspace&&(activeSection==='Home'||activeSection==='Orders'||activeSection==='Chat')?<MessageFailures sessionToken={sessionToken}/>:null}
     {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <DeliveryExceptionRegister snapshot={snapshot} sessionToken={sessionToken} currentUser={currentUser} /> : null}
     {!isMarketingWorkspace && (whatsappAdmin || (currentUser.roles || [currentUser.role]).includes("Sales")) && (activeSection === "Home" || activeSection === "Orders") ? <ConfirmationRegister sessionToken={sessionToken} /> : null}

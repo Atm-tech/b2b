@@ -1,3 +1,4 @@
+import {RetailerFinance} from './features/whatsapp/RetailerFinance';
 import { PackingRegister } from "./features/whatsapp/PackingRegister";
 import { DeliveryExceptionRegister } from "./features/operations/DeliveryExceptionRegister";
 import { ShortageRegister } from "./features/whatsapp/ShortageRegister";
@@ -1710,6 +1711,7 @@ function App() {
               />
             ) : null
           ) : null}
+          {!isWhatsAppWorkspaceUser && currentRoles.some(r=>["Admin","Sales","Accounts","Delivery","Out Delivery","Collection Agent"].includes(r)) && ["Overview","Ledger","CurrentDelivery"].includes(activeView) ? <RetailerFinance sessionToken={sessionToken} roles={currentRoles} admin={currentRoles.includes("Admin")}/>:null}
           {activeView === "Ledger" ? (isAccountsUser ? <AccountsLedgerWorkspace snapshot={snapshot} /> : <TwoCol left={<Panel title="Ledger" eyebrow="Accounts visibility"><DataTable headers={["ID","Side","Order","Party","Goods","Paid","Pending"]} rows={snapshot.ledgerEntries.map((l) => [l.id, l.side, l.linkedOrderId, l.partyName, l.goodsValue, l.paidAmount, l.pendingAmount])} /></Panel>} right={<Panel title="Order Financial State" eyebrow="Pending vs settled"><DataTable headers={["Purchase/Sales","ID","Status"]} rows={[...groupPurchaseRows(snapshot.purchaseOrders).map((row) => ["Purchase", row[0], row[6]]), ...groupSalesRows(snapshot.salesOrders).map((row) => ["Sales", row[0], row[6]])]} /></Panel>} />) : null}
           {activeView === "Stock" ? (
             isDataAnalyst ? <AnalystInventoryView snapshot={snapshot} /> :

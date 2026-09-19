@@ -1,3 +1,38 @@
+CREATE TABLE IF NOT EXISTS retailer_credit_balances (
+ source_order_id TEXT PRIMARY KEY, shop_id TEXT NOT NULL,
+ amount NUMERIC(16,2) NOT NULL CHECK(amount>=0), available_amount NUMERIC(16,2) NOT NULL CHECK(available_amount>=0), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS retailer_credit_allocations (
+ id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, source_order_id TEXT NOT NULL, target_order_id TEXT NOT NULL,
+ amount NUMERIC(16,2) NOT NULL CHECK(amount>=0), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CHECK(source_order_id<>target_order_id)
+);
+CREATE INDEX IF NOT EXISTS retailer_credit_shop_idx ON retailer_credit_allocations(shop_id);
+CREATE TABLE IF NOT EXISTS retailer_refunds (
+ id TEXT PRIMARY KEY, request_key TEXT NOT NULL UNIQUE, source_order_id TEXT NOT NULL, shop_id TEXT NOT NULL,
+ amount NUMERIC(16,2) NOT NULL CHECK(amount>0), status TEXT NOT NULL DEFAULT 'Requested' CHECK(status IN ('Requested','Approved','Paid','Verified','Rejected','Cancelled')),
+ version INTEGER NOT NULL DEFAULT 1, note TEXT NOT NULL, decision_note TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL,
+ approved_by TEXT,paid_by TEXT,verified_by TEXT,payment_reference TEXT NOT NULL DEFAULT '',proof TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS retailer_refund_reference_idx ON retailer_refunds(payment_reference) WHERE payment_reference<>'';
+CREATE TABLE IF NOT EXISTS retailer_collection_followups (
+ order_id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, owner_id BIGINT NOT NULL, collector_username TEXT,
+ amount_due NUMERIC(16,2) NOT NULL CHECK(amount_due>=0), due_at TIMESTAMPTZ NOT NULL, status TEXT NOT NULL DEFAULT 'Open' CHECK(status IN ('Open','Closed')),
+ version INTEGER NOT NULL DEFAULT 1,note TEXT NOT NULL DEFAULT '',escalated_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS retailer_finance_events (
+ id BIGSERIAL PRIMARY KEY,shop_id TEXT NOT NULL,order_id TEXT NOT NULL,action TEXT NOT NULL,actor TEXT NOT NULL,
+ detail_json JSONB NOT NULL DEFAULT '{}',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS retailer_finance_failures (
+ order_id TEXT PRIMARY KEY,error TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS whatsapp_open_case_assignments (
+ case_key TEXT PRIMARY KEY,owner_id BIGINT NOT NULL,due_at TIMESTAMPTZ NOT NULL,next_action TEXT NOT NULL,
+ updated_by TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id BIGSERIAL PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
