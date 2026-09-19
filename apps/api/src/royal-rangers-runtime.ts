@@ -6,6 +6,9 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// backend/server/render/demo.ts
+import { randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
+
 // backend/server/render/postgres.ts
 import pg from "pg";
 var tables = { push_settings: "id TEXT PRIMARY KEY,data TEXT NOT NULL", push_subscriptions: "endpoint TEXT PRIMARY KEY,user_id TEXT NOT NULL,player_id TEXT NOT NULL,data TEXT NOT NULL,updated_at BIGINT NOT NULL", push_deliveries: "id TEXT PRIMARY KEY,created_at BIGINT NOT NULL", tournaments: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", seasons: "id TEXT PRIMARY KEY,data TEXT NOT NULL", members: "id TEXT PRIMARY KEY,name TEXT NOT NULL,player_id TEXT,created_at BIGINT NOT NULL", committee_seats: "name TEXT PRIMARY KEY,user_id TEXT UNIQUE", committee_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,committee_name TEXT,expires BIGINT NOT NULL", access_attempts: "id TEXT PRIMARY KEY,attempts INTEGER NOT NULL,reset_at BIGINT NOT NULL", private_ratings: "id TEXT PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0", audit_log: "id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,season TEXT,created_at BIGINT NOT NULL", credentials: "user_id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at BIGINT NOT NULL", member_sessions: "token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires BIGINT NOT NULL", approved_players: "id TEXT PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL", player_registrations: "player_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE,created_at BIGINT NOT NULL" };
@@ -166,18 +169,23 @@ async function resetAttendanceOnce(seasonId, marker) {
     c.release();
   }
 }
-
-// shared/lib/match-schedule.ts
-function matchStart(s) {
-  return Date.parse(s.date + "T00:01:00+05:30") + 24 * 60 * 60 * 1e3;
-}
-function matchStartLabel(s) {
-  return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short" }).format(matchStart(s)) + " \xB7 12:01 AM IST";
-}
-function nightReminderSlot(s, now = Date.now()) {
-  const start = matchStart(s);
-  const slots = [{ name: "21", at: start - 181 * 6e4, end: start - 171 * 6e4 }, { name: "22", at: start - 121 * 6e4, end: start - 111 * 6e4 }, { name: "23", at: start - 61 * 6e4, end: start - 51 * 6e4 }, { name: "midnight", at: start - 6e4, end: start }];
-  return slots.find((slot) => now >= slot.at && now < slot.end);
+async function demoStorage(work) {
+  await init();
+  const c = await getPool().connect();
+  try {
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock(82644194)");
+    await c.query("CREATE TABLE IF NOT EXISTS royal_rangers.demo_state (id INTEGER PRIMARY KEY,data TEXT NOT NULL,revision INTEGER NOT NULL)");
+    await c.query("CREATE TABLE IF NOT EXISTS royal_rangers.demo_sessions (token TEXT PRIMARY KEY,role TEXT NOT NULL,expires BIGINT NOT NULL)");
+    const result2 = await work(c);
+    await c.query("COMMIT");
+    return result2;
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
 }
 
 // shared/lib/cricket.ts
@@ -600,6 +608,155 @@ function apply(state, c, permissions = {}) {
   return next;
 }
 
+// frontend/demo-data.ts
+function demoState() {
+  const players = ["Blue", "Black", "White"].flatMap((team) => Array.from({ length: 5 }, (_, n) => ({ id: `demo-${team.toLowerCase()}-${n + 1}`, name: n === 0 ? `Demo ${team}` : `${team} Player ${n + 1}`, team })));
+  function innings(team, other, values) {
+    const events = [];
+    values.forEach((runs, n) => {
+      const pair = nextPair(events);
+      events.push({ kind: "run", runs, striker: pair.striker || `demo-${team.toLowerCase()}-1`, partner: pair.partner || `demo-${team.toLowerCase()}-2`, bowler: `demo-${other.toLowerCase()}-${Math.floor(n / 6) % 2 + 1}` });
+    });
+    return events;
+  }
+  function match(id, home, away, complete = false, label = "League 1") {
+    return { id, home, away, first: home, label, overs: 2, started: true, secondInningsStarted: complete, innings: [innings(home, away, complete ? [4, 6, 0, 2, 4, 6, 1, 4, 2, 0, 6, 4] : [4, 6, 0, 2]), complete ? innings(away, home, [1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 2, 0]) : []] };
+  }
+  const base = { overs: 2, players, points: { ...defaultPoints }, published: true, squadsPublished: true, fixturesPublished: true, publicationHidden: false, fixturesHidden: false, availabilityClosed: true, availability: Object.fromEntries(players.map((p) => [p.id, "available"])) };
+  return { seasons: [{ ...structuredClone(base), id: "demo-season-3", number: 3, fixtureFormat: "winner-first", date: "2026-09-19", matches: [["demo-live", "Blue", "Black"], ["demo-league-2", "Black", "White"], ["demo-league-3", "White", "Blue"]].map(([id, home, away], i) => ({ ...match(id, home, away), label: `League ${i + 1}`, started: false, innings: [[], []] })) }, { ...structuredClone(base), id: "demo-season-2", number: 2, date: "2026-09-12", matches: [match("demo-final", "Blue", "White", true, "Final")] }] };
+}
+
+// backend/server/render/demo-config.ts
+var DEMO_BOOTSTRAP_UNTIL = 1789814747688;
+var DEMO_PASSWORD_SALT = "5c7a3ed6110fdb241dd1ea99b56af3b2";
+var DEMO_PASSWORD_HASH = "9e71a47c6f0b6e73fe68bed6a2a9eb6b6b78a08507b96494313df4b9f087af5b";
+
+// backend/server/render/demo-lifecycle.ts
+var DEMO_WINDOW = "rehearsal-2026-09-19-six-hours";
+async function demoWindow(db, now = Date.now()) {
+  await db.query("CREATE TABLE IF NOT EXISTS royal_rangers.demo_window (id TEXT PRIMARY KEY,expires BIGINT NOT NULL,purged_at BIGINT,credentials TEXT)");
+  let row = (await db.query("SELECT * FROM royal_rangers.demo_window WHERE id=$1", [DEMO_WINDOW])).rows[0];
+  if (!row) {
+    const expires = now < DEMO_BOOTSTRAP_UNTIL ? now + 6 * 36e5 : now;
+    await db.query("DELETE FROM royal_rangers.demo_sessions");
+    await db.query("DELETE FROM royal_rangers.demo_state");
+    await db.query("INSERT INTO royal_rangers.demo_window (id,expires,credentials) VALUES ($1,$2,$3)", [DEMO_WINDOW, expires, JSON.stringify({ salt: DEMO_PASSWORD_SALT, hash: DEMO_PASSWORD_HASH })]);
+    row = { id: DEMO_WINDOW, expires, purged_at: null, credentials: JSON.stringify({ salt: DEMO_PASSWORD_SALT, hash: DEMO_PASSWORD_HASH }) };
+    if (expires > now) await db.query("INSERT INTO royal_rangers.demo_state (id,data,revision) VALUES (1,$1,0)", [JSON.stringify(demoState())]);
+  }
+  if (Number(row.expires) <= now) {
+    await db.query("DELETE FROM royal_rangers.demo_sessions");
+    await db.query("DELETE FROM royal_rangers.demo_state");
+    await db.query("UPDATE royal_rangers.demo_window SET credentials=NULL,purged_at=COALESCE(purged_at,$2) WHERE id=$1", [DEMO_WINDOW, now]);
+    return { active: false, expiresAt: Number(row.expires), credentials: null };
+  }
+  return { active: true, expiresAt: Number(row.expires), credentials: JSON.parse(row.credentials) };
+}
+var expiryTimer;
+async function maintainDemo() {
+  const window = await demoStorage((db) => demoWindow(db));
+  if (window.active && !expiryTimer) {
+    expiryTimer = setTimeout(() => {
+      expiryTimer = void 0;
+      void maintainDemo().catch((e) => console.error("Test cleanup failed", e.message));
+    }, Math.max(1, window.expiresAt - Date.now()));
+    expiryTimer.unref();
+  }
+  return { active: window.active, expiresAt: window.expiresAt };
+}
+
+// backend/server/render/demo.ts
+var attempts = /* @__PURE__ */ new Map();
+async function handleDemo(req) {
+  const send = (data, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
+  if (!["GET", "POST"].includes(req.method)) return send({ error: "Method not allowed" }, 405);
+  if (req.method === "POST") {
+    const origin = req.headers.get("origin");
+    if (req.headers.get("sec-fetch-site") === "cross-site" || origin && !["https://royal-rangers.vercel.app", "https://b2b-v8kb.onrender.com", "http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)) return send({ error: "Invalid test request origin" }, 403);
+  }
+  const route = new URL(req.url).searchParams.get("route");
+  try {
+    const raw = req.method === "POST" ? await req.text() : "";
+    if (raw.length > 2e4) return send({ error: "Request too large" }, 413);
+    const body = raw ? JSON.parse(raw) : {};
+    if (["login", "committee-login"].includes(body.type)) {
+      const now = Date.now(), key = (req.headers.get("x-forwarded-for") || "local").split(",")[0];
+      for (const [k, v] of attempts) if (v.until < now) attempts.delete(k);
+      const entry = attempts.get(key) || { count: 0, until: now + 6e4 };
+      if (entry.count >= 20 || attempts.size >= 500 && !attempts.has(key)) return send({ error: "Too many test login attempts. Try again in a minute." }, 429);
+      entry.count++;
+      attempts.set(key, entry);
+    }
+    return await demoStorage(async (db) => {
+      const window = await demoWindow(db);
+      if (!window.active) return send({ error: "This six-hour test has expired. Test data and logins have been purged.", expiresAt: window.expiresAt }, 410);
+      if (route === "status") return send({ active: true, expiresAt: window.expiresAt });
+      await db.query("DELETE FROM royal_rangers.demo_sessions WHERE expires<$1", [Date.now()]);
+      const token = createHash("sha256").update(req.headers.get("x-rr-demo-session") || "").digest("hex");
+      const role = (await db.query("SELECT role FROM royal_rangers.demo_sessions WHERE token=$1", [token])).rows[0]?.role;
+      const admin = role === "admin", playerId = role === "user" ? "demo-blue-1" : null;
+      const row = (await db.query("SELECT data,revision FROM royal_rangers.demo_state WHERE id=1 FOR UPDATE")).rows[0];
+      const state = JSON.parse(row.data), revision = row.revision;
+      if (req.method === "GET") {
+        if (route === "tournament") return send({ state, revision, expiresAt: window.expiresAt });
+        if (route === "member") return send({ signedIn: !!role, registered: role === "user", name: admin ? "Demo Admin" : role === "user" ? "Demo Blue" : role === "visitor" ? "Demo Visitor" : "", playerId, committee: admin ? "Alpha" : null, scorer: admin ? "Alpha" : null, players: state.seasons[0].players.map((p) => ({ ...p, registered: true })) });
+        if (route === "push") return send({ publicKey: null, demo: true });
+        if (route === "committee") {
+          if (!admin) return send({ error: "Test Alpha access required" }, 403);
+          return send({ revision: 0, source: { range: "Synthetic test players", version: "test" }, reviewer: "Alpha", audit: [], users: [], players: state.seasons[0].players.map((p) => ({ ...p, sourceName: p.name, reviews: [], averages: { batting: 5, bowling: 5, fielding: 5, attitude: 5 }, total: 20 })) });
+        }
+      }
+      if (req.method === "POST") {
+        if (route === "member") {
+          if (["logout", "lock"].includes(body.type)) {
+            await db.query("DELETE FROM royal_rangers.demo_sessions WHERE token=$1", [token]);
+            return send({ ok: true, loggedOut: true });
+          }
+          if (["login", "committee-login"].includes(body.type)) {
+            const role2 = { "test-alpha": "admin", "test-player": "user", "test-viewer": "visitor" }[body.username?.trim().toLowerCase()];
+            const valid = typeof body.password === "string" && body.password.length <= 128 && timingSafeEqual(scryptSync(body.password, window.credentials.salt, 32), Buffer.from(window.credentials.hash, "hex"));
+            if (!role2 || !valid) return send({ error: "Incorrect test ID or password" }, 401);
+            const demoToken = randomUUID() + randomUUID();
+            await db.query("INSERT INTO royal_rangers.demo_sessions VALUES ($1,$2,$3)", [createHash("sha256").update(demoToken).digest("hex"), role2, window.expiresAt]);
+            return send({ ok: true, demoToken, expiresAt: window.expiresAt });
+          }
+          return send({ error: "Use your demo ID and password" }, 401);
+        }
+        if (route === "demo-reset") {
+          if (!admin) return send({ error: "Demo admin required" }, 403);
+          await db.query("UPDATE royal_rangers.demo_state SET data=$1,revision=revision+1 WHERE id=1", [JSON.stringify(demoState())]);
+          return send({ ok: true });
+        }
+        if (route === "tournament") {
+          if (!role) return send({ error: "Demo login required" }, 401);
+          if (!admin && !(role === "user" && body.command?.type === "availability" && body.command.playerId === playerId)) return send({ error: "Only the demo admin can score" }, 403);
+          if (body.revision !== revision) return send({ error: "Score changed. Refresh and retry." }, 409);
+          if (!body.command || !Number.isInteger(body.revision)) return send({ error: "Invalid test command" }, 400);
+          const next = apply(state, body.command, { manageAttendance: admin, latePlayerOverride: admin });
+          await db.query("UPDATE royal_rangers.demo_state SET data=$1,revision=revision+1 WHERE id=1", [JSON.stringify(next)]);
+          return send({ state: next, revision: revision + 1, expiresAt: window.expiresAt });
+        }
+      }
+      return send({ error: "Unavailable in demo" }, 403);
+    });
+  } catch (e) {
+    return send({ error: e.message }, 400);
+  }
+}
+
+// shared/lib/match-schedule.ts
+function matchStart(s) {
+  return Date.parse(s.date + "T00:01:00+05:30") + 24 * 60 * 60 * 1e3;
+}
+function matchStartLabel(s) {
+  return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short" }).format(matchStart(s)) + " \xB7 12:01 AM IST";
+}
+function nightReminderSlot(s, now = Date.now()) {
+  const start = matchStart(s);
+  const slots = [{ name: "21", at: start - 181 * 6e4, end: start - 171 * 6e4 }, { name: "22", at: start - 121 * 6e4, end: start - 111 * 6e4 }, { name: "23", at: start - 61 * 6e4, end: start - 51 * 6e4 }, { name: "midnight", at: start - 6e4, end: start }];
+  return slots.find((slot) => now >= slot.at && now < slot.end);
+}
+
 // shared/lib/awards.ts
 function performanceAward(season, match) {
   const matches = match ? [match] : season.matches;
@@ -821,6 +978,7 @@ function startAttendanceReminders() {
     running = true;
     try {
       if (!await migrationStatus()) return;
+      await maintainDemo();
       attendanceWorkerStatus.clubEvents = await notifyClubEvents();
       attendanceWorkerStatus.clubUpdate = await notifyClubUpdateOnce();
       const reset = await resetAttendanceOnce("rr-season-3", "attendance-reset-2026-09-16-v1");
@@ -1379,10 +1537,10 @@ async function POST4(req) {
 }
 
 // backend/server/render/entry.ts
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 async function handleRoyalRangers(req) {
   const path = new URL(req.url).pathname.split("/").at(-1);
-  if (path === "demo") return Response.json({ error: "Demo retired" }, { status: 410 });
+  if (path === "demo") return handleDemo(req);
   if (path === "health") {
     try {
       const ready2 = await migrationStatus();
@@ -1393,7 +1551,7 @@ async function handleRoyalRangers(req) {
   }
   if (path === "import") {
     const secret = process.env.RR_MIGRATION_TOKEN, actual = req.headers.get("authorization")?.replace(/^Bearer /, "");
-    if (!secret || !actual || actual.length !== secret.length || !timingSafeEqual(Buffer.from(actual), Buffer.from(secret))) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!secret || !actual || actual.length !== secret.length || !timingSafeEqual2(Buffer.from(actual), Buffer.from(secret))) return Response.json({ error: "Not found" }, { status: 404 });
     if (req.method !== "POST") return new Response(null, { status: 405 });
     try {
       return Response.json({ counts: await importSnapshot(await req.json()) });
