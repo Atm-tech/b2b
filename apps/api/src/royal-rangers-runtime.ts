@@ -367,6 +367,9 @@ function statistics(s, matches = s.matches) {
 var TEAM_INFO = { White: { name: "Frost Dragons", captain: "Mudassar", short: "FD", motto: "Ice in the veins. Fire at the crease.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/2a6e7e47c6def9db/teams/frost-dragon-refined.webp", color: "#e0e9ff" }, Black: { name: "Onyx Chimeras", captain: "Javed", short: "OC", motto: "Strike with power. Finish with venom.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/c8586bb0980ae9cd/teams/shadow-chimera-refined.webp", color: "#e2b86b" }, Blue: { name: "Storm Reapers", captain: "Saad", short: "SR", motto: "Every delivery. A reckoning.", crest: "https://royal-rangers-images.royal-rangers-media.workers.dev/images/313f7161f918af92/teams/azure-reaper-refined.webp", color: "#6397ff" } };
 var teamName = (t) => TEAM_INFO[t].name;
 var captains = [{ id: "captain-saad", name: "Saad", team: "Blue" }, { id: "captain-javed", name: "Javed", team: "Black" }, { id: "captain-mudassar", name: "Mudassar", team: "White" }];
+function seasonCaptains(s) {
+  return s?.captainIds ? s.players.filter((p) => s.captainIds.includes(p.id)) : captains;
+}
 function shuffled(items) {
   const a = [...items];
   for (let i = a.length - 1; i > 0; i--) {
@@ -454,7 +457,7 @@ function apply(state, c, permissions = {}) {
     check(!next.seasons.some((x) => x.date === c.date), "A season already exists for this Saturday.");
     check(Number.isInteger(c.overs) && c.overs >= 1 && c.overs <= 50, "Choose 1\u201350 overs.");
     const prev = next.seasons[0];
-    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(captains), points: prev ? { ...defaultPoints, ...prev.points } : { ...defaultPoints }, matches: [] });
+    next.seasons.unshift({ id: crypto.randomUUID(), number: Math.max(2, ...next.seasons.map((x) => x.number || 0)) + 1, published: false, date: c.date, overs: c.overs, players: structuredClone(seasonCaptains(prev)), captainIds: seasonCaptains(prev).map((p) => p.id), points: prev ? { ...defaultPoints, ...prev.points } : { ...defaultPoints }, matches: [] });
     return next;
   }
   check(s, "Season not found.");
@@ -471,7 +474,7 @@ function apply(state, c, permissions = {}) {
     check(TEAMS.includes(c.team), "Choose a valid team.");
     check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
     check(!s.players.some((p) => p.id === c.player.id), "This player already has a team. Override only adds unassigned players.");
-    check(!captains.some((p) => p.id === c.player.id), "Captains stay with their own teams.");
+    check(!seasonCaptains(s).some((p) => p.id === c.player.id), "Captains stay with their own teams.");
     check(s.players.filter((p) => p.team === c.team).length < 11, "A squad can have at most 11 players.");
     for (const m of s.matches.filter((m2) => m2.started)) for (const i of [0, 1]) if (inningsDone(s, m, i)) {
       const limit = wicketLimit(s, m, i);
@@ -516,13 +519,13 @@ function apply(state, c, permissions = {}) {
     check(!s.matches.some((m) => m.started), "Teams are locked after play starts.");
     check(TEAMS.includes(c.team) || c.team === "unassigned", "Choose a valid team.");
     check(typeof c.player?.id === "string" && typeof c.player?.name === "string", "Player not found.");
-    check(!captains.some((p) => p.id === c.player.id), "Captains stay with their own teams.");
+    check(!seasonCaptains(s).some((p) => p.id === c.player.id), "Captains stay with their own teams.");
     check(c.team === "unassigned" || s.players.filter((p) => p.team === c.team && p.id !== c.player.id).length < 11, "A squad can have at most 11 players.");
     s.players = s.players.filter((p) => p.id !== c.player.id);
     if (c.team !== "unassigned") s.players.push({ id: c.player.id, name: c.player.name, team: c.team });
   } else if (c.type === "remove") {
     check(!s.matches.some((m) => m.started), "Squads are locked after play starts.");
-    check(!captains.some((p) => p.id === c.player), "Captains stay with their own teams.");
+    check(!seasonCaptains(s).some((p) => p.id === c.player), "Captains stay with their own teams.");
     check(!s.matches.length, "Squads are locked after fixtures are created.");
     s.players = s.players.filter((p) => p.id !== c.player);
   } else if (c.type === "fixtures") {
@@ -1172,14 +1175,14 @@ function visibleTournament(state, viewer) {
     const historical = index > 0 && s.published === void 0 && s.squadsPublished === void 0 && s.matches.some((m) => m.started);
     const squads = privileged || historical || seasonPublished(s);
     const fixtures = squads && (privileged || historical || (s.fixturesPublished ?? s.published === true));
-    return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, fixtureFormat: s.fixtureFormat, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
+    return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, captainIds: s.captainIds, reserves: squads ? s.reserves : void 0, fixtureFormat: s.fixtureFormat, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
   }) };
 }
 
 // backend/server/balance.ts
 var attrs = ["batting", "bowling", "fielding"];
-function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296) {
-  const selected = [.../* @__PURE__ */ new Set([...captains.map((c) => c.id), ...ids])];
+function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296, captains2 = captains) {
+  const selected = [.../* @__PURE__ */ new Set([...captains2.map((c) => c.id), ...ids])];
   if (selected.length < 6 || selected.length > 33) throw new Error("Select 6 to 33 available players, including the three captains.");
   if (selected.some((id) => !pool2.some((p) => p.id === id))) throw new Error("A selected player is not in the current ratings pool. Reload the Cricket Council.");
   const players = selected.map((id) => pool2.find((p) => p.id === id));
@@ -1196,13 +1199,13 @@ function balancedSquads(pool2, ids, random = () => crypto.getRandomValues(new Ui
     }
     return a;
   };
-  const loose = players.filter((p) => !captains.some((c) => c.id === p.id));
+  const loose = players.filter((p) => !captains2.some((c) => c.id === p.id));
   let best = [], bestLoss = Infinity;
   for (let attempt = 0; attempt < 100; attempt++) {
     const order = shuffle([...TEAMS]), sizes = Object.fromEntries(TEAMS.map((t) => [t, Math.floor(players.length / 3)]));
     for (let i = 0; i < players.length % 3; i++) sizes[order[i]]++;
     const slots = shuffle(TEAMS.flatMap((t) => Array.from({ length: sizes[t] - 1 }, () => t)));
-    const deal = [...captains.map((p) => ({ ...p })), ...shuffle([...loose]).map((p, i) => ({ id: p.id, name: p.name, team: slots[i] }))];
+    const deal = [...captains2.map((p) => ({ ...p })), ...shuffle([...loose]).map((p, i) => ({ id: p.id, name: p.name, team: slots[i] }))];
     const loss = () => {
       const totals = TEAMS.map((t) => attrs.map((_, i) => deal.filter((p) => p.team === t).reduce((s, p) => s + vectors.get(p.id)[i], 0)));
       return totals.reduce((sum, v) => sum + v.reduce((s, n, i) => s + ((n - targets[i]) / Math.max(1, targets[i])) ** 2, 0), 0);
@@ -1404,7 +1407,7 @@ async function POST2(req) {
       if (command.ratingsRevision !== ratings.revision) return Response.json({ error: "Ratings changed. Reload the Cricket Council before balancing." }, { status: 409 });
       if (season.availabilityClosed || season.squadsPublishedAt || season.publishedAt || season.squadsPublished || season.published) throw new Error("Squads have been published. Make replacements manually.");
       if (command.playerIds.some((id) => season.availability?.[id] !== "available")) throw new Error("Only confirmed available players can be balanced. Reload availability before selecting.");
-      const players = balancedSquads(ratings.players, command.playerIds);
+      const players = balancedSquads(ratings.players, command.playerIds, void 0, seasonCaptains(season));
       state = structuredClone(current.state);
       state.seasons.find((s) => s.id === command.season).players = players;
       state.seasons.find((s) => s.id === command.season).published = false;
