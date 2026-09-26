@@ -224,6 +224,9 @@ function batting(m, i) {
 function wicketLimit(s, m, i) {
   return m.closedInningsWickets?.[i] ?? Math.max(1, s.players.filter((p) => p.team === batting(m, i)).length - 1);
 }
+function canUndoStart(s, m) {
+  return m.started && m.innings.every((i) => i.length === 0) && !m.deadBalls?.length && !m.secondInningsStarted && !m.advancingTeam && !m.closedInningsWickets?.some((n) => n !== null) && !s.matches.slice(s.matches.indexOf(m) + 1).some((x) => x.started);
+}
 function inningsDone(s, m, i) {
   const x = summary(m.innings[i]);
   return x.balls >= m.overs * 6 || x.wickets >= wicketLimit(s, m, i) || i === 1 && x.runs > summary(m.innings[0]).runs;
@@ -578,6 +581,13 @@ function apply(state, c, permissions = {}) {
       m.started = true;
       m.pauseBetweenInnings = c.pauseBetweenInnings === true;
       m.secondInningsStarted = false;
+    } else if (c.type === "undo-start") {
+      check(canUndoStart(s, m), "Only an empty match can return to the toss. Undo recorded entries first.");
+      m.started = false;
+      m.secondInningsStarted = false;
+      delete m.pauseBetweenInnings;
+      delete m.closedInningsWickets;
+      m.first = m.home;
     } else if (c.type === "next-innings") {
       check(phase(s, m) === 1 && !m.innings[1].length && !m.secondInningsStarted, "Next innings is not awaiting a start.");
       m.secondInningsStarted = true;
@@ -1164,7 +1174,7 @@ __export(route_exports2, {
 });
 
 // shared/lib/offline-score.ts
-var OFFLINE_ACTIONS = /* @__PURE__ */ new Set(["start", "next-innings", "ball", "undo", "dead", "advance-tie"]);
+var OFFLINE_ACTIONS = /* @__PURE__ */ new Set(["start", "undo-start", "next-innings", "ball", "undo", "dead", "advance-tie"]);
 function scoreBase(s) {
   return { id: s.id, players: s.players, matches: s.matches, points: s.points, overs: s.overs, fixtureFormat: s.fixtureFormat, drawOrder: s.drawOrder, captainIds: s.captainIds };
 }
@@ -1454,7 +1464,7 @@ async function POST2(req) {
     const db = database();
     const current = await read();
     if (current.revision !== revision) return Response.json({ error: "Scores changed in another tab. Reload the latest scores before continuing." }, { status: 409 });
-    if (["start", "next-innings", "ball", "undo", "dead", "advance-tie"].includes(command.type)) {
+    if (["start", "undo-start", "next-innings", "ball", "undo", "dead", "advance-tie"].includes(command.type)) {
       const match = current.state.seasons.find((s) => s.id === command.season)?.matches.find((m) => m.id === command.match);
       if (!match) throw new Error("Match not found.");
       if (!scoringAllowed(a.user.userId, a.committee, match)) throw new AccessError("Only alpha can start, score or undo this match.");
