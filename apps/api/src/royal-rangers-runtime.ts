@@ -439,7 +439,7 @@ function syncFinal(s) {
     s.matches = s.matches.filter((m) => m.label !== "Final");
     return;
   }
-  if (!s.drawOrder) s.drawOrder = shuffled([...TEAMS]);
+  if (!s.drawOrder) s.drawOrder = [...TEAMS];
   const [a, b] = standings(s);
   if (final) {
     final.home = a.team;
@@ -447,7 +447,7 @@ function syncFinal(s) {
     final.first = a.team;
     return;
   }
-  s.matches.push({ id: crypto.randomUUID(), home: a.team, away: b.team, first: a.team, overs: s.overs, label: "Final", started: false, innings: [[], []] });
+  s.matches.push({ id: s.id + "-final", home: a.team, away: b.team, first: a.team, overs: s.overs, label: "Final", started: false, innings: [[], []] });
 }
 function apply(state, c, permissions = {}) {
   const next = structuredClone(state);
@@ -1163,6 +1163,29 @@ __export(route_exports2, {
   dynamic: () => dynamic
 });
 
+// shared/lib/offline-score.ts
+var OFFLINE_ACTIONS = /* @__PURE__ */ new Set(["start", "next-innings", "ball", "undo", "dead", "advance-tie"]);
+function scoreBase(s) {
+  return { id: s.id, players: s.players, matches: s.matches, points: s.points, overs: s.overs, fixtureFormat: s.fixtureFormat, drawOrder: s.drawOrder, captainIds: s.captainIds };
+}
+function stable(value) {
+  if (Array.isArray(value)) return "[" + value.map(stable).join(",") + "]";
+  if (value && typeof value === "object") return "{" + Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ":" + stable(v)).join(",") + "}";
+  return JSON.stringify(value) ?? "null";
+}
+function replay(snapshot, commands) {
+  return { revision: snapshot.revision, state: commands.reduce((state, c) => {
+    if (!OFFLINE_ACTIONS.has(c.type)) throw Error("This action needs a connection.");
+    return apply(state, c);
+  }, snapshot.state) };
+}
+function applyScoreBatch(snapshot, base, commands) {
+  if (!Array.isArray(commands) || commands.length < 1 || commands.length > 32) throw Error("Send 1 to 32 scoring actions.");
+  const season = snapshot.state.seasons.find((s) => s.id === commands[0]?.season);
+  if (!season || commands.some((c) => c.season !== season.id) || stable(scoreBase(season)) !== stable(base)) throw Error("The live score or squad changed on another device. Your saved balls are safe. Review before continuing.");
+  return replay(snapshot, commands);
+}
+
 // backend/server/publication.ts
 function seasonPublished(s) {
   return s.squadsPublished ?? s.published === true;
@@ -1177,6 +1200,46 @@ function visibleTournament(state, viewer) {
     const fixtures = squads && (privileged || historical || (s.fixturesPublished ?? s.published === true));
     return { availabilityClosed: !!(s.availabilityClosed || s.squadsPublishedAt || s.publishedAt || seasonPublished(s) || s.matches.some((m) => m.started)), availability: viewer.userId === "committee-alpha" && viewer.committee === "Alpha" ? s.availability : viewer.playerId && s.availability?.[viewer.playerId] ? { [viewer.playerId]: s.availability[viewer.playerId] } : {}, captainIds: s.captainIds, reserves: squads ? s.reserves : void 0, fixtureFormat: s.fixtureFormat, id: s.id, number: s.number, date: s.date, overs: s.overs, points: s.points, published: s.published, squadsPublished: s.squadsPublished, fixturesPublished: s.fixturesPublished, squadsPublishedAt: squads ? s.squadsPublishedAt : void 0, publicationHidden: !squads, fixturesHidden: !fixtures, players: squads ? s.players : [], matches: fixtures ? s.matches : [], ...fixtures ? { drawOrder: s.drawOrder } : {} };
   }) };
+}
+
+// backend/server/score-batch.ts
+async function saveScoreBatch(req, input, read2) {
+  const a = await committee(req);
+  if (typeof input.batchId !== "string" || !/^[-a-zA-Z0-9]{16,80}$/.test(input.batchId)) throw Error("Invalid score batch.");
+  const db = database(), key = "score-batch:" + a.user.userId + ":" + input.batchId, fingerprint = await digest(stable({ base: input.base, commands: input.commands }));
+  const receipt = await db.prepare("SELECT data FROM push_settings WHERE id=?").bind(key).first();
+  const response2 = async () => {
+    const current2 = await read2();
+    return Response.json({ ...current2, state: visibleTournament(current2.state, { userId: a.user.userId, committee: a.committee, playerId: a.member?.player_id }), ack: input.batchId }, { headers: { "Cache-Control": "no-store" } });
+  };
+  if (receipt) {
+    if (JSON.parse(receipt.data).fingerprint !== fingerprint) throw new AccessError("This batch ID was used for different balls.", 409);
+    return response2();
+  }
+  const current = await read2();
+  let next;
+  try {
+    next = applyScoreBatch(current, input.base, input.commands);
+  } catch (e) {
+    throw new AccessError(e.message, 409);
+  }
+  const season = next.state.seasons.find((s) => s.id === input.commands[0].season);
+  const notifications = await Promise.all(changedNotifications(current.state.seasons.find((s) => s.id === season.id), season).map(async (message) => {
+    const body = JSON.stringify({ seasonId: season.id, message });
+    return db.prepare("INSERT INTO push_settings(id,data) SELECT ?,? WHERE (SELECT revision FROM tournaments WHERE id=?)=? ON CONFLICT(id) DO NOTHING").bind("notification:" + await digest(body), JSON.stringify({ seasonId: season.id, message, expires: Date.now() + 864e5 }), "royal-rangers", current.revision);
+  }));
+  const saved = await db.batch([
+    ...notifications,
+    db.prepare("UPDATE seasons SET data=? WHERE id=? AND (SELECT revision FROM tournaments WHERE id=?)=?").bind(JSON.stringify(season), season.id, "royal-rangers", current.revision),
+    db.prepare("INSERT INTO push_settings(id,data) SELECT ?,? WHERE (SELECT revision FROM tournaments WHERE id=?)=? ON CONFLICT(id) DO NOTHING").bind(key, JSON.stringify({ fingerprint, at: Date.now() }), "royal-rangers", current.revision),
+    db.prepare("INSERT INTO audit_log(id,actor,action,season,created_at) SELECT ?,?,?,?,? WHERE (SELECT revision FROM tournaments WHERE id=?)=?").bind(crypto.randomUUID(), "Alpha", `Synced ${input.commands.length} scoring actions`, season.id, Date.now(), "royal-rangers", current.revision),
+    db.prepare("UPDATE tournaments SET revision=revision+1 WHERE id=? AND revision=?").bind("royal-rangers", current.revision)
+  ]);
+  if (!saved.at(-1).meta.changes) {
+    const again = await db.prepare("SELECT data FROM push_settings WHERE id=?").bind(key).first();
+    if (!again || JSON.parse(again.data).fingerprint !== fingerprint) throw new AccessError("Scores changed while syncing. Retry the saved batch.", 409);
+  }
+  return response2();
 }
 
 // backend/server/balance.ts
@@ -1368,8 +1431,13 @@ async function POST2(req) {
   try {
     sameOrigin(req);
     const raw = await req.text();
-    if (raw.length > 2e4) return Response.json({ error: "Request too large." }, { status: 413 });
-    const { command, revision } = JSON.parse(raw);
+    if (raw.length > 25e4) return Response.json({ error: "Request too large." }, { status: 413 });
+    const input = JSON.parse(raw);
+    if (input.batchId) {
+      await initialize2();
+      return await saveScoreBatch(req, input, read);
+    }
+    const { command, revision } = input;
     if (!command || !Number.isInteger(revision)) throw new Error("Invalid request.");
     const a = command.type === "availability" ? await actor(req) : await committee(req);
     if (command.type === "availability") {
