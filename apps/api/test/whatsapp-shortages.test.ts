@@ -87,7 +87,7 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
   const pool=new pg.Pool({...config,options:`-c search_path=${schema}`});
   const service=createShortageService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
   const confirmations=createConfirmationService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
-  const packing=createPackingService({query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
+  const packing=createPackingService({reviewsEnabled:true,query:(sql,params)=>pool.query(sql,params),transaction:async run=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await run(c);await c.query('COMMIT');return result;}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}}});
   const warehouse={id:3,fullName:'Warehouse',role:'Warehouse Manager',roles:['Warehouse Manager'],warehouseIds:['C21']};
   const sales={id:1,username:"sales",fullName:"Sales",role:"Sales",roles:["Sales"]};
   const purchaser={id:2,username:"purchase",fullName:"Purchaser",role:"Purchaser",roles:["Purchaser"]};
@@ -375,7 +375,7 @@ test("shortage lifecycle against isolated local PostgreSQL",{skip:process.env.SH
       await assert.rejects(()=>packing.report(review.id,recheck(review,60,6),{...warehouse,warehouseIds:['OTHER']}));
       await assert.rejects(()=>packing.report(review.id,recheck(review,60,6),sales));
       await assert.rejects(()=>packing.finalize(review.id,warehouse));
-      await assert.rejects(()=>assertNoPackingHold(pool,[cart]),/recheck is unresolved/);
+      await assert.rejects(()=>assertNoPackingHold(pool,[cart],true),/recheck is unresolved/);
       await packing.report(review.id,recheck(review,60,6),warehouse);await packing.finalize(review.id,warehouse);
       assert.equal((await pool.query('SELECT quantity FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].quantity,60);
       await packing.finalize(review.id,warehouse);assert.equal((await pool.query('SELECT count(*)::int AS n FROM delivery_dockets WHERE sales_order_id=$1',[review.original_json[0].id])).rows[0].n,1);

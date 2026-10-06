@@ -4205,12 +4205,13 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
 
   await withTransaction(async (client) => {
     if (payload.beforePacking) {
+      await assertNoPackingHold(client,[orderId]);
       const current = await query<Record<string, unknown>>("SELECT id, quantity, status FROM sales_orders WHERE cart_id = $1 OR id = $1 FOR UPDATE", [orderId], client);
       const docket = await one<Record<string, unknown>>("SELECT id FROM delivery_dockets WHERE sales_order_id = ANY($1::text[]) LIMIT 1", [current.rows.map((line) => stringValue(line.id))], client);
       if (!current.rows.length || docket || current.rows.some((line) => stringValue(line.status) !== "Booked")) throw new Error("Amend is available only before Packed.");
       if (current.rows.length !== payload.beforePacking.length || current.rows.some((line) => !payload.beforePacking!.some((original) => original.id === stringValue(line.id) && original.quantity === numberValue(line.quantity)))) throw new Error("SO changed. Select the order again before amending.");
     }
-    await assertNoPackingHold(client,[orderId]);
+    if (!payload.beforePacking) await assertNoPackingHold(client,[orderId]);
     const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
     const currentQtyByKey = new Map<string, number>();
     const nextQtyByKey = new Map<string, number>();

@@ -5,7 +5,7 @@ import { api, formatDateTimeIst } from '../../app/shared';
 import { Panel } from '../../components/ui';
 type Line={id:string;product_sku:string;product_name:string;quantity:number;total_amount:number};
 type Review={id:string;cart_id:string;warehouse_id:string;retailer_name:string;salesman_name:string;status:string;revision:number;original_json:Line[];report_json?:{changed:boolean;machineBroken:boolean;lines:Array<{id:string;quantity:number;issue:string}>};reason:string;expected_weight:number;measured_weight?:number;override_reason:string;override_approved_by?:string;balance_choice?:string;balance_draft_id?:string;proposed_total?:number;credit_amount:number;failed_notifications:number;events:Array<{id:number;action:string;actor:string;note:string;created_at:string}>};
-type Register={cases:Review[];canWarehouse:boolean;canSales:boolean;canOverride:boolean};
+type Register={cases:Review[];canWarehouse:boolean;canSales:boolean;canOverride:boolean;enabled?:boolean};
 type Act=(id:string,action:string,body:Record<string,unknown>)=>Promise<void>;
 function PackingCard({item,permissions,busy,act}:{item:Review;permissions:Register;busy:boolean;act:Act}) {
   const [quantities,setQuantities]=useState<Record<string,string>>({});const [issues,setIssues]=useState<Record<string,string>>({});const [weight,setWeight]=useState('');const [broken,setBroken]=useState(false);const [note,setNote]=useState('');const [balance,setBalance]=useState('Pending');
@@ -44,6 +44,7 @@ export function PackingRegister({snapshot,sessionToken}:{snapshot:AppSnapshot;se
   const refresh=useCallback(async()=>{if(busyRef.current)return;const current=++sequence.current;try{const {data}=await api.get<Register>('/whatsapp/packing-reviews',{headers:{authorization:`Bearer ${sessionToken}`}});if(current===sequence.current){setRegister(data);setError('');}}catch(error){if(current===sequence.current)setError(message(error));}finally{if(current===sequence.current)setLoading(false);}},[sessionToken]);
   useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),30_000);return()=>{window.clearInterval(timer);sequence.current++;};},[refresh]);
   const act:Act=async(id,action,body)=>{busyRef.current=true;setBusy(true);++sequence.current;try{const {data}=await api.post<Register>(`/whatsapp/packing-reviews/${encodeURIComponent(id)}/${action}`,body,{headers:{authorization:`Bearer ${sessionToken}`}});setRegister(data);setError('');}catch(error){setError(message(error));}finally{busyRef.current=false;setBusy(false);}};
+  if (!loading && register.enabled === false) return null;
   const orders=Array.from(new Map(snapshot.salesOrders.filter(order=>order.status==='Booked'&&order.deliveryMode==='Delivery'&&order.note.startsWith('WhatsApp confirmed order WAD-')&&!snapshot.deliveryDockets.some(docket=>docket.salesOrderId===order.id)&&!register.cases.some(item=>item.cart_id===(order.cartId||order.id))).map(order=>[order.cartId||order.id,order])).entries());
   const visible=register.cases.filter(item=>`${item.cart_id} ${item.retailer_name} ${item.status}`.toLowerCase().includes(filter.toLowerCase()));
   return <div className="shortage-register"><Panel title="Packing rechecks" eyebrow="Warehouse findings / Sales review / Admin oversight">

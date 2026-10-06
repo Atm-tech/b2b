@@ -1,10 +1,10 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { calculateSalesAmounts } from "@aapoorti-b2b/domain";
-import { lockPackingCart } from "./packing-guards.js";
+import { lockPackingCart, packingReviewsEnabled } from "./packing-guards.js";
 type Db=Pick<PoolClient,'query'>;
 type Actor={id:number;fullName:string;role:string;roles:string[];warehouseIds?:string[]};
-type Deps={query:(sql:string,params?:unknown[])=>Promise<{rows:any[];rowCount:number|null}>;transaction:<T>(fn:(db:Db)=>Promise<T>)=>Promise<T>};
+type Deps={reviewsEnabled?:boolean;query:(sql:string,params?:unknown[])=>Promise<{rows:any[];rowCount:number|null}>;transaction:<T>(fn:(db:Db)=>Promise<T>)=>Promise<T>};
 const key=(prefix:string)=>`${prefix}-${randomUUID()}`;
 const has=(actor:Actor,role:string)=>[actor.role,...actor.roles].includes(role);
 export type PackingReport={lines:Array<{id:string;quantity:number;issue:'None'|'Missing'|'Damaged'}>;weight:number|null;reason:string;machineBroken:boolean};
@@ -14,6 +14,10 @@ function amounts(line:any,qty:number) {
   return calculateSalesAmounts({quantity:qty,rate:Number(line.rate),cdTodRate:Number(line.cd_tod_rate),cdAmount:Number(line.cd_amount)*ratio,todAmount:Number(line.tod_amount)*ratio,gstRate:Number(line.gst_rate) as 0,taxMode:line.tax_mode});
 }
 export function createPackingService(deps:Deps) {
+  if (!(deps.reviewsEnabled ?? packingReviewsEnabled)) {
+    const disabled = async (..._args: unknown[]): Promise<any> => { throw new Error('Packing reviews are disabled. Use Amend before Packed, then pack directly.'); };
+    return { open: disabled, report: disabled, act: disabled, retailerDecision: disabled, finalize: disabled, list: async (..._args: unknown[]) => ({ cases: [] as any[], canWarehouse: false, canSales: false, canOverride: false, enabled: false }) };
+  }
   async function event(db:Db,id:string,action:string,actor:string,note=''){await db.query('INSERT INTO whatsapp_packing_events(case_id,action,actor,note) VALUES($1,$2,$3,$4)',[id,action,actor,note]);}
   async function notify(db:Db,row:any,kind:string){await db.query('INSERT INTO whatsapp_packing_notifications(id,case_id,revision,kind) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING',[`${row.id}:${row.revision}:${kind}`,row.id,row.revision,kind]);}
   function warehouse(row:any,actor:Actor,admin:boolean){if(!admin&&(!has(actor,'Warehouse Manager')||(actor.warehouseIds?.length&&!actor.warehouseIds.includes(row.warehouse_id))))throw new Error('Warehouse access is required for this order.');}

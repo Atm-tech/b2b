@@ -1,6 +1,7 @@
 import {createWhatsAppOutbox} from './whatsapp-outbox.js';
 import {createOrderClosureService} from './whatsapp-order-closure.js';
 import { createPackingService } from "./whatsapp-packing.js";
+import { packingReviewsEnabled } from "./packing-guards.js";
 import { createDeliveryExceptionService } from "./delivery-exceptions.js";
 import { createConfirmationService } from "./whatsapp-confirmations.js";
 import { createShortageService, type ShortageChoice } from "./whatsapp-shortages.js";
@@ -2040,6 +2041,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if(action.startsWith("wa-so:finalize:")) {
+    if (!packingReviewsEnabled) { await sendText(from, "Packing reviews disabled hain. SO se Amend ya Packed select karein."); return true; }
     const cartId=decodeURIComponent(action.split(':')[2]||'');
     const review=await packingService.open(cartId,user,isWhatsAppAdminUser(user));
     await packingService.finalize(review.id,user,isWhatsAppAdminUser(user));
@@ -4721,6 +4723,7 @@ async function sendPackingRecheckInstructions(phone:string,review:any) {
 
 let packingSweepRunning=false;
 export async function processWhatsAppPackingReviews() {
+  if (!packingReviewsEnabled) return;
   if(packingSweepRunning)return;packingSweepRunning=true;
   try {
     for(let index=0;index<30;index++) {

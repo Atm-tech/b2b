@@ -16,11 +16,12 @@ test("transaction rejects packed, stale and missing orders before changing quant
       stringValue: String, numberValue: Number, mapSettings: async () => ({}),
       withTransaction: async (fn: any) => fn({}),
       query: async (sql: string) => {
+        if (/^(UPDATE|DELETE|INSERT)/i.test(sql)) mutations++;
         assert.match(sql, /SELECT.*FOR UPDATE/);
         return { rows: scenario === "missing" ? [] : [{ id: "SO-1", quantity: scenario === "stale" ? 9 : 10, status: scenario === "status" ? "Ready for Dispatch" : "Booked" }] };
       },
       one: async () => scenario === "docket" ? { id: "DCK-1" } : undefined,
-      assertNoPackingHold: async () => { mutations++; },
+      assertNoPackingHold: async () => {},
       getSnapshot: async () => ({})
     };
     const update = new Function(...Object.keys(deps), `${code};return updateSalesOrderGroup;`)(...Object.values(deps));
