@@ -1614,7 +1614,7 @@ function collectionRemaining(stop: DeliveryRouteStop) {
 }
 
 function packingResultButtons(cartId: string, verified: boolean) {
-  if (!packingWeightCheckEnabled) return [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }];
+  if (!packingWeightCheckEnabled) return [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }, { id: `wa-so:amend:${encodeURIComponent(cartId)}`, title: "Amend" }];
   return [...(verified ? [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }] : []), { id: `wa-so:recheck:${encodeURIComponent(cartId)}`, title: "Recheck" }];
 }
 
@@ -2008,6 +2008,20 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     await sendButtons(from, `*SO ${shortId(cartId)}*\n${lines[0].shopName}\n${lines.map((line) => `${line.productSku} x ${line.quantity}`).join("\n")}\n\nExpected weight: ${expectedKg.toFixed(3)} kg.\n${testOrder ? "Test order: Enter weight se manually kg daalein, ya weight photo bhejein." : "Packed maal ki weight photo bhejein."} Weight verify hone ke baad Packed button aayega.`, [...(testOrder ? [{ id: `wa-so:weight:${encodeURIComponent(cartId)}`, title: "Enter weight" }] : []), { id: `wa-so:recheck:${encodeURIComponent(cartId)}`, title: "Recheck" }], "WarehouseSO", cartId);
     return true;
   }
+  if (action.startsWith("wa-so:amend:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const cartId = decodeURIComponent(action.slice("wa-so:amend:".length));
+    const snapshot = await getSnapshot(user);
+    const lines = snapshot.salesOrders.filter((line) => (line.cartId || line.id) === cartId);
+    if (!lines.length || lines.some((line) => line.status !== "Booked") || snapshot.deliveryDockets.some((docket) => lines.some((line) => line.id === docket.salesOrderId))) {
+      packingChangePending.delete(from);
+      await sendText(from, "Amend sirf Packed se pehle available hai. SO se fresh order select karein."); return true;
+    }
+    packingChangePending.set(from, { cartId, sku: "" });
+    packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
+    await sendText(from, `SO ${shortId(cartId)} quantity amend:\n${lines.map((line) => `${line.productSku}: ${line.quantity}`).join("\n")}\n\nAMEND SKU quantity bhejein, example: AMEND ${lines[0].productSku} 8. Save ke liye sales owner/Admin access chahiye. Cancel ke liye SO bhejein.`, "WarehouseSO", cartId);
+    return true;
+  }
   if (action.startsWith("wa-so:weight:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
     const cartId = decodeURIComponent(action.slice("wa-so:weight:".length));
@@ -2052,7 +2066,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
       await sendText(from, `SO ${shortId(cartId)} Packed nahi hua: ${error instanceof Error ? error.message : "Please retry from the SO list."}`, "WarehouseSO", cartId);
       return true;
     }
-    staffProofs.delete(from); packingPhotoPending.delete(from);
+    packingChangePending.delete(from); staffProofs.delete(from); packingPhotoPending.delete(from);
     packingWeightResults.delete(from); packingPhotoProofs.delete(from); packingManualWeightPending.delete(from);
     await sendText(from, `SO ${shortId(cartId)} packed and ready. Aur SO pack karein, ya DCO type karke ready SO select karke bundle banayein.`, "WarehouseSO", cartId);
     return true;
@@ -2204,6 +2218,34 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const snapshot = await getSnapshot(user);
   const matchSuffix = (value: string, suffix: string) => value.toUpperCase().endsWith(suffix.toUpperCase());
 
+  if (warehouseUser && /^AMEND(?:\s|$)/i.test(command)) {
+    const pending = packingChangePending.get(from);
+    if (!pending) { await sendText(from, "SO select karke Amend dabayein, phir quantity bhejein."); return true; }
+    const match = /^AMEND\s+(\S+)\s+(\d+(?:\.\d+)?)$/i.exec(command);
+    const quantity = Number(match?.[2]);
+    const lines = snapshot.salesOrders.filter((line) => (line.cartId || line.id) === pending.cartId);
+    const selected = lines.filter((line) => line.productSku.toUpperCase() === match?.[1].toUpperCase());
+    if (!match || !Number.isFinite(quantity) || quantity <= 0 || selected.length !== 1) { await sendText(from, "Valid SKU aur positive quantity bhejein: AMEND SKU 8. Product isi SO ka hona chahiye."); return true; }
+    if (lines.some((line) => line.status !== "Booked") || snapshot.deliveryDockets.some((docket) => lines.some((line) => line.id === docket.salesOrderId))) {
+      packingChangePending.delete(from); await sendText(from, "Amend sirf Packed se pehle available hai."); return true;
+    }
+    let revisedBill = 0;
+    try {
+      const first = lines[0];
+      const updated = await updateSalesOrderGroup(pending.cartId, {
+        beforePacking: lines.map((line) => ({ id: line.id, quantity: line.quantity })), paymentMode: first.paymentMode, cashTiming: first.cashTiming, deliveryMode: first.deliveryMode, note: first.note, status: "Booked",
+        lines: lines.map((line) => {
+          const nextQuantity = line.id === selected[0].id ? quantity : line.quantity;
+          return { ...line, quantity: nextQuantity, cdAmount: line.cdAmount * nextQuantity / line.quantity, todAmount: line.todAmount * nextQuantity / line.quantity };
+        })
+      }, user);
+      revisedBill = updated.salesOrders.filter((line) => (line.cartId || line.id) === pending.cartId).reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
+    } catch (error) { await sendText(from, `Amend save nahi hua: ${error instanceof Error ? error.message : "Try again."}`); return true; }
+    packingChangePending.delete(from);
+    await sendButtons(from, `SO ${shortId(pending.cartId)} amended: ${selected[0].productSku} ${selected[0].quantity} → ${quantity}.\nRevised bill: Rs.${revisedBill.toFixed(2)}\nQuantity aur bill check karke Packed select karein.`, packingResultButtons(pending.cartId, !packingWeightCheckEnabled), "WarehouseSO", pending.cartId);
+    return true;
+  }
+
   const cashSession = cashCollectionPending.get(from);
   if (deliveryUser && cashSession) {
     const count = Number(command);
@@ -2285,6 +2327,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
+    packingChangePending.delete(from);
     const suffix = normalized.slice(2).trim(); const carts = new Map<string, typeof snapshot.salesOrders>();
     for (const order of unpackedWhatsAppSalesOrders(snapshot.salesOrders, snapshot.deliveryDockets)) {
       const key = order.cartId || order.id;
