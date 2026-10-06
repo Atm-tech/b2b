@@ -1614,6 +1614,7 @@ function collectionRemaining(stop: DeliveryRouteStop) {
 }
 
 function packingResultButtons(cartId: string, verified: boolean) {
+  if (!packingWeightCheckEnabled) return [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }];
   return [...(verified ? [{ id: `wa-so:packed:${encodeURIComponent(cartId)}`, title: "Packed" }] : []), { id: `wa-so:recheck:${encodeURIComponent(cartId)}`, title: "Recheck" }];
 }
 
@@ -2057,6 +2058,10 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if (["wa-so:recheck:","wa-so:change:","wa-so:line:"].some(prefix=>action.startsWith(prefix))) {
+    if (!packingWeightCheckEnabled) {
+      await sendText(from, "Recheck abhi disabled hai. SO type karke order select karein aur Packed dabayein.");
+      return true;
+    }
     const cartId=decodeURIComponent(action.split(":")[2]||"");
     const review=await packingService.open(cartId,user,isWhatsAppAdminUser(user));
     packingPhotoPending.delete(from);packingManualWeightPending.delete(from);packingWeightResults.delete(from);packingPhotoProofs.delete(from);staffProofs.delete(from);
@@ -2276,7 +2281,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if (warehouseUser && (normalized === "OUT" || normalized.startsWith("OUT ") || normalized.startsWith("READY "))) {
-    await sendText(from, "Warehouse outbound ka verified flow SO se chalta hai. SO type karke order select karein, weight photo bhejein, phir Packed/Change select karein.", "WarehouseSO");
+    await sendText(from, packingWeightCheckEnabled ? "Warehouse outbound ka verified flow SO se chalta hai. SO type karke order select karein, weight photo bhejein, phir Packed/Change select karein." : "SO type karke order select karein aur Packed dabayein. Phir DCO banayein.", "WarehouseSO");
     return true;
   }
   if (warehouseUser && (normalized === "SO" || normalized.startsWith("SO "))) {
@@ -2287,10 +2292,11 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     const rows = [...carts.entries()].slice(0, 10);
     if (!rows.length) await sendText(from, "Koi pending-packing SO nahi mila. Packed SO se DCO banane ke liye DCO type karein.");
-    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: "Sales order select karein. Weight photo, Packed ya Change next aayega." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready SO", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
+    else await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: packingWeightCheckEnabled ? "Sales order select karein. Weight photo, Packed ya Change next aayega." : "Sales order select karein, phir Packed dabayein." }, action: { button: "View SO", sections: [{ title: "Dispatch-ready SO", rows: rows.map(([key, lines]) => ({ id: `wa-so:order:${encodeURIComponent(key)}`, title: `SO ${shortId(key)}`, description: compact(`${lines[0].shopName} - ${lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")}`, 72) })) }] } } }, "WarehouseSO");
     return true;
   }
   if(warehouseUser && normalized.startsWith("RECHECK ")) {
+    if (!packingWeightCheckEnabled) { await sendText(from, "Recheck abhi disabled hai. SO se Packed karein, phir DCO banayein."); return true; }
     // Format: RECHECK <SO suffix> | <kg or BROKEN> | <reason> | SKU=quantity,SKU=quantity
     const parts=command.split('|').map(part=>part.trim());
     const suffix=parts[0].slice(8).trim();
@@ -2305,6 +2311,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
   if(warehouseUser && normalized.startsWith("CHANGE ")) {
+    if (!packingWeightCheckEnabled) { await sendText(from, "Packing review abhi disabled hai. SO se Packed karein, phir DCO banayein."); return true; }
     const suffix=command.trim().split(/\s+/)[1]||'';
     const order=snapshot.salesOrders.find(item=>item.status==='Booked'&&matchSuffix(item.cartId||item.id,suffix));
     if(!order){await sendText(from,'Select an unpacked sales order before requesting a recheck.');return true;}

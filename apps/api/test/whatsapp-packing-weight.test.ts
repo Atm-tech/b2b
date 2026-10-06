@@ -22,10 +22,16 @@ function fixture(testProduct = true, packingWeightCheckEnabled = true, packingEr
 test("weight checks disabled lets test and normal orders pack directly", async () => {
   for (const testProduct of [true, false]) {
     const f=fixture(testProduct,false); await f.action("wa-so:order:CART-1");
-    assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Packed","Recheck"]);
+    assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Packed"]);
     await f.action("wa-so:packed:CART-1"); assert.deepEqual(f.packed,[{linkedOrderIds:["CART-1"]}]);
     assert.match(f.replies.at(-1).body,/packed and ready/);
   }
+});
+test("old recheck buttons cannot open a review while checks are disabled", async () => {
+  const f=fixture(true,false);
+  await f.action("wa-so:recheck:CART-1");
+  assert.match(f.replies.at(-1).body,/Recheck abhi disabled/);
+  assert.equal(f.packed.length,0);
 });
 test("packing hold is reported to WhatsApp without confirming packing", async () => {
   const f=fixture(true,false,"Packing recheck is unresolved.");
