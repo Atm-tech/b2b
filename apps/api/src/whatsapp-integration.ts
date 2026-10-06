@@ -1604,7 +1604,7 @@ const packingWeightResults = new Map<string, { cartId: string; withinTolerance: 
 const packingWeightCheckEnabled = process.env.WHATSAPP_PACKING_WEIGHT_CHECK === "true";
 const packingPhotoProofs = new Map<string, string>();
 const packingManualWeightPending = new Map<string, { cartId: string; expectedKg: number; toleranceKg: number; manualTest?: boolean }>();
-const packingChangePending = new Map<string, { cartId: string; sku: string }>();
+const packingChangePending = new Map<string, { cartId: string; sku: string; lineId?: string }>();
 const dcoBuildSessions = new Map<string, string[]>();
 const dcoHandoverSelections = new Map<string, { taskId: string; username: string; token: string }>();
 const receiptSessions = new Map<string, { cartId: string; purchaseOrderId: string; sku: string; warehouseId: string; remainingQty: number; stage: "photo" | "quantity" | "weight"; quantity?: number }>();
@@ -2011,7 +2011,9 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   }
   if (action.startsWith("wa-so:amend:")) {
     if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
-    const cartId = decodeURIComponent(action.slice("wa-so:amend:".length));
+    const parts = action.split(":");
+    const cartId = decodeURIComponent(parts[2] || "");
+    const page = Math.max(0, Number(parts[3]) || 0);
     const snapshot = await getSnapshot(user);
     const lines = snapshot.salesOrders.filter((line) => (line.cartId || line.id) === cartId);
     if (!lines.length || lines.some((line) => line.status !== "Booked") || snapshot.deliveryDockets.some((docket) => lines.some((line) => line.id === docket.salesOrderId))) {
@@ -2020,7 +2022,20 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     }
     packingChangePending.set(from, { cartId, sku: "" });
     packingPhotoPending.delete(from); packingManualWeightPending.delete(from); packingWeightResults.delete(from); packingPhotoProofs.delete(from); staffProofs.delete(from);
-    await sendText(from, `SO ${shortId(cartId)} quantity amend:\n${lines.map((line) => `${line.productSku}: ${line.quantity}`).join("\n")}\n\nAMEND SKU quantity bhejein, example: AMEND ${lines[0].productSku} 8. Save ke liye sales owner/Admin access chahiye. Cancel ke liye SO bhejein.`, "WarehouseSO", cartId);
+    const rows = lines.slice(page * 9, page * 9 + 9).map((line) => ({ id: `wa-so:amend-line:${encodeURIComponent(cartId)}:${encodeURIComponent(line.id)}`, title: compact(snapshot.products.find((product) => product.sku === line.productSku)?.name || line.productSku, 24), description: compact(`${line.productSku} | Current qty: ${line.quantity}`, 72) }));
+    if (!rows.length) { await sendText(from, "Products ke liye Amend dobara select karein."); return true; }
+    if (lines.length > page * 9 + 9) rows.push({ id: `wa-so:amend:${encodeURIComponent(cartId)}:${page + 1}`, title: "Next products", description: "Aur products dekhein" });
+    await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `SO ${shortId(cartId)}: quantity change ke liye product select karein.` }, action: { button: "Select product", sections: [{ title: "SO products", rows }] } } }, "WarehouseSO", cartId);
+    return true;
+  }
+  if (action.startsWith("wa-so:amend-line:")) {
+    if (!staffHasRole(user, ["Admin", "Warehouse Manager"])) { await sendText(from, "Warehouse access required hai."); return true; }
+    const parts = action.split(":"); const cartId = decodeURIComponent(parts[2] || ""); const lineId = decodeURIComponent(parts[3] || "");
+    const snapshot = await getSnapshot(user); const lines = snapshot.salesOrders.filter((line) => (line.cartId || line.id) === cartId);
+    const selected = lines.find((line) => line.id === lineId);
+    if (!selected || lines.some((line) => line.status !== "Booked") || snapshot.deliveryDockets.some((docket) => lines.some((line) => line.id === docket.salesOrderId))) { packingChangePending.delete(from); await sendText(from, "Amend sirf Packed se pehle available hai. SO se fresh order select karein."); return true; }
+    packingChangePending.set(from, { cartId, sku: selected.productSku, lineId });
+    await sendText(from, `${selected.productSku}\nCurrent quantity: ${selected.quantity}\nNayi total quantity number mein bhejein, example: 8. Cancel ke liye SO bhejein.`, "WarehouseSO", cartId);
     return true;
   }
   if (action.startsWith("wa-so:weight:")) {
@@ -2220,14 +2235,14 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   const snapshot = await getSnapshot(user);
   const matchSuffix = (value: string, suffix: string) => value.toUpperCase().endsWith(suffix.toUpperCase());
 
-  if (warehouseUser && /^AMEND(?:\s|$)/i.test(command)) {
+  if (warehouseUser && (/^AMEND(?:\s|$)/i.test(command) || (packingChangePending.get(from)?.lineId && /^[-+\d.]/.test(command)))) {
     const pending = packingChangePending.get(from);
     if (!pending) { await sendText(from, "SO select karke Amend dabayein, phir quantity bhejein."); return true; }
     const match = /^AMEND\s+(\S+)\s+(\d+(?:\.\d+)?)$/i.exec(command);
-    const quantity = Number(match?.[2]);
+    const quantity = Number(match ? match[2] : /^\d+(?:\.\d+)?$/.test(command) ? command : NaN);
     const lines = snapshot.salesOrders.filter((line) => (line.cartId || line.id) === pending.cartId);
-    const selected = lines.filter((line) => line.productSku.toUpperCase() === match?.[1].toUpperCase());
-    if (!match || !Number.isFinite(quantity) || quantity <= 0 || selected.length !== 1) { await sendText(from, "Valid SKU aur positive quantity bhejein: AMEND SKU 8. Product isi SO ka hona chahiye."); return true; }
+    const selected = lines.filter((line) => match ? line.productSku.toUpperCase() === match[1].toUpperCase() : line.id === pending.lineId);
+    if (!Number.isFinite(quantity) || quantity <= 0 || selected.length !== 1) { await sendText(from, "Valid positive total quantity bhejein, example: 8. Product isi SO ka hona chahiye."); return true; }
     if (lines.some((line) => line.status !== "Booked") || snapshot.deliveryDockets.some((docket) => lines.some((line) => line.id === docket.salesOrderId))) {
       packingChangePending.delete(from); await sendText(from, "Amend sirf Packed se pehle available hai."); return true;
     }
@@ -2240,7 +2255,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
           const nextQuantity = line.id === selected[0].id ? quantity : line.quantity;
           return { ...line, quantity: nextQuantity, cdAmount: line.cdAmount * nextQuantity / line.quantity, todAmount: line.todAmount * nextQuantity / line.quantity };
         })
-      }, user);
+      }, user, true);
       revisedBill = updated.salesOrders.filter((line) => (line.cartId || line.id) === pending.cartId).reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0);
     } catch (error) { await sendText(from, `Amend save nahi hua: ${error instanceof Error ? error.message : "Try again."}`); return true; }
     packingChangePending.delete(from);

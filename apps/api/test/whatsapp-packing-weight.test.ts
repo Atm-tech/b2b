@@ -12,7 +12,9 @@ function fixture(testProduct = true, packingWeightCheckEnabled = true, packingEr
   const maps = Object.fromEntries(["staffProofs", "deliveryProofPending", "cashCollectionPending", "paymentProofPending", "packingPhotoPending", "packingWeightResults", "packingPhotoProofs", "packingManualWeightPending", "packingChangePending", "dcoBuildSessions", "dcoHandoverSelections", "receiptSessions", "collectionConfirmations"].map((key) => [key, new Map()]));
   const deps = {...maps, packingWeightCheckEnabled, handleDeliveryExceptionMessage:async()=>false, deliveryExceptionService:{list:async()=>({cases:[]})}, packingService:{open:async()=>({id:"CASE",cart_id:"CART-1",original_json:[]})},isWhatsAppAdminUser:()=>false,sendPackingRecheckInstructions:async()=>{replies.push({body:"Recheck required",buttons:[]});}, unpackedWhatsAppSalesOrders, text: (v: unknown) => String(v ?? ""), numberValue: (v: unknown) => Number(v), staffHasRole: () => true, shortId: (s: string) => s,
     getSnapshot: async () => snapshot,
-    updateSalesOrderGroup: async (cartId: string, payload: any) => { if(packingError)throw new Error(packingError); amended.push({cartId,payload}); snapshot.salesOrders[0].quantity=payload.lines[0].quantity; return snapshot; },
+    updateSalesOrderGroup: async (cartId: string, payload: any, _user: any, warehouseQuantityAmend: boolean) => { if(packingError)throw new Error(packingError); amended.push({cartId,payload,warehouseQuantityAmend}); snapshot.salesOrders[0].quantity=payload.lines[0].quantity; return snapshot; },
+    compact: (v: string, n: number) => v.slice(0,n),
+    sendGraphMessage: async (_p: string, message: any) => { replies.push({body: message.interactive.body.text,buttons:[],rows:message.interactive.action.sections[0].rows}); },
     sendText: async (_p: string, body: string) => { replies.push({body,buttons:[]}); },
     sendButtons: async (_p: string, body: string, buttons: any[]) => { replies.push({body,buttons}); },
     executeDatabaseQuery: async () => ({rows:[]}), id: () => "NOTE", createSalesDockets: async (input: any) => {if(packingError)throw new Error(packingError);packed.push(input);}
@@ -43,6 +45,22 @@ test("prepacking amend scales discounts and preserves all bill inputs", async ()
   assert.equal(payload.lines[0].quantity,8); assert.equal(payload.lines[0].cdAmount,40); assert.equal(payload.lines[0].todAmount,16);
   assert.equal(payload.lines[0].gstRate,5); assert.equal(payload.note,"Original order");
   assert.deepEqual(f.replies.at(-1).buttons.map((b:any)=>b.title),["Packed","Amend"]);
+});
+test("warehouse selects a product option then sends only the new quantity", async () => {
+  const f=fixture(true,false); await f.action("wa-so:amend:CART-1");
+  assert.equal(f.replies.at(-1).rows[0].id,"wa-so:amend-line:CART-1:SO-1");
+  await f.action(f.replies.at(-1).rows[0].id); assert.match(f.replies.at(-1).body,/Current quantity: 10/);
+  await f.weight("0"); assert.equal(f.amended.length,0);
+  await f.weight("8"); assert.equal(f.amended[0].payload.lines[0].quantity,8);
+  assert.equal(f.amended[0].warehouseQuantityAmend,true);
+});
+test("all products remain selectable through pagination", async () => {
+  const f=fixture(true,false);
+  for(let i=2;i<=12;i++) f.snapshot.salesOrders.push({...f.snapshot.salesOrders[0],id:`SO-${i}`,productSku:`SKU-${i}`});
+  await f.action("wa-so:amend:CART-1"); assert.equal(f.replies.at(-1).rows.length,10);
+  const next=f.replies.at(-1).rows.at(-1).id; await f.action(next);
+  assert.equal(f.replies.at(-1).rows.length,3);
+  assert.equal(f.replies.at(-1).rows[2].id,"wa-so:amend-line:CART-1:SO-12");
 });
 test("amend rejects invalid quantities and unknown products", async () => {
   const f=fixture(true,false); await f.action("wa-so:amend:CART-1");

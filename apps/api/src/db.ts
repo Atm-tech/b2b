@@ -51,6 +51,7 @@ type CurrentUser = {
   fullName: string;
   role: UserRole;
   roles: UserRole[];
+  warehouseIds?: string[];
 };
 
 type DbClient = Pick<PoolClient, "query">;
@@ -4069,7 +4070,7 @@ export async function updatePurchaseOrder(orderId: string, payload: {
   return getSnapshot();
 }
 
-async function assertSalesOrderEditable(orderId: string, currentUser: CurrentUser, client?: DbClient) {
+async function assertSalesOrderEditable(orderId: string, currentUser: CurrentUser, client?: DbClient, warehouseQuantityAmend = false) {
   const linesResult = await query<Record<string, unknown>>(
     `SELECT *
      FROM sales_orders
@@ -4083,7 +4084,9 @@ async function assertSalesOrderEditable(orderId: string, currentUser: CurrentUse
   const isAdmin = currentUserHasRole(currentUser, "Admin");
   if (!isAdmin) {
     const ownsOrder = linesResult.rows.some((row) => currentUser.id === numberValue(row.salesman_id));
-    if (!ownsOrder) {
+    const warehouseAmendAllowed = warehouseQuantityAmend && currentUserHasRole(currentUser, "Warehouse Manager") && linesResult.rows.every((row) => stringValue(row.status) === "Booked" && (!currentUser.warehouseIds?.length || currentUser.warehouseIds.includes(stringValue(row.warehouse_id))));
+    if (warehouseQuantityAmend && !warehouseAmendAllowed) throw new Error("Warehouse quantity amendment is allowed only for unpacked orders in your assigned warehouse.");
+    if (!ownsOrder && !warehouseAmendAllowed) {
       throw new Error("Only the salesman or admin can edit this sales order.");
     }
     if (linesResult.rows.some((row) => {
@@ -4195,9 +4198,10 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
     gstAmount?: number;
     taxMode?: SalesOrder["taxMode"];
   }>;
-}, currentUser: CurrentUser) {
+}, currentUser: CurrentUser, warehouseQuantityAmend = false) {
   await ready;
-  const editable = await assertSalesOrderEditable(orderId, currentUser);
+  if (warehouseQuantityAmend && !payload.beforePacking) throw new Error("Warehouse quantity amendments require a prepacking check.");
+  const editable = await assertSalesOrderEditable(orderId, currentUser, undefined, warehouseQuantityAmend);
   if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
   const lineMap = new Map(editable.lines.map((line) => [stringValue(line.id), line]));
   const firstLine = editable.lines[0];
