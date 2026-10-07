@@ -34,7 +34,7 @@ export function createDeliveryExceptionService(deps:Deps){
   function agent(row:any,a:Actor,admin:boolean){if(!admin&&(!['Delivery','Out Delivery'].some(r=>has(a,r))||row.agent_username.toLowerCase()!==a.username.toLowerCase()))throw Error('Only the assigned delivery agent can edit this report.');}
   function seller(row:any,a:Actor,admin:boolean){if(!admin&&(!has(a,'Sales')||Number(row.salesman_id)!==a.id))throw Error('Only the assigned seller can decide this report.');}
   function version(row:any,v:number){if(row.revision!==v)throw Error('This report changed. Open the latest version before continuing.');}
-  async function open(taskId:string,orderId:string,kind:string,a:Actor,admin=false){return deps.transaction(async db=>{
+  async function openInTransaction(db:Db,taskId:string,orderId:string,kind:string,a:Actor,admin=false){
     const task=(await db.query('SELECT * FROM delivery_tasks WHERE id=$1 FOR UPDATE',[taskId])).rows[0];if(!task||task.side!=='Sales'||task.status!=='Handed Over')throw Error('Select an outbound trip that has been handed to the delivery agent.');
     agent({agent_username:task.assigned_to},a,admin);if(!['Shop closed','Returned'].includes(kind))throw Error('Select Shop closed or Returned.');
     const stop=(task.route_json||[]).find((s:any)=>s.orderId===orderId);if(!stop||stop.delivered||stop.picked)throw Error('Select a delivery stop that is not completed.');
@@ -44,6 +44,21 @@ export function createDeliveryExceptionService(deps:Deps){
     if(lines.some(l=>Number(l.salesman_id)!==Number(lines[0].salesman_id)))throw Error('This stop requires one seller to own its decision.');
     const report={kind,reason:kind==='Shop closed'?'Shop closed':'',lines:kind==='Shop closed'?lines.map(l=>({id:l.id,quantity:Number(l.quantity),reason:'Shop closed'})):[]};
     const row=(await db.query(`INSERT INTO delivery_exceptions(id,task_id,order_id,shop_id,warehouse_id,salesman_id,agent_username,original_json,report_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) RETURNING *`,[`DEX-${randomUUID()}`,taskId,orderId,lines[0].shop_id,lines[0].warehouse_id,lines[0].salesman_id,task.assigned_to,JSON.stringify(lines),JSON.stringify(report)])).rows[0];await db.query('UPDATE delivery_tasks SET route_json=$2::jsonb WHERE id=$1',[task.id,JSON.stringify(task.route_json.map((s:any)=>s.orderId===orderId?{...s,deliveryExceptionId:row.id}:s))]);await audit(db,row.id,'Report started',a,kind);return row;
+  }
+  async function open(taskId:string,orderId:string,kind:string,a:Actor,admin=false){return deps.transaction(db=>openInTransaction(db,taskId,orderId,kind,a,admin));}
+  async function returnRemaining(taskId:string,reason:string,a:Actor,admin=false){return deps.transaction(async db=>{
+    if(!reason?.trim())throw Error('Enter the reason for returning the remaining DCO.');
+    const task=(await db.query('SELECT * FROM delivery_tasks WHERE id=$1 FOR UPDATE',[taskId])).rows[0];
+    if(!task||task.side!=='Sales'||task.status!=='Handed Over')throw Error('Select an active handed-over DCO.');
+    agent({agent_username:task.assigned_to},a,admin);
+    const stops=(task.route_json||[]).filter((s:any)=>!s.delivered&&!s.picked);
+    if(!stops.length)throw Error('No undelivered goods remain in this DCO.');
+    const reports=[];
+    for(const stop of stops){if(stop.deliveryExceptionId){reports.push((await db.query('SELECT * FROM delivery_exceptions WHERE id=$1',[stop.deliveryExceptionId])).rows[0]);continue;}const row=await openInTransaction(db,taskId,stop.orderId,'Returned',a,admin);
+      if(editable(row)){const report={kind:'Returned',reason:reason.trim(),lines:row.original_json.map((l:any)=>({id:l.id,quantity:Number(l.quantity),reason:reason.trim()}))};
+        const next=(await db.query('UPDATE delivery_exceptions SET report_json=$2::jsonb,revision=revision+1,updated_at=NOW() WHERE id=$1 RETURNING *',[row.id,JSON.stringify(report)])).rows[0];await audit(db,row.id,'Remaining DCO return drafted',a,reason.trim());reports.push(next);
+      }else reports.push(row);
+    }return reports;
   });}
   function validate(row:any,input:DeliveryExceptionReport,draft=false){
     if(!input||!['Shop closed','Returned'].includes(input.kind)||!input.reason?.trim()||!Array.isArray(input.lines)||(!draft&&!input.lines.length))throw Error('Select products and quantities, and enter a reason.');
@@ -72,5 +87,5 @@ export function createDeliveryExceptionService(deps:Deps){
   async function get(id:string,a:Actor,admin=false){const row=(await list(a,admin)).cases.find(r=>r.id===id);if(!row)throw Error('Delivery exception unavailable.');return row;}
   async function retryNotifications(id:string,a:Actor,admin=false){const row=await get(id,a,admin);if(!row.canDecide)throw Error('Only the seller can retry notifications.');await deps.query("UPDATE delivery_exception_notifications SET status='Pending',attempts=0,available_at=NOW() WHERE case_id=$1 AND status='Failed'",[id]);}
   async function photo(id:string,photoId:string,a:Actor,admin=false){await get(id,a,admin);const result=(await deps.query('SELECT image_bytes,mime_type FROM delivery_exception_photos WHERE id=$1 AND case_id=$2',[photoId,id])).rows[0];if(!result)throw Error('Photo evidence not found.');return result;}
-  return {open,save,submit,decide,withdraw,list,get,photo,retryNotifications,...createReturnReceiptMethods(deps,{load,agent,version,audit,notify})};
+  return {open,returnRemaining,save,submit,decide,withdraw,list,get,photo,retryNotifications,...createReturnReceiptMethods(deps,{load,agent,version,audit,notify})};
 }

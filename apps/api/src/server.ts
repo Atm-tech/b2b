@@ -1542,6 +1542,8 @@ app.post('/delivery-exceptions/:id/photos/:stage',async(req,res,next)=>{
 app.get('/delivery-exceptions/:id/photos/:photoId',async(req,res)=>{
   try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);const photo=await deliveryExceptionService.photo(req.params.id,req.params.photoId,user,isWhatsAppAdminUser(user));res.setHeader('Content-Type',photo.mime_type);res.setHeader('Cache-Control','private, no-store');res.send(photo.image_bytes);}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Photo access denied.'});}
 });
+app.post('/delivery-dcos/:id/return-remaining',async(req,res)=>wrap(res,async()=>{const user=await requireRole(req,['Admin','Delivery','Out Delivery']);return deliveryExceptionService.returnRemaining(req.params.id,requiredString(req.body?.reason,'Reason'),user,isWhatsAppAdminUser(user));}));
+app.post('/delivery-dcos/:id/payment-promise',async(req,res)=>wrap(res,async()=>{const user=await requireRole(req,['Delivery','Out Delivery','Collection Agent']);return retailerFinance.promise(req.params.id,requiredString(req.body?.orderId,'Order'),req.body,user);}));
 app.get('/delivery-exceptions',async(req,res)=>{
   try{const user=await requireRole(req,['Admin','Sales','Delivery','Out Delivery','Warehouse Manager']);res.json(await deliveryExceptionService.list(user,isWhatsAppAdminUser(user)));}catch(error){res.status(403).json({message:error instanceof Error?error.message:'Access denied.'});}
 });

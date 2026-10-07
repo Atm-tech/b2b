@@ -81,5 +81,15 @@ test('retailer credit, refund, collection and all-age queue integration',{skip:p
    assert.ok(!(await finance.list({...seller,id:3,username:'other'})).collections.some(f=>f.order_id===id));
    await pay(id,300);await reconcile(id);assert.ok((await finance.list(seller)).credits.some(f=>f.source_order_id===id));await finance.requestRefund(id,{amount:100,note:'Legacy retailer refund',requestKey:'legacy-refund'},seller);
   });
+  await t.test('agent payment promise saves exact time, preserves money and rejects unauthorized or past promises',async()=>{
+   const shopId=await shop();const orderId=await order(shopId,100,'Out for Delivery');
+   await pool.query('UPDATE counterparties SET allow_later_collection=true WHERE id=$1',[shopId]);
+   await pool.query("INSERT INTO delivery_tasks(id,side,linked_order_id,mode,source_location,destination_location,assigned_to,status,route_json) VALUES('PROMISE-ROUTE','Sales',$1,'Delivery','WH','SHOP','agent','Handed Over',$2::jsonb)",[orderId,JSON.stringify([{orderId,supplierId:shopId,delivered:true,paid:false,collectionStatus:'Pending'}])]);
+   const agent={id:4,username:'agent',fullName:'Agent',role:'Delivery',roles:['Delivery']};const dueAt=new Date(Date.now()+3600000).toISOString();
+   await assert.rejects(()=>finance.promise('PROMISE-ROUTE',orderId,{dueAt,note:'Evening UPI'}, {...agent,username:'other'}),/assigned/);
+   await assert.rejects(()=>finance.promise('PROMISE-ROUTE',orderId,{dueAt:'2000-01-01',note:'Past'},agent),/future/);
+   const row=await finance.promise('PROMISE-ROUTE',orderId,{dueAt,note:'Evening UPI'},agent);assert.equal(new Date(row.due_at).toISOString(),dueAt);assert.equal(row.collector_username,'agent');assert.equal(Number(row.amount_due),100);
+   assert.equal((await pool.query('SELECT * FROM payments WHERE linked_order_id=$1',[orderId])).rowCount,0);
+  });
  }finally{await pool.end();await setup.query(`DROP SCHEMA ${schema} CASCADE`);await setup.end();}
 });

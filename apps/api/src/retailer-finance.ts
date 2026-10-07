@@ -142,6 +142,18 @@ export function createRetailerFinanceService(deps:FinanceDeps){
   await financeEvent(db,shop,order,'Collection scheduled',a.username,{owner,collector,due,note:input.note});
   await notifyCollection(db,r.rows[0],'scheduled');
  });}
+ async function promise(taskId:string,order:string,input:any,a:Actor){return deps.transaction(async db=>{
+  const due=new Date(input.dueAt);if(!Number.isFinite(due.getTime())||due.getTime()<=Date.now()||!String(input.note||'').trim())throw Error('Enter a future payment date/time and a reason.');
+  const task=(await db.query("SELECT * FROM delivery_tasks WHERE id=$1 AND side='Sales' FOR UPDATE",[taskId])).rows[0];
+  if(!task||String(task.assigned_to).toLowerCase()!==a.username.toLowerCase())throw Error('Only the assigned agent can record this promise.');
+  const stop=(task.route_json||[]).find((s:any)=>s.orderId===order);if(!stop?.delivered||stop.paid||stop.deliveryExceptionId)throw Error('Select a delivered unpaid stop without an unresolved return.');
+  if(!(await db.query('SELECT 1 FROM counterparties WHERE id=$1 AND allow_later_collection=true',[stop.supplierId])).rowCount)throw Error('Later collection requires retailer permission.');
+  const shop=await reconcileRetailerFinance(db,order);const f=(await db.query("SELECT * FROM retailer_collection_followups WHERE order_id=$1 AND status='Open' FOR UPDATE",[order])).rows[0];
+  if(!shop||!f||Number(f.amount_due)<=0)throw Error('No unpaid delivered balance remains.');
+  const next=(await db.query("UPDATE retailer_collection_followups SET collector_username=$2,due_at=$3,note=$4,version=version+1,escalated_at=NULL,updated_at=NOW() WHERE order_id=$1 RETURNING *",[order,a.username,due,input.note.trim()])).rows[0];
+  await db.query('UPDATE delivery_tasks SET route_json=$2::jsonb,last_action_at=NOW() WHERE id=$1',[task.id,JSON.stringify(task.route_json.map((s:any)=>s.orderId===order?{...s,collectionStatus:'Later',paid:false}:s))]);
+  await financeEvent(db,shop,order,'Payment promised',a.username,{due,note:input.note,collector:a.username});await notifyCollection(db,next,'scheduled');return next;
+ });}
  async function sweep(){const rows=(await deps.query("SELECT DISTINCT ON(shop_id) COALESCE(cart_id,id) AS id FROM sales_orders WHERE note LIKE 'WhatsApp confirmed order WAD-%' ORDER BY shop_id,created_at")).rows;for(const row of rows)try{await deps.transaction(db=>reconcileRetailerFinance(db,row.id));}catch(e){const message=e instanceof Error?e.message:'Unknown error';console.error('Retailer finance reconciliation failed',{orderId:row.id,error:message});await deps.query('INSERT INTO retailer_finance_failures(order_id,error) VALUES($1,$2) ON CONFLICT(order_id) DO UPDATE SET error=EXCLUDED.error,updated_at=NOW()',[row.id,message]);}
   await deps.transaction(async db=>{
    const overdue=(await db.query("SELECT * FROM retailer_collection_followups WHERE status='Open' AND due_at<NOW() AND escalated_at IS NULL FOR UPDATE SKIP LOCKED")).rows;
@@ -162,5 +174,5 @@ export function createRetailerFinanceService(deps:FinanceDeps){
   const packing=(await deps.query("SELECT id,cart_id FROM whatsapp_packing_reviews WHERE status='Financial Review'")).rows;
   for(const p of packing)await deps.transaction(async db=>{await db.query('SELECT id FROM whatsapp_packing_reviews WHERE id=$1 FOR UPDATE',[p.id]);await reconcileRetailerFinance(db,p.cart_id);const b=await settlement(db,p.cart_id);const unverified=(await db.query("SELECT 1 FROM payments WHERE side='Sales' AND linked_order_id=$1 AND verification_status NOT IN ('Verified','Resolved','Rejected')",[p.cart_id])).rowCount;if(b&&!unverified&&!b.refund_pending&&Number(b.pending)<=.005&&Math.abs(Number(b.pending)+Number(b.credit))<.005){await db.query("UPDATE whatsapp_packing_reviews SET status='Finalized',revision=revision+1,updated_at=NOW() WHERE id=$1 AND status='Financial Review'",[p.id]);await db.query("INSERT INTO whatsapp_packing_events(case_id,action,actor,note) VALUES($1,'Credit carried forward','System','Verified excess retained in retailer ledger for future bills.')",[p.id]);}});
  }
- return {list,requestRefund,refundAction,schedule,sweep};
+ return {list,requestRefund,refundAction,schedule,promise,sweep};
 }

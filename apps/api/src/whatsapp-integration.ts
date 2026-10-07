@@ -1,3 +1,4 @@
+import {createRetailerFinanceService} from './retailer-finance.js';
 import {createWhatsAppOutbox} from './whatsapp-outbox.js';
 import {createOrderClosureService} from './whatsapp-order-closure.js';
 import { createPackingService } from "./whatsapp-packing.js";
@@ -23,6 +24,7 @@ type JsonObject = Record<string, unknown>;
 export const packingService = createPackingService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const deliveryExceptionService = createDeliveryExceptionService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 export const confirmationService = createConfirmationService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
+const deliveryFinance = createRetailerFinanceService({query:executeDatabaseQuery,transaction:executeDatabaseTransaction});
 export const shortageService = createShortageService({ query: executeDatabaseQuery, transaction: executeDatabaseTransaction });
 type StaffUser = Pick<AppUser, "id" | "username" | "fullName" | "role" | "roles"> & { warehouseIds?: string[] };
 type RetailerProfile = {
@@ -2123,6 +2125,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
   if (action.startsWith("wa-delivery:task:")) {
     const taskId = decodeURIComponent(action.slice("wa-delivery:task:".length)); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId && item.status !== "Planned" && deliveryTaskAllowed(item, user));
     if (!task) { await sendText(from, "Delivery task no longer active hai. LIST type karein."); return true; }
+    await sendText(from, `Return undelivered goods: RETURN DCO ${task.id} | reason. Existing exceptions are preserved.`, "Delivery", task.id);
     const pendingStops = task.routeStops.map((stop, index) => ({ stop, index })).filter(({ stop }) => !stop.delivered || (stop.paymentRequired && ["Pending", "Later"].includes(stop.collectionStatus || "")));
     await sendGraphMessage(from, { type: "interactive", interactive: { type: "list", body: { text: `DCO ${shortId(task.consignmentId || task.id)} - retailer select karein.` }, action: { button: "Retailers", sections: [{ title: "Delivery / collection", rows: pendingStops.slice(0, 10).map(({ stop, index }) => ({ id: `wa-delivery:stop:${task.id}:${index}`, title: compact(stop.supplierName, 24), description: compact(stop.delivered ? `Collection ${stop.collectionStatus === "Later" ? "later" : "pending"} - Rs.${collectionRemaining(stop).toFixed(2)}` : stop.productSummary, 72) })) }] } } }, "Delivery", task.id); return true;
   }
@@ -2151,9 +2154,7 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     if (!task || !deliveryTaskAllowed(task, user) || !stop || !stop.delivered || stop.paid) { await sendText(from, "Collection task unavailable hai. LIST type karein."); return true; }
     if (!(await getCollectionRetailer(stop.supplierId))?.allowLaterCollection) { await sendText(from, "Collect later privilege required hai."); return true; }
     if(stop.deliveryExceptionId){await sendText(from,'Collect the seller-approved adjusted amount at this delivery stop.');return true;}
-    const stops = task.routeStops.map((item, index) => index === stopIndex ? { ...item, collectionStatus: "Later" as const, paid: false } : item);
-    await updateDeliveryTask(task.id, { linkedOrderIds: task.linkedOrderIds, consignmentId: task.consignmentId, assignedTo: task.assignedTo, transportType: task.transportType, vehicleNumber: task.vehicleNumber, freightAmount: task.freightAmount, routeStops: stops, pickupAt: task.pickupAt, dropAt: task.dropAt, routeHint: task.routeHint, paymentAction: task.paymentAction, cashCollectionRequired: task.cashCollectionRequired, cashHandoverMarked: task.cashHandoverMarked, weightProofName: task.weightProofName, cashProofName: task.cashProofName, status: task.status });
-    await sendText(from, `${stop.supplierName} ke liye Collect Later recorded. LIST type karke agla retailer/DCO select karein.`, "Collection", task.id); return true;
+    await sendText(from, `Record the exact promised payment time in IST:\nPAY LATER ${task.id} ${stop.orderId} YYYY-MM-DD HH:mm | reason\nThe promise is saved only after this command.`, "Collection", task.id); return true;
   }
   if (action.startsWith("wa-collect:full:") || action.startsWith("wa-collect:partial:")) {
     const [, kind, taskId, indexText] = action.split(":"); const snapshot = await getSnapshot(user); const task = snapshot.deliveryTasks.find((item) => item.id === taskId); const stop = task?.routeStops[Number(indexText)]; const party = (await getCollectionRetailer(stop?.supplierId)) as { allowChequeCollection?: boolean; allowPartialCollection?: boolean } | undefined;
@@ -2263,6 +2264,18 @@ async function handleStaffWhatsAppMessage(message: JsonObject, from: string, use
     return true;
   }
 
+  if(deliveryUser && normalized.startsWith('PAY LATER ')){
+    const match=command.match(/^PAY LATER (\S+) (\S+) (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})\s*\|\s*(.+)$/i);
+    if(!match){await sendText(from,'Use PAY LATER task-id order-id YYYY-MM-DD HH:mm | reason. Time is IST.');return true;}
+    await deliveryFinance.promise(match[1],match[2],{dueAt:`${match[3]}T${match[4]}:00+05:30`,note:match[5]},user);
+    await sendText(from,'Payment promise saved. No payment was recorded. Follow-up remains assigned to you.','Collection',match[2]);return true;
+  }
+  if(deliveryUser && normalized.startsWith('RETURN DCO ')){
+    const match=command.match(/^RETURN DCO (\S+)\s*\|\s*(.+)$/i);
+    if(!match){await sendText(from,'Use RETURN DCO task-id | reason. Only undelivered stops are included.');return true;}
+    const rows=await deliveryExceptionService.returnRemaining(match[1],match[2],user,isWhatsAppAdminUser(user));
+    await sendText(from,`${rows.length} remaining-stop reports available. Open EXCEPTIONS, attach each product photo, review and submit. Seller approval and warehouse receipt remain required. Delivered stops and payments were preserved.`,'Delivery',match[1]);return true;
+  }
   const cashSession = cashCollectionPending.get(from);
   if (deliveryUser && cashSession) {
     const count = Number(command);

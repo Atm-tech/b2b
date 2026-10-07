@@ -131,5 +131,13 @@ test('delivery exception transactions and WhatsApp flow on isolated PostgreSQL',
   await t.test('fully returned unpaid order can close physically and financially, but prepaid excess stays open',async()=>{
    for(const prepaid of [false,true]){const f=await trip();await pool.query("UPDATE sales_orders SET note='WhatsApp confirmed order WAD-TEST' WHERE cart_id=$1",[f.order]);if(prepaid)await pay(payment(f.order,200,'PREPAID-RETURN'),sales);let r=await returned(f,10);r=await svc.decide(r.id,{decision:'Return',note:'All returned',revision:r.revision},sales);r=await handover(f,r);r=await svc.saveReceipt(r.id,{lines:[{id:f.order+'-L',good:10,damaged:0}],note:'All received sellable',resolveMissing:false},r.revision,warehouse);await svc.addPhoto(r.id,'Warehouse receipt',f.order+'-L',evidence,warehouse);r=await svc.finalizeReceipt(r.id,r.revision,warehouse);assert.equal(r.status,prepaid?'Warehouse Received':'Closed');}
   });
+  await t.test('remaining DCO return preserves delivered stops and existing reports, and enforces agent scope',async()=>{
+   const f=await trip();await pool.query('UPDATE delivery_tasks SET route_json=$2::jsonb WHERE id=$1',[f.id,JSON.stringify(f.stops.map((stop:any)=>stop.orderId==='OTHER'?{...stop,delivered:true,paid:true}:stop))]);const task=(await pool.query('SELECT * FROM delivery_tasks WHERE id=$1',[f.id])).rows[0];
+   const taskId=task.id;assert.ok(taskId);
+   await assert.rejects(()=>svc.returnRemaining(taskId,'Whole remaining route returned',{...driver,username:'other'}),/assigned/);
+   const rows=await svc.returnRemaining(taskId,'Shop refused remaining goods',driver);assert.equal(rows.length,1);assert.equal(rows[0].report_json.lines[0].quantity,10);
+   const again=await svc.returnRemaining(taskId,'Retry click',driver);assert.equal(again[0].id,rows[0].id);assert.equal(again[0].report_json.reason,'Shop refused remaining goods');
+   const after=(await pool.query('SELECT * FROM sales_orders WHERE cart_id=$1',[f.order])).rows;assert.equal(after[0].quantity,10);assert.equal(after[0].status,'Out for Delivery');
+  });
  }finally{await pool.end();await setup.query(`DROP SCHEMA ${schema} CASCADE`);await setup.end();}
 });
