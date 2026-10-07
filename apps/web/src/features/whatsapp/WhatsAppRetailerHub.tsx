@@ -1,10 +1,3 @@
-import {RetailerFinance} from './RetailerFinance';
-import {OpenCases} from './OpenCases';
-import {MessageFailures} from './MessageFailures';
-import { PackingRegister } from "./PackingRegister";
-import { DeliveryExceptionRegister } from "../operations/DeliveryExceptionRegister";
-import { ConfirmationRegister } from "./ConfirmationRegister";
-import { ShortageRegister } from "./ShortageRegister";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
@@ -816,13 +809,6 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       })}
     </nav>
 
-    {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <PackingRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
-    {!isMarketingWorkspace && (activeSection==='Home'||activeSection==='Orders') ? <RetailerFinance sessionToken={sessionToken} roles={currentUser.roles||[currentUser.role]} admin={whatsappAdmin}/>:null}
-    {!isMarketingWorkspace && whatsappAdmin && activeSection==='Home' ? <OpenCases sessionToken={sessionToken}/>:null}
-    {!isMarketingWorkspace&&(activeSection==='Home'||activeSection==='Orders'||activeSection==='Chat')?<MessageFailures sessionToken={sessionToken}/>:null}
-    {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <DeliveryExceptionRegister snapshot={snapshot} sessionToken={sessionToken} currentUser={currentUser} /> : null}
-    {!isMarketingWorkspace && (whatsappAdmin || (currentUser.roles || [currentUser.role]).includes("Sales")) && (activeSection === "Home" || activeSection === "Orders") ? <ConfirmationRegister sessionToken={sessionToken} /> : null}
-    {!isMarketingWorkspace && (activeSection === "Home" || activeSection === "Orders") ? <ShortageRegister snapshot={snapshot} sessionToken={sessionToken} /> : null}
 
     {activeSection === "Home" ? <>
       <section className="wa-command-grid" aria-label="WhatsApp overview">
@@ -1054,6 +1040,5 @@ export function WhatsAppRetailerHub({ snapshot, currentUser, sessionToken, onMes
       <Panel title="Order update audit" eyebrow="Retailer notifications"><DataTable headers={["Time", "Order", "Status", "Note", "By"]} rows={(dashboard?.orderEvents || []).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.sales_cart_id || item.draft_id || ""), String(item.status_label || ""), String(item.note || ""), String(item.created_by || "")])} /></Panel>
     </section> : null}
 
-    {whatsappAdmin && activeSection === "Home" ? <Panel title="Recent activity" eyebrow="Latest retailer conversations"><DataTable headers={["Time", "Direction", "Phone", "Status", "Message"]} rows={(dashboard?.messages || []).slice(0, 8).map((item) => [formatDateTimeIst(String(item.created_at || "")), String(item.direction || ""), String(item.phone_e164 || ""), String(item.status || ""), messageAuditText(item)])} /></Panel> : null}
   </div>;
 }

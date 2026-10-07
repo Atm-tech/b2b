@@ -107,21 +107,22 @@ table(['Finding','Recorded outcome'],[
 ],[.30,.70])
 note('Final confirmation is required','Warehouse explicitly finalizes the review. Old acceptance buttons and replayed finalization cannot apply an older bill or create duplicate dispatch records.')
 
-heading(4,'At the shop: report, approve, collect','The agent can report through WhatsApp or BConnect. Seller decisions are available through either channel.')
+heading(4,'At the shop: report, approve, collect','WhatsApp or BConnect: open the assigned stop; use EXCEPTIONS for existing reports.')
 flow([
  ('Delivery agent','1. Open the assigned delivery stop','Choose Shop closed or Returned. For returns, select products, quantities and reasons, including Other.'),
  ('Delivery agent','2. Attach evidence and review','Closed shop: visit photo. Returned/damaged stock: photo for every selected product. Edit the draft before confirming.'),
  ('Delivery agent','3. Confirm and send to seller','Submission locks the report. The seller may request a correction, approve the return, or schedule a dated retry for a closed shop.'),
  ('Seller','4. Review the accepted goods and revised bill','Approval immediately updates accepted quantities and the invoice. Pending approval blocks collection against that stop.'),
- ('Delivery agent','5. Collect the adjusted outstanding balance now','Deduct existing receipts and applied credit. Collect for accepted delivered goods only; submit the receipt for Accounts verification.'),
+ ('Delivery + Collection','5. Collect cash and return system-calculated change','Enter rounded cash received against the adjusted outstanding. Return the change shown by the system and confirm. Submit net cash retained for Accounts verification.'),
 ])
+note('Requested addition: rounded cash and change','<b>Change = cash received - amount being paid.</b> Due Rs.870, received Rs.1,000: return Rs.130 and confirm; record Rs.870 as payment and agent-held cash. Change is not credit/refund. Partial payments leave the balance due, with zero change.')
 section('The two remaining goods paths')
 table(['Seller decision','Next path','Case stays open until'],[
  ('Retry a closed shop','Record the next delivery date and carry the goods under assigned custody.','Successful delivery or a completed physical return.'),
  ('Approve item/full return','Present goods at the warehouse with handover evidence.','Warehouse inspection and financial reconciliation finish.'),
 ],[.24,.42,.34])
 note('No waiting for warehouse receipt to amend the collection','Seller approval unlocks the adjusted bill at the shop. A full return has a zero delivery bill. Stock is restored only after the later physical warehouse receipt.',True)
-story.append(p('<b>WhatsApp entry:</b> open the assigned stop or use EXCEPTIONS for existing reports. The approved-bill notification supplies the collection action. Provider delivery delays remain tracked as message failures.','small'))
+
 
 heading(5,'Return custody & warehouse evidence','Seller approval changes billing. Warehouse Manager confirmation changes physical stock.')
 flow([

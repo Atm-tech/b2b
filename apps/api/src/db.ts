@@ -1,4 +1,5 @@
 import {reconcileRetailerFinance,settlement} from './retailer-finance.js';
+import { WHATSAPP_COLLECTION_TOLERANCE } from './whatsapp-collection-utils.js';
 import { assertNoPackingHold } from "./packing-guards.js";
 import { assertDeliveryExceptionUpdate } from "./delivery-exceptions.js";
 import {prepareDeliveryExceptionPayment,syncDeliveryExceptionPayment} from './delivery-exception-billing.js';
@@ -3115,7 +3116,9 @@ export async function createPayment(payload: {
         if(existing){if(Number(existing.amount)!==payload.amount||existing.mode!==payload.mode)throw Error('This payment reference was already used for another collection.');return;}
         const reserved=Number((await client.query("SELECT COALESCE(SUM(amount),0) AS amount FROM payments WHERE side='Sales' AND verification_status<>'Rejected' AND (linked_order_id=$1 OR linked_order_id IN (SELECT id FROM sales_orders WHERE COALESCE(cart_id,id)=$1))",[canonical])).rows[0].amount);
         const remaining=Math.max(0,Number(balance?.total||0)-reserved-Number(balance?.applied_credit||0));
-        if(payload.amount>remaining+.005)throw Error('Collection exceeds the balance after retailer credit and submitted receipts. Refresh the bill.');
+        const whatsappCollection = remaining > 0 && payload.referenceNumber.startsWith('WA-') && Boolean((await client.query("SELECT 1 FROM delivery_tasks WHERE side='Sales' AND lower(assigned_to)=lower($1) AND route_json @> $2::jsonb LIMIT 1",[currentUser.username,JSON.stringify([{orderId:canonical,delivered:true}])])).rowCount);
+        const tolerance = whatsappCollection && !exception ? WHATSAPP_COLLECTION_TOLERANCE : .005;
+        if(payload.amount>remaining+tolerance)throw Error('Collection exceeds the balance after retailer credit and submitted receipts. Refresh the bill.');
       }
     }
     await query(

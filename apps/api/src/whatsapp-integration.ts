@@ -2546,7 +2546,12 @@ async function handleInboundMessage(message: JsonObject) {
   // notes and unsupported messages. Shared numbers cannot combine permissions.
   if (staff.rows.length === 1) {
     await sendFirstStaffTraining(from, staff.rows[0]);
-    if (await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
+    try {
+      if (await handleStaffWhatsAppMessage(message, from, staff.rows[0])) return;
+    } catch (error) {
+      await sendText(from, `Action could not be completed: ${error instanceof Error ? error.message : 'Processing failed.'} Check LIST before retrying; do not collect the payment again.`, 'StaffActionError').catch(() => undefined);
+      throw error;
+    }
     await sendText(from, messageType === "audio" ? "Staff voice commands abhi supported nahi hain. Delivery/collection ke liye LIST type karein; apne commands ke liye HELP." : "Yeh staff account hai. Apne available commands ke liye HELP type karein.", "StaffCommandHelp");
     return;
   }
