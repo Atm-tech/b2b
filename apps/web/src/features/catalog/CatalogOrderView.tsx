@@ -1111,7 +1111,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                 {!isPurchase ? <p>Sales path: <strong>{billingType}</strong>{billingType === "B2B" ? " — customer GSTIN is mandatory." : ""}</p> : null}
                 <div className="form-grid top-gap">
                   <label className="wide-field supplier-search-field">Search saved {isPurchase ? "supplier" : "customer"}<div className="search-box"><input value={partySearch} onChange={(e) => { setPartySearch(e.target.value); setPartySuggestionOpen(true); }} onFocus={() => setPartySuggestionOpen(true)} onBlur={() => window.setTimeout(() => setPartySuggestionOpen(false), 120)} placeholder={`Type saved ${isPurchase ? "supplier" : "customer"} name, GST, city, or mobile`} />{partySuggestionOpen ? <div className="search-suggestion-list">{partySuggestions.length > 0 ? partySuggestions.map((party) => <button key={party.id} type="button" className="search-suggestion-item" onMouseDown={() => selectSavedParty(party)}><strong>{party.name}</strong><span>{party.gstNumber || "GST pending"} / {party.mobileNumber || "Mobile pending"} / {party.city || "City pending"}</span></button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved {isPurchase ? "supplier" : "customer"} found</strong><span>Create one first.</span></div>}</div> : null}</div></label>
-                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => { const party = parties.find((item) => item.id === e.target.value); if (party) selectSavedParty(party); }}>{renderOptions(parties)}</select></label>
+                  <label className="wide-field">{isPurchase ? "Supplier" : "Customer"}<select value={selectedPartyId} onChange={(e) => { const party = parties.find((item) => item.id === e.target.value); if (party) selectSavedParty(party); }}><option value="">Select</option>{parties.map((party) => <option key={party.id} value={party.id}>{party.contactPerson.trim() ? `${party.name} (${party.contactPerson.trim()})` : party.name}</option>)}</select></label>
                   {!isPurchase && billingType === "B2B" && selectedParty && !hasValidGstin(selectedParty.gstNumber) ? <div className="wide-field message pending">
                     <strong>GSTIN required for {selectedParty.name}</strong>
                     <div className="inline-input-action top-gap">
@@ -1604,7 +1604,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                       />
                       {partySuggestionOpen ? <div className="search-suggestion-list">
                         {partySuggestions.length > 0 ? partySuggestions.map((party) => <button key={party.id} type="button" className="search-suggestion-item" onMouseDown={() => selectSavedParty(party)}>
-                          <strong>{party.name}</strong>
+                          <strong>{party.contactPerson.trim() ? `${party.name} (${party.contactPerson.trim()})` : party.name}</strong>
                           <span>{party.gstNumber || "GST pending"} / {party.mobileNumber || "Mobile pending"} / {party.city || "City pending"}</span>
                         </button>) : <div className="search-suggestion-item empty-suggestion"><strong>No saved supplier found</strong><span>Create supplier first from Parties.</span></div>}
                       </div> : null}
