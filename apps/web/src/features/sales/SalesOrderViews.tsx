@@ -407,6 +407,7 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
   onNewOrder: () => void;
   onDirtyChange: (dirty: boolean) => void;
   onUpdateSalesOrder: (id: string, body: {
+    allowProbationarySale?: boolean;
     paymentMode: PaymentMode;
     cashTiming?: string;
     deliveryMode: "Self Collection" | "Delivery";
@@ -606,7 +607,28 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
       {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
         event.preventDefault();
         if (!selectedGroup || !draft || !editState.editable) return;
+        const quantities = new Map<string, { sku: string; warehouse: string; current: number; next: number }>();
+        for (const line of selectedGroup.lines) {
+          const key = `${line.warehouseId}::${line.productSku}`;
+          const item = quantities.get(key) || { sku: line.productSku, warehouse: line.warehouseId, current: 0, next: 0 };
+          item.current += line.quantity;
+          quantities.set(key, item);
+        }
+        for (const line of draft.lines) {
+          const key = `${line.warehouseId}::${line.productSku}`;
+          const item = quantities.get(key) || { sku: line.productSku, warehouse: line.warehouseId, current: 0, next: 0 };
+          item.next += Number(line.quantity || 0);
+          quantities.set(key, item);
+        }
+        const shortages = [...quantities.values()].flatMap((item) => {
+          const available = Math.max(0, snapshot.stockSummary.find((stock) => stock.warehouseId === item.warehouse && stock.productSku === item.sku)?.availableQuantity || 0);
+          const excess = Math.max(0, item.next - item.current - available);
+          return excess > 0 ? [`${item.sku}: additional ${Math.max(0, item.next - item.current)}, available ${available}, probationary ${excess}`] : [];
+        });
+        const allowProbationarySale = shortages.length > 0 && window.confirm(`Probationary warning:\n${shortages.join("\n")}\n\nContinue and record the extra quantity in probationary sales for accounts review?`);
+        if (shortages.length > 0 && !allowProbationarySale) return;
         const success = await onUpdateSalesOrder(selectedGroup.id, {
+          allowProbationarySale,
           paymentMode: draft.paymentMode,
           cashTiming: draft.paymentMode === "Cash" ? draft.cashTiming : undefined,
           deliveryMode: draft.deliveryMode,

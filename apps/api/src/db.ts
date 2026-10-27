@@ -4181,6 +4181,7 @@ export async function updateSalesOrder(orderId: string, payload: {
 }
 
 export async function updateSalesOrderGroup(orderId: string, payload: {
+  allowProbationarySale?: boolean;
   beforePacking?: Array<{ id: string; quantity: number }>;
   paymentMode: PaymentMode;
   cashTiming?: SalesOrder["cashTiming"];
@@ -4241,12 +4242,13 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       addQty(nextQtyByKey, inventoryKey(warehouseId, productSku), line.quantity);
     }
 
+    const shortageByKey = new Map<string, { available: number; remaining: number }>();
     for (const key of nextQtyByKey.keys()) {
       const [warehouseId, productSku] = key.split("::");
       const nextQty = nextQtyByKey.get(key) || 0;
       const currentQty = currentQtyByKey.get(key) || 0;
       const additionalQtyRequired = Math.max(nextQty - currentQty, 0);
-      if (additionalQtyRequired <= 0) continue;
+      if (additionalQtyRequired <= 0 || payload.status === "Cancelled") continue;
       const available = await one<Record<string, unknown>>(
         `SELECT COALESCE(SUM(quantity_available), 0) AS qty
          FROM inventory_lots
@@ -4254,8 +4256,12 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
         [warehouseId, productSku],
         client
       );
-      if (numberValue(available?.qty) < additionalQtyRequired) {
-        throw new Error(`Requested quantity exceeds available stock for ${productSku} at ${warehouseId}.`);
+      const availableQuantity = Math.max(0, numberValue(available?.qty));
+      if (availableQuantity < additionalQtyRequired) {
+        if (!payload.allowProbationarySale || warehouseQuantityAmend) {
+          throw new Error(`Requested additional quantity ${additionalQtyRequired} exceeds available stock ${availableQuantity} for ${productSku} at ${warehouseId}. Confirm probationary sale to continue.`);
+        }
+        shortageByKey.set(key, { available: availableQuantity, remaining: additionalQtyRequired - availableQuantity });
       }
     }
 
@@ -4281,6 +4287,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       const { taxableAmount, gstRate, gstAmount, taxMode, cdTodRate, cdAmount, todAmount, totalAmount } = amounts;
       const deliveryCharge = payload.deliveryMode === "Delivery" ? (index === 0 ? settings.deliveryCharge.amount : 0) : 0;
 
+      const salesLineId = existing ? stringValue(existing.id) : makeId("SO");
       if (existing) {
         await query(
           `UPDATE sales_orders
@@ -4329,7 +4336,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
             delivery_mode, delivery_charge, note, status, created_at
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
           [
-            makeId("SO"),
+            salesLineId,
             editable.publicOrderId,
             stringValue(firstLine.shop_id),
             stringValue(firstLine.billing_type) === "B2B" ? "B2B" : "B2C",
@@ -4355,6 +4362,28 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
             new Date().toISOString()
           ],
           client
+        );
+      }
+      const shortage = shortageByKey.get(inventoryKey(warehouseId, productSku));
+      const probationaryQuantity = Math.min(line.quantity, shortage?.remaining || 0);
+      if (shortage && probationaryQuantity > 0) {
+        shortage.remaining -= probationaryQuantity;
+        const ratio = probationaryQuantity / line.quantity;
+        const note = `Probationary shortage recorded on order update: excess ${probationaryQuantity} kept for accounts review.`;
+        await query(
+          `INSERT INTO probationary_sales (
+            id, sales_order_id, sales_cart_id, shop_id, salesman_id, warehouse_id, product_sku,
+            available_quantity_at_sale, sold_quantity, probationary_quantity, original_probationary_quantity, pending_probationary_quantity,
+            rate, taxable_amount, gst_rate, gst_amount, tax_mode, total_amount, note, status, created_at, cleared_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$10,$11,$12,$13,$14,$15,$16,$17,'Pending',$18,NULL)`,
+          [makeId("PRB"), salesLineId, editable.publicOrderId, stringValue(firstLine.shop_id), currentUser.id,
+            warehouseId, productSku, shortage.available, line.quantity, probationaryQuantity, line.rate,
+            taxableAmount * ratio, gstRate, gstAmount * ratio, taxMode, totalAmount * ratio, note, new Date().toISOString()], client
+        );
+        await query(
+          `INSERT INTO note_records (id, entity_type, entity_id, note, created_by, visibility, created_at)
+           VALUES ($1,'Sales Order',$2,$3,$4,'Operational',$5)`,
+          [makeId("NOTE"), editable.publicOrderId, note, currentUser.fullName, new Date().toISOString()], client
         );
       }
     }

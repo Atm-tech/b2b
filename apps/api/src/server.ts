@@ -747,6 +747,7 @@ app.patch("/sales-orders/:id", async (req, res) => wrap(res, async () => {
       throw new Error("You are not allowed to perform this action.");
     }
     const updated = await updateSalesOrderGroup(req.params.id, {
+      allowProbationarySale: req.body?.allowProbationarySale === true,
       paymentMode: requiredString(req.body?.paymentMode, "Payment mode") as PaymentMode,
       cashTiming: optionalString(req.body?.cashTiming) as "In Hand" | "At Delivery" | undefined,
       deliveryMode,
