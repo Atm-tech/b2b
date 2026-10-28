@@ -1253,7 +1253,20 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
   });
 }
 
+function completeSalesInvoiceGroup(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  const lines = snapshot.salesOrders.filter(line => orderPublicId(line) === group.id);
+  if (!lines.length) throw new Error("Order unavailable. Refresh before generating the invoice.");
+  return { id: group.id, lines };
+}
+
+export function salesInvoiceTimestamps(group: { lines: SalesOrder[] }) {
+  const saved = group.lines.map(line => line.savedAt).filter((value): value is string => Boolean(value)).sort();
+  const updated = group.lines.map(line => line.updatedAt).filter((value): value is string => Boolean(value)).sort();
+  return `Saved: ${saved.length ? formatDateTimeIst(saved[0]) : "Not recorded (legacy order)"} | Last updated: ${updated.length ? formatDateTimeIst(updated[updated.length - 1]) : "Not recorded (legacy order)"} | Generated: ${formatDateTimeIst(new Date().toISOString())} (IST)`;
+}
+
 export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  group = completeSalesInvoiceGroup(snapshot, group);
   const first = group.lines[0];
   const warehouseName = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId))).join(", ");
   const customer = salesInvoiceCounterparty(snapshot, group);
@@ -1273,6 +1286,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
     qrDataUrl,
     note: [
+      salesInvoiceTimestamps(group),
       `Total Weight: ${formatWeightKg(totalWeight)}`,
       `Salesman: ${invoiceValue(first?.salesmanName)}`,
       `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
@@ -1404,6 +1418,7 @@ export function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; 
 }
 
 export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }, qrDataUrl?: string) {
+  group = completeSalesInvoiceGroup(snapshot, group);
   const first = group.lines[0];
   const customer = salesInvoiceCounterparty(snapshot, group);
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
@@ -1472,6 +1487,7 @@ export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lin
           </thead>
           <tbody>${rows}</tbody>
         </table>
+        <p>${escapeHtml(salesInvoiceTimestamps(group))}</p>
         <div class="invoice-totals">
           <div><span>Total Weight</span><strong>${formatWeightKg(totalWeight)}</strong></div>
           <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
@@ -1508,6 +1524,7 @@ export function purchaseInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: 
 }
 
 export function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: string; lines: SalesOrder[] }) {
+  group = completeSalesInvoiceGroup(snapshot, group);
   const first = group.lines[0];
   const warehouseNames = Array.from(new Set(group.lines.map((line) => snapshot.warehouses.find((item) => item.id === line.warehouseId)?.name || line.warehouseId)));
   const taxable = group.lines.reduce((sum, line) => sum + line.taxableAmount, 0);

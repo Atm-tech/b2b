@@ -325,6 +325,8 @@ export type SalesOrder = {
   note: string;
   status: SalesStatus;
   createdAt: string;
+  savedAt?: string;
+  updatedAt?: string;
 };
 
 export type DeliveryDocket = {

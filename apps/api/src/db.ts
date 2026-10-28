@@ -60,6 +60,7 @@ type DbClient = Pick<PoolClient, "query">;
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(sourceDir, "../../..");
 const schemaSql = readFileSync(path.join(repoRoot, "postgres/init/001-schema.sql"), "utf8");
+const salesOrderHistorySql = readFileSync(path.join(repoRoot, "postgres/init/003-sales-order-history.sql"), "utf8");
 const indexSql = readFileSync(path.join(repoRoot, "postgres/init/002-indexes.sql"), "utf8");
 
 const postgresHost = process.env.POSTGRES_HOST || "127.0.0.1";
@@ -94,6 +95,7 @@ const ready = initializeDatabase();
 
 async function initializeDatabase() {
   await pool.query(schemaSql);
+  await pool.query(salesOrderHistorySql);
   await ensureCompatibilityColumns();
   await pool.query(`
     DELETE FROM delivery_dockets duplicate
@@ -523,6 +525,7 @@ async function withTransaction<T>(run: (client: PoolClient) => Promise<T>) {
     await client.query("BEGIN");
     const result = await run(client);
     await client.query("COMMIT");
+    Object.keys(snapshotSectionLoaders).forEach((section) => dirtySnapshotSections.add(section as keyof typeof snapshotSectionLoaders));
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
@@ -817,7 +820,9 @@ async function mapSalesOrders(client?: DbClient): Promise<SalesOrder[]> {
     deliveryCharge: numberValue(row.delivery_charge),
     note: stringValue(row.note),
     status: stringValue(row.status) as SalesOrder["status"],
-    createdAt: isoValue(row.created_at)
+    createdAt: isoValue(row.created_at),
+    savedAt: row.saved_at ? isoValue(row.saved_at) : undefined,
+    updatedAt: row.updated_at ? isoValue(row.updated_at) : undefined
   }));
 }
 
@@ -2351,13 +2356,14 @@ export async function createSalesOrder(payload: {
   location?: { latitude: number; longitude: number; label?: string; address?: string; city?: string };
   operationDate?: string;
   advancePayment?: AdvancePaymentPayload;
-}, currentUser: CurrentUser) {
+}, currentUser: CurrentUser, transactionClient?: PoolClient) {
   await ready;
-  const settings = await mapSettings();
+  const settings = await mapSettings(transactionClient);
   const id = makeId("SO");
   const createdAt = operationalDate(payload.operationDate);
 
-  await withTransaction(async (client) => {
+  const save = async (client: PoolClient) => {
+    await client.query("SELECT set_config('app.actor', $1, true)", [currentUser.username]);
     if (payload.location) {
       await updateCounterpartyLocation(payload.shopId, payload.location, client);
     }
@@ -2442,8 +2448,12 @@ export async function createSalesOrder(payload: {
     if (!payload.skipFinancials) {
       await recalculateLedger("Sales", id, client);
     }
-  });
-
+  };
+  if (transactionClient) {
+    await save(transactionClient);
+    return;
+  }
+  await withTransaction(save);
   return getSnapshot();
 }
 
@@ -2455,18 +2465,18 @@ export async function createSalesCart(payload: Omit<Parameters<typeof createSale
   if (payload.lines.length === 0) throw new Error("At least one cart product is required.");
   const cartId = makeId("SCART");
   const createdAt = operationalDate(payload.operationDate);
-  for (const [index, line] of payload.lines.entries()) {
-    await createSalesOrder({
-      ...payload,
-      ...line,
-      cartId,
-      applyDeliveryCharge: index === 0,
-      note: line.note || payload.note,
-      advancePayment: index === 0 ? payload.advancePayment : undefined,
-      skipFinancials: true
-    }, currentUser);
-  }
   await withTransaction(async (client) => {
+    for (const [index, line] of payload.lines.entries()) {
+      await createSalesOrder({
+        ...payload,
+        ...line,
+        cartId,
+        applyDeliveryCharge: index === 0,
+        note: line.note || payload.note,
+        advancePayment: index === 0 ? payload.advancePayment : undefined,
+        skipFinancials: true
+      }, currentUser, client);
+    }
     await insertAdvancePayment("Sales", cartId, payload.advancePayment, currentUser, createdAt, client);
     await recalculateLedger("Sales", cartId, client);
   });
@@ -4220,6 +4230,7 @@ export async function updateSalesOrderGroup(orderId: string, payload: {
       if (current.rows.length !== payload.beforePacking.length || current.rows.some((line) => !payload.beforePacking!.some((original) => original.id === stringValue(line.id) && original.quantity === numberValue(line.quantity)))) throw new Error("SO changed. Select the order again before amending.");
     }
     if (!payload.beforePacking) await assertNoPackingHold(client,[orderId]);
+    await client.query("SELECT set_config('app.actor', $1, true)", [currentUser.username]);
     const incomingIds = new Set(payload.lines.map((line) => line.id).filter(Boolean));
     const currentQtyByKey = new Map<string, number>();
     const nextQtyByKey = new Map<string, number>();
