@@ -8,6 +8,7 @@ PurchaseOrder
 import { useEffect,useState } from "react";
 import { LabelWithBadge,Panel,PendingBadge } from "../../components/ui";
 import { CatalogOrderView,type CatalogOrderViewProps } from "../catalog/CatalogOrderView";
+import { OrderProductSelect } from "../../components/OrderProductSelect";
 import { productDisplayLabel } from "../catalog/catalogUtils";
 
 import {
@@ -680,9 +681,7 @@ export function PurchaseCartEditor({
                       <button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button>
                     </div>
                     <div className="compact-order-editor-product">
-                      {!line.id ? <select value={line.productSku} onChange={(e) => updateDraftLine(line.clientKey, { productSku: e.target.value })} disabled={!editState.editable || Boolean(line.id)}>
-                        {snapshot.products.map((product) => <option key={product.sku} value={product.sku}>{productDisplayLabel(product) || product.sku}</option>)}
-                      </select> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}
+                      {!line.id ? <OrderProductSelect products={snapshot.products.map((product) => ({ sku: product.sku, label: productDisplayLabel(product) || product.sku }))} value={line.productSku} onChange={(productSku) => updateDraftLine(line.clientKey, { productSku })} disabled={!editState.editable} /> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}
                     </div>
                     <input type="number" step="any" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.clientKey, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
                     <input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} />
