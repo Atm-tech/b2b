@@ -1,4 +1,4 @@
-const CACHE_NAME = "b-connect-shell-v8";
+const CACHE_NAME = "b-connect-shell-v9";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/apple-touch-icon.png", "/business-connect-icon-192.png", "/business-connect-icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -24,7 +24,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
+          if (response.ok) {
+            const copy = response.clone();
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put("/", copy)).catch(() => {}));
+          }
           return response;
         })
         .catch(() => caches.match("/"))
@@ -33,12 +36,17 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (["script", "style", "image", "font"].includes(event.request.destination)) {
+    const fresh = fetch(event.request).then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {}));
+      }
+      return response;
+    });
+    // Keep background refreshes alive and handle network failures on cache hits.
+    event.waitUntil(fresh.then(() => {}, () => {}));
     event.respondWith(
       caches.match(event.request).then((cached) => {
-        const fresh = fetch(event.request).then((response) => {
-          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
-          return response;
-        });
         return cached || fresh;
       })
     );
