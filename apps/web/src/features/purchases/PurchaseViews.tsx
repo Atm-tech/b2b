@@ -151,9 +151,6 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
   const last7FromDate = indiaDateKey(new Date(new Date(`${todayDate}T00:00:00`).setDate(new Date(`${todayDate}T00:00:00`).getDate() - 6)));
-  const latestAvailableDate = allGroups.length > 0 ? indiaDateKey(new Date(groupNewestCreatedAt(allGroups[0].lines))) : todayDate;
-  const hasTodayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === todayDate);
-  const hasYesterdayOrders = allGroups.some((group) => indiaDateKey(new Date(groupNewestCreatedAt(group.lines))) === yesterdayDate);
   const completedPayments = snapshot.payments
     .filter((item) => item.side === "Purchase" && (item.verificationStatus === "Verified" || item.verificationStatus === "Resolved"))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -174,58 +171,21 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
     : datePreset === "yesterday"
       ? { fromDate: yesterdayDate, toDate: yesterdayDate }
       : normalizeDateRange(selectedFromDate, selectedToDate);
-  type SummaryPurchaseGroup = typeof allGroups[number];
-  function purchaseGroupPendingAmount(group: SummaryPurchaseGroup) {
-    const ledger = purchaseLedgerByOrder(snapshot, group.id);
-    return ledger?.pendingAmount ?? purchaseOrderPublicTotal(snapshot.purchaseOrders, group.id);
-  }
-  function purchaseGroupNotReceived(group: SummaryPurchaseGroup) {
-    return purchaseWarehouseStatus(group.lines) !== "Received";
-  }
-  const groups = allGroups.filter((group) => {
-    const inDateRange = dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate);
-    return inDateRange || purchaseGroupNotReceived(group);
-  });
+  const groups = allGroups.filter((group) =>
+    dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate)
+  );
   const pickupPendingCount = groups.filter((group) => !purchaseDeliveryTask(snapshot, group.id) && purchaseNeedsInternalPickup(group.lines) && purchaseWarehouseStatus(group.lines) !== "Received").length;
   const receivingPendingCount = groups.filter((group) => purchaseWarehouseStatus(group.lines) !== "Received").length;
   const paymentPendingCount = groups.filter((group) => ["Pending", "Partial", "Cash With Delivery"].includes(purchasePaymentStatus(snapshot, group.id))).length;
   const filteredGroups = groups.filter((group) => `${group.id} ${group.lines[0]?.supplierName || ""} ${group.lines.map((line) => line.productSku).join(" ")}`.toLowerCase().includes(searchText.trim().toLowerCase()));
   const filteredCompletedPayments = completedPayments.filter((payment) => {
     const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
-    const group = allGroups.find((item) => item.id === payment.linkedOrderId);
-    return (dateKeyInRange(indiaDateKey(payment.createdAt), activeRange.fromDate, activeRange.toDate) || (group ? purchaseGroupPendingAmount(group) > 0 || purchaseGroupNotReceived(group) : false)) && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
+    return dateKeyInRange(indiaDateKey(payment.createdAt), activeRange.fromDate, activeRange.toDate) && `${payment.linkedOrderId} ${order?.supplierName || ""} ${payment.referenceNumber || ""} ${payment.utrNumber || ""}`.toLowerCase().includes(searchText.trim().toLowerCase());
   });
   const purchaseExportHeaders = viewMode === "orders" ? purchaseOrderExportHeaders() : purchasePaymentExportHeaders();
   const purchaseExportRowsData = viewMode === "orders" ? purchaseOrderExportRows(snapshot, filteredGroups) : purchasePaymentExportRows(snapshot, filteredCompletedPayments);
   const purchaseExportTitle = viewMode === "orders" ? "Purchase Orders Report" : "Purchase Payments Report";
   const purchaseExportPrefix = viewMode === "orders" ? "purchase-orders" : "purchase-payments";
-
-  useEffect(() => {
-    if (allGroups.length === 0) return;
-    if (datePreset === "today" && !hasTodayOrders) {
-      if (hasYesterdayOrders) {
-        setDatePreset("yesterday");
-        setSelectedFromDate(yesterdayDate);
-        setSelectedToDate(yesterdayDate);
-      } else {
-        setDatePreset("custom");
-        setSelectedFromDate(latestAvailableDate);
-        setSelectedToDate(latestAvailableDate);
-      }
-      return;
-    }
-    if (datePreset === "yesterday" && !hasYesterdayOrders) {
-      if (hasTodayOrders) {
-        setDatePreset("today");
-        setSelectedFromDate(todayDate);
-        setSelectedToDate(todayDate);
-      } else {
-        setDatePreset("custom");
-        setSelectedFromDate(latestAvailableDate);
-        setSelectedToDate(latestAvailableDate);
-      }
-    }
-  }, [allGroups, datePreset, hasTodayOrders, hasYesterdayOrders, latestAvailableDate, todayDate, yesterdayDate]);
 
   return (
     <section className="collapse-stack order-command-center purchase-command-center">
@@ -248,8 +208,8 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
       <section className="order-control-surface">
       <div className="date-filter-strip">
         <button className={datePreset === "last7" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("last7"); setSelectedFromDate(last7FromDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: last7FromDate, toDate: todayDate }); }}>Last 7 days</button>
-        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); }}>Today</button>
-        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); }}>Yesterday</button>
+        <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: todayDate, toDate: todayDate }); }}>Today</button>
+        <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); onLoadDateRange?.({ fromDate: yesterdayDate, toDate: yesterdayDate }); }}>Yesterday</button>
         <button className={datePreset === "custom" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setCustomFromDraft(activeRange.fromDate); setCustomToDraft(activeRange.toDate); setCustomDateOpen(true); }}>Custom Date</button>
       </div>
       <article className="list-card date-range-card">
@@ -274,7 +234,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
           <div><span className="small-label">Accounts follow-up</span><strong className="summary-stat-value"><span>Payment pending</span><PendingBadge count={paymentPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {filteredGroups.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders yet.</div></Panel> : <Panel title="Purchases" eyebrow="Your purchase orders">
+      {filteredGroups.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders matched the selected filters.</div></Panel> : <Panel title="Purchases" eyebrow="Your purchase orders">
         <div className="stack-list purchase-summary-scroll">
           {filteredGroups.map((group) => {
             const first = group.lines[0];
@@ -326,7 +286,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
       </Panel>}
       </> : <Panel title="Settled Payments" eyebrow="Purchase proofs">
         <div className="stack-list payment-update-list">
-          {filteredCompletedPayments.length === 0 ? <div className="empty-card">No settled purchase payments yet.</div> : filteredCompletedPayments.map((payment) => {
+          {filteredCompletedPayments.length === 0 ? <div className="empty-card">No settled purchase payments matched the selected filters.</div> : filteredCompletedPayments.map((payment) => {
             const order = findPurchaseOrderByPublicId(snapshot.purchaseOrders, payment.linkedOrderId);
             const invoiceGroup = groupPurchaseOrders(snapshot.purchaseOrders).find((group) => group.id === payment.linkedOrderId);
             const proofUrl = payment.proofName ? `${API_BASE}/uploads/payment-proofs/${payment.proofName}` : "";
