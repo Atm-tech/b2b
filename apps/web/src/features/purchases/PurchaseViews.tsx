@@ -158,13 +158,15 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
   const [viewMode, setViewMode] = useState<"orders" | "payments">("orders");
   const [openPaymentId, setOpenPaymentId] = useState("");
   const [searchText, setSearchText] = useState("");
-  const [datePreset, setDatePreset] = useState<"last7" | "today" | "yesterday" | "custom">("last7");
+  const [datePreset, setDatePreset] = useState<"all" | "last7" | "today" | "yesterday" | "custom">("last7");
   const [selectedFromDate, setSelectedFromDate] = useState(last7FromDate);
   const [selectedToDate, setSelectedToDate] = useState(indiaDateKey());
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [customFromDraft, setCustomFromDraft] = useState(indiaDateKey());
   const [customToDraft, setCustomToDraft] = useState(indiaDateKey());
-  const activeRange = datePreset === "last7"
+  const activeRange = datePreset === "all"
+    ? { fromDate: "0001-01-01", toDate: todayDate }
+    : datePreset === "last7"
     ? { fromDate: last7FromDate, toDate: todayDate }
     : datePreset === "today"
     ? { fromDate: todayDate, toDate: todayDate }
@@ -207,6 +209,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
       </div>
       <section className="order-control-surface">
       <div className="date-filter-strip">
+        <button className={datePreset === "all" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("all"); onLoadDateRange?.({ fromDate: "0001-01-01", toDate: todayDate }); }}>All dates</button>
         <button className={datePreset === "last7" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("last7"); setSelectedFromDate(last7FromDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: last7FromDate, toDate: todayDate }); }}>Last 7 days</button>
         <button className={datePreset === "today" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("today"); setSelectedFromDate(todayDate); setSelectedToDate(todayDate); onLoadDateRange?.({ fromDate: todayDate, toDate: todayDate }); }}>Today</button>
         <button className={datePreset === "yesterday" ? "date-filter-pill active" : "date-filter-pill"} type="button" onClick={() => { setDatePreset("yesterday"); setSelectedFromDate(yesterdayDate); setSelectedToDate(yesterdayDate); onLoadDateRange?.({ fromDate: yesterdayDate, toDate: yesterdayDate }); }}>Yesterday</button>
@@ -214,7 +217,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
       </div>
       <article className="list-card date-range-card">
         <div className="payment-meta-grid">
-          <div><span className="small-label">From</span><strong>{activeRange.fromDate}</strong></div>
+          <div><span className="small-label">From</span><strong>{datePreset === "all" ? "Beginning" : activeRange.fromDate}</strong></div>
           <div><span className="small-label">To</span><strong>{activeRange.toDate}</strong></div>
         </div>
       </article>
@@ -234,7 +237,7 @@ export function PurchaserPurchaseSummary({ snapshot, currentUser, orders, onUpda
           <div><span className="small-label">Accounts follow-up</span><strong className="summary-stat-value"><span>Payment pending</span><PendingBadge count={paymentPendingCount} /></strong></div>
         </div>
       </article> : null}
-      {filteredGroups.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders matched the selected filters.</div></Panel> : <Panel title="Purchases" eyebrow="Your purchase orders">
+      {filteredGroups.length === 0 ? <Panel title="Purchases" eyebrow="Your purchase orders"><div className="empty-card">No purchase orders matched the selected filters. Choose All dates to include older POs.</div></Panel> : <Panel title="Purchases" eyebrow="Your purchase orders">
         <div className="stack-list purchase-summary-scroll">
           {filteredGroups.map((group) => {
             const first = group.lines[0];

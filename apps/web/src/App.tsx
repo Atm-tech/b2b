@@ -179,6 +179,7 @@ function App() {
   const [deliveryManagerScreen, setDeliveryManagerScreen] = useState<"home" | "in" | "out">("home");
   const [deliveryManagerWarehouseId, setDeliveryManagerWarehouseId] = useState("");
   const [login, setLogin] = useState({ username: "", password: "" });
+  const snapshotOrderRange = useRef<{ fromDate: string; toDate: string } | undefined>(undefined);
   const orderNotificationBaseline = useRef<Set<string> | null>(null);
   const whatsappBadgeBaseline = useRef<number | null>(null);
   const [notificationPromptOpen, setNotificationPromptOpen] = useState(false);
@@ -579,11 +580,18 @@ function App() {
   async function refresh(user = currentUser, orderRange?: { fromDate: string; toDate: string }) {
     const token = window.localStorage.getItem(TOKEN_KEY) || sessionToken;
     if (!user || !token) return;
+    if (orderRange) snapshotOrderRange.current = orderRange;
+    const activeOrderRange = snapshotOrderRange.current;
     try {
       const { data } = await api.get<AppSnapshot>("/snapshot", {
         headers: { authorization: `Bearer ${token}` },
-        params: orderRange ? { ordersFrom: orderRange.fromDate, ordersTo: orderRange.toDate } : undefined
+        params: activeOrderRange ? { ordersFrom: activeOrderRange.fromDate, ordersTo: activeOrderRange.toDate } : undefined
       });
+      // Loading historical dates must not announce existing orders as new.
+      if (orderRange && orderNotificationBaseline.current) {
+        for (const order of data.salesOrders) orderNotificationBaseline.current.add(`Sales:${orderPublicId(order)}`);
+        for (const order of data.purchaseOrders) orderNotificationBaseline.current.add(`Purchase:${orderPublicId(order)}`);
+      }
       setSnapshot(data);
     } catch (submitError) {
       clearSessionState(setCurrentUser, setSessionToken, setSnapshot);
@@ -617,7 +625,8 @@ function App() {
         }
       }
     }
-    orderNotificationBaseline.current = current;
+    // Keep seen IDs when a filtered snapshot temporarily hides orders.
+    orderNotificationBaseline.current = new Set([...(previous || []), ...current]);
   }, [snapshot]);
 
   useEffect(() => {
