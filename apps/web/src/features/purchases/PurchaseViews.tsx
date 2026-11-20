@@ -20,7 +20,6 @@ downloadReportCsv,
 downloadReportPdf,
 findPurchaseOrderByPublicId,
 groupNewestCreatedAt,
-groupOldestCreatedAt,
 groupPurchaseOrders,
 GstRateInput,
 indiaDateKey,
@@ -396,7 +395,7 @@ export function PurchaseCartEditor({
       || order.purchaserName === currentUser.fullName
       )
     )
-  ).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  ).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const [draft, setDraft] = useState<{
     paymentMode: PaymentMode;

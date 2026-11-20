@@ -20,7 +20,6 @@ downloadReportPdf,
 downloadSalesInvoicePdf,
 findSalesOrderByPublicId,
 groupNewestCreatedAt,
-groupOldestCreatedAt,
 groupSalesOrders,
 GstRateInput,
 indiaDateKey,
@@ -51,7 +50,7 @@ userRoleList
 } from "../../app/shared";
 
 export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, onCreatePayment, onTagCollectionAgent, onLogCollectionNote, onOpenStatus, onLoadDateRange }: { snapshot: AppSnapshot; currentUser: AppUser; orders: AppSnapshot["salesOrders"]; onUpdateSo: (orderId: string) => void; onCreatePayment: (body: { side: "Purchase" | "Sales"; linkedOrderId: string; amount: number; mode: PaymentMode; cashTiming?: string; referenceNumber: string; voucherNumber?: string; utrNumber?: string; proofName?: string; verificationStatus: "Pending" | "Submitted" | "Verified" | "Rejected" | "Disputed" | "Resolved"; verificationNote: string; operationDate?: string; }) => Promise<boolean | void>; onTagCollectionAgent: (orderId: string, assignedTo: string) => Promise<boolean | void>; onLogCollectionNote: (orderId: string, note: string) => Promise<boolean | void>; onOpenStatus?: (target: OrderQrTarget) => void; onLoadDateRange?: (range: { fromDate: string; toDate: string }) => void; }) {
-  const allGroups = groupSalesOrders(orders).sort((left, right) => groupNewestCreatedAt(left.lines) - groupNewestCreatedAt(right.lines));
+  const allGroups = groupSalesOrders(orders).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const todayDate = indiaDateKey();
   const yesterdayDate = indiaYesterdayDateKey();
   const last7FromDate = indiaDateKey(new Date(new Date(`${todayDate}T00:00:00`).setDate(new Date(`${todayDate}T00:00:00`).getDate() - 6)));
@@ -114,7 +113,7 @@ export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, o
       };
     })
     .filter((group) => (dateKeyInRange(indiaDateKey(new Date(groupNewestCreatedAt(group.lines))), activeRange.fromDate, activeRange.toDate) || group.pendingAmount > 0 || salesGroupNotDelivered({ id: group.id, lines: group.lines })) && group.pendingAmount > 0 && collectionVisibleToUser(snapshot, group, currentUser))
-    .sort((left, right) => groupNewestCreatedAt(left.lines) - groupNewestCreatedAt(right.lines));
+    .sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const unsettledCollections = snapshot.payments
     .filter((item) => item.side === "Sales" && item.createdBy === currentUser.fullName && item.verificationStatus !== "Verified" && item.verificationStatus !== "Resolved" && item.verificationStatus !== "Rejected")
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -437,7 +436,7 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
       || order.salesmanId === currentUser.id
       || order.salesmanName === currentUser.fullName
     )
-  )).sort((left, right) => groupOldestCreatedAt(left.lines) - groupOldestCreatedAt(right.lines));
+  )).sort((left, right) => groupNewestCreatedAt(right.lines) - groupNewestCreatedAt(left.lines));
   const [selectedOrderId, setSelectedOrderId] = useState(initialOrderId || editableGroups[0]?.id || "");
   const selectedGroup = editableGroups.find((group) => group.id === selectedOrderId) || editableGroups[0] || null;
   const editState = selectedGroup ? salesOrderEditState(snapshot, selectedGroup.id, currentUser) : { editable: false, reason: "No sales orders available." };
