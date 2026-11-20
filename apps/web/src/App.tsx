@@ -716,7 +716,7 @@ function App() {
   }
 
   async function patch(path: string, body: object, success: string, onSuccess?: () => void) {
-    if (!currentUser || !sessionToken) return;
+    if (!currentUser || !sessionToken) return false;
     setLoading(true);
     setError("");
     setMessage("");
@@ -727,8 +727,10 @@ function App() {
       setSnapshot(data);
       setMessage(success);
       onSuccess?.();
+      return true;
     } catch (submitError) {
       setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Update failed.") : "Update failed.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -1602,7 +1604,7 @@ function App() {
             onUploadProof={(file) => uploadFile("/returns/upload-proof", "returnProof", file, "Return proof uploaded.")}
             onSubmit={(body) => post("/purchase-returns", body, "Purchase return saved.")}
           /> : null}
-          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.")} /> : <CatalogOrderView
+          {activeView === "Sales" ? (isAdminUser ? <AnalystSalesView snapshot={snapshot} orders={snapshot.salesOrders} onLoadDateRange={(range) => void refresh(currentUser, range)} /> : (salesUpdateOrderId ? <SalesOrderEditor snapshot={snapshot} currentUser={currentUser} initialOrderId={salesUpdateOrderId} onNewOrder={closeSalesEditor} onDirtyChange={setSalesEditorDirty} onUpdateSalesOrder={(id, body) => patch(`/sales-orders/${id}`, body, "Sales order updated.", () => setActiveView("SalesOrders"))} /> : <CatalogOrderView
             snapshot={snapshot}
             mode="sales"
             title="Salesman Order Booking"
@@ -1751,7 +1753,7 @@ function App() {
                 initialTab={activeView === "NewAssignment" ? "new" : "current"}
                 showInternalTabs={false}
                 onUploadProof={async (file) => uploadFile("/delivery-tasks/upload-proof", "deliveryProof", file, "Delivery proof uploaded.")}
-                onUpdateTask={(id, body) => patch(`/delivery-tasks/${id}`, body, "Delivery task updated.")}
+                onUpdateTask={async (id, body) => { await patch(`/delivery-tasks/${id}`, body, "Delivery task updated."); }}
                 onCreatePayment={(body) => post("/payments", body, "Collection recorded.")}
               />
             ) : isDeliveryManager ? (
