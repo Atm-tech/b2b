@@ -869,7 +869,10 @@ export function displayOrderNote(note?: string) {
 }
 
 export function orderDeliveryNotes(lines: { note?: string }[]) {
-  return Array.from(new Set(lines.map((line) => displayOrderNote(line.note)).filter(Boolean))).join("\n");
+  const internalNote = /^(?:Rate below last purchase price:|Rate alert:|Probationary shortage recorded(?: on order update)?:|Imported from\s|Warehouse source\s|Cancelled from update (?:SO|PO)\.)/i;
+  const notes = lines.flatMap((line) => (line.note || "").split(" | "))
+    .map((note) => note.trim()).filter((note) => note && !internalNote.test(note));
+  return Array.from(new Set(notes)).join("\n");
 }
 
 export function invoiceValue(value?: string | number | null) {
@@ -1235,15 +1238,7 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
     createdAt: first?.createdAt,
     statusLabel: purchaseWorkflowStatus(snapshot, group.id),
     qrDataUrl,
-    note: [
-      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
-      `Purchaser: ${invoiceValue(first?.purchaserName)}`,
-      `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
-      `Contact: ${invoiceValue(supplier?.contactPerson)}`,
-      `Mobile: ${invoiceValue(supplier?.mobileNumber)}`,
-      `Address: ${invoiceValue(supplier?.deliveryAddress || supplier?.address)}`,
-      `City: ${invoiceValue(supplier?.deliveryCity || supplier?.city)}`
-    ].join(" | "),
+    note: orderDeliveryNotes(group.lines),
     rows: group.lines.map((line) => ({
       product: line.productSku,
       quantity: line.quantityOrdered,
@@ -1294,17 +1289,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
     createdAt: first?.createdAt,
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
     qrDataUrl,
-    note: [
-      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
-      salesInvoiceTimestamps(group),
-      `Total Weight: ${formatWeightKg(totalWeight)}`,
-      `Salesman: ${invoiceValue(first?.salesmanName)}`,
-      `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
-      `Contact: ${invoiceValue(customer?.contactPerson)}`,
-      `Mobile: ${invoiceValue(customer?.mobileNumber)}`,
-      `Address: ${invoiceValue(customer?.deliveryAddress || customer?.address)}`,
-      `City: ${invoiceValue(customer?.deliveryCity || customer?.city)}`
-    ].join(" | "),
+    note: orderDeliveryNotes(group.lines),
     rows: group.lines.map((line) => ({
       product: `${line.productSku}\nUnit wt ${formatWeightKg(salesLineUnitWeightKg(snapshot, line))} | Line wt ${formatWeightKg(salesLineWeightKg(snapshot, line))}`,
       quantity: line.quantity,
@@ -1499,7 +1484,6 @@ export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lin
           </thead>
           <tbody>${rows}</tbody>
         </table>
-        <p>${escapeHtml(salesInvoiceTimestamps(group))}</p>
         <div class="invoice-totals">
           <div><span>Total Weight</span><strong>${formatWeightKg(totalWeight)}</strong></div>
           <div><span>Taxable</span><strong>${formatMoney(taxable)}</strong></div>
