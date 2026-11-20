@@ -868,6 +868,10 @@ export function displayOrderNote(note?: string) {
   return text;
 }
 
+export function orderDeliveryNotes(lines: { note?: string }[]) {
+  return Array.from(new Set(lines.map((line) => displayOrderNote(line.note)).filter(Boolean))).join("\n");
+}
+
 export function invoiceValue(value?: string | number | null) {
   if (value === null || value === undefined) return "N/A";
   const text = String(value).trim();
@@ -1191,19 +1195,23 @@ export async function buildInvoicePdfBlob(config: InvoicePdfConfig) {
   cursorY += 18 + config.totals.length * 9;
 
   if (config.note) {
-    if (cursorY + 18 > pageHeight - margin) {
-      doc.addPage();
-      cursorY = 16;
-    }
-    doc.setFillColor(255, 247, 237);
-    doc.roundedRect(margin, cursorY, contentWidth, 16, 3, 3, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(154, 52, 18);
-    doc.text("NOTE", margin + 4, cursorY + 5);
-    doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(doc.splitTextToSize(config.note, contentWidth - 8), margin + 4, cursorY + 11);
+    const noteLines: string[] = doc.splitTextToSize(config.note, contentWidth - 8);
+    while (noteLines.length) {
+      if (cursorY + 18 > pageHeight - margin) { doc.addPage(); cursorY = 16; }
+      const count = Math.max(1, Math.floor((pageHeight - margin - cursorY - 13) / 5));
+      const chunk = noteLines.splice(0, count);
+      doc.setFillColor(255, 247, 237);
+      doc.roundedRect(margin, cursorY, contentWidth, 13 + chunk.length * 5, 3, 3, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(154, 52, 18);
+      doc.text("NOTE", margin + 4, cursorY + 5);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      chunk.forEach((line, index) => doc.text(line, margin + 4, cursorY + 11 + index * 5));
+      cursorY += 13 + chunk.length * 5;
+    }
   }
 
   return doc.output("blob");
@@ -1228,6 +1236,7 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
     statusLabel: purchaseWorkflowStatus(snapshot, group.id),
     qrDataUrl,
     note: [
+      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
       `Purchaser: ${invoiceValue(first?.purchaserName)}`,
       `Delivery Mode: ${invoiceValue(first?.deliveryMode)}`,
       `Contact: ${invoiceValue(supplier?.contactPerson)}`,
@@ -1286,6 +1295,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
     statusLabel: `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}`,
     qrDataUrl,
     note: [
+      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
       salesInvoiceTimestamps(group),
       `Total Weight: ${formatWeightKg(totalWeight)}`,
       `Salesman: ${invoiceValue(first?.salesmanName)}`,
@@ -1393,6 +1403,7 @@ export function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; 
           <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(supplier?.mobileNumber))}</strong></div>
           <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([supplier?.deliveryAddress || supplier?.address, supplier?.deliveryCity || supplier?.city].filter(Boolean).join(", ")))}</strong></div>
         </div>
+        ${orderDeliveryNotes(group.lines) ? `<div class="invoice-note" style="white-space: pre-wrap; overflow-wrap: anywhere"><strong>Delivery / Order Note</strong><br>${escapeHtml(orderDeliveryNotes(group.lines))}</div>` : ""}
         <table class="invoice-line-table">
           <thead>
             <tr>
@@ -1470,6 +1481,7 @@ export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lin
           <div><span>Mobile</span><strong>${escapeHtml(invoiceValue(customer?.mobileNumber))}</strong></div>
           <div class="wide"><span>Address</span><strong>${escapeHtml(invoiceValue([customer?.deliveryAddress || customer?.address, customer?.deliveryCity || customer?.city].filter(Boolean).join(", ")))}</strong></div>
         </div>
+        ${orderDeliveryNotes(group.lines) ? `<div class="invoice-note" style="white-space: pre-wrap; overflow-wrap: anywhere"><strong>Delivery / Order Note</strong><br>${escapeHtml(orderDeliveryNotes(group.lines))}</div>` : ""}
         <table class="invoice-line-table">
           <thead>
             <tr>
@@ -1515,6 +1527,7 @@ export function purchaseInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: 
       `Supplier: ${first?.supplierName || "Supplier"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
+      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
       ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantityOrdered} | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | Total ${formatMoney(line.totalAmount)}`),
       `Taxable Total: ${formatMoney(taxable)}`,
       `GST Total: ${formatMoney(gst)}`,
@@ -1542,6 +1555,7 @@ export function salesInvoiceWhatsappText(snapshot: AppSnapshot, group: { id: str
       `Customer: ${first?.shopName || "Customer"}`,
       `Warehouse: ${warehouseNames.join(", ")}`,
       `Date: ${formatShortDate(first?.createdAt)}`,
+      ...(orderDeliveryNotes(group.lines) ? [`Delivery / Order Note: ${orderDeliveryNotes(group.lines)}`] : []),
       ...group.lines.map((line) => `${line.productSku} | Qty ${line.quantity} | Weight ${formatWeightKg(salesLineWeightKg(snapshot, line))} (${formatWeightKg(salesLineUnitWeightKg(snapshot, line))}/unit) | Rate ${formatMoney(line.rate)} | Taxable ${formatMoney(line.taxableAmount)} | GST ${formatMoney(line.gstAmount)} | CD ${formatMoney(salesLineCdAmount(line))} | TOD ${formatMoney(salesLineTodAmount(line))} | Total ${formatMoney(line.totalAmount)}`),
       `Total Weight: ${formatWeightKg(totalWeight)}`,
       `Taxable Total: ${formatMoney(taxable)}`,
@@ -2561,7 +2575,7 @@ export function buildOrderStatusSummary(snapshot: AppSnapshot, target: OrderQrTa
       currentAction,
       completed,
       totalAmount: group.lines.reduce((sum, line) => sum + line.totalAmount, 0),
-      note: displayOrderNote(first?.note)
+      note: orderDeliveryNotes(group.lines)
     };
   }
   const group = groupSalesOrders(snapshot.salesOrders).find((item) => item.id === target.orderId);
@@ -2602,7 +2616,7 @@ export function buildOrderStatusSummary(snapshot: AppSnapshot, target: OrderQrTa
     currentAction,
     completed,
     totalAmount: group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0),
-    note: displayOrderNote(first?.note)
+    note: orderDeliveryNotes(group.lines)
   };
 }
 

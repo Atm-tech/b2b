@@ -2472,7 +2472,7 @@ export async function createSalesCart(payload: Omit<Parameters<typeof createSale
         ...line,
         cartId,
         applyDeliveryCharge: index === 0,
-        note: line.note || payload.note,
+        note: Array.from(new Set([payload.note?.trim(), line.note?.trim()].filter(Boolean))).join(" | "),
         advancePayment: index === 0 ? payload.advancePayment : undefined,
         skipFinancials: true
       }, currentUser, client);
