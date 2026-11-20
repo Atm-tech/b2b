@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import type {
 AppSnapshot,
 AppUser,
@@ -1219,7 +1220,7 @@ export function StandaloneExcelMaker() {
     const storedRows = readStoredJson<Array<{ partyName: string; accountNumber: string; ifsc: string; amount: string }>>(rowsKey, []);
     return storedRows.length > 0 ? storedRows : [{ partyName: "", accountNumber: "", ifsc: "", amount: "" }];
   });
-  const [makerError, setMakerError] = useState("");
+  const [makerError, setMakerError] = useFeedbackState("error");
 
   useEffect(() => {
     writeStoredJson(configKey, config);

@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import { useEffect, useRef, useState } from "react";
 import { normalizeGuideSlug, type TrainingGuide, type GuideSlug } from "@aapoorti-b2b/domain";
 import { useGuideNarration } from "./useGuideNarration";
@@ -30,7 +31,7 @@ export default function GuidePortal() {
   const slug = normalizeGuideSlug(path[2] || "");
   const [payload, setPayload] = useState<Payload | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useFeedbackState("error");
   const [status, setStatus] = useState(0);
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
@@ -61,7 +62,7 @@ export default function GuidePortal() {
 }
 
 function Login({ onLogin }: { onLogin: () => void }) {
-  const [username, setUsername] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const [username, setUsername] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useFeedbackState("error"); const [busy, setBusy] = useState(false);
   return <form className="training-login" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(""); try { const result = await request<{ token: string; user: unknown }>("/auth/login", { username, password }); localStorage.setItem(tokenKey, result.token); localStorage.setItem("aapoorti-b2b-user", JSON.stringify(result.user)); setPassword(""); onLogin(); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>
     <label>Username<input autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /></label>
     <label>Password<input autoComplete="current-password" type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
@@ -102,7 +103,7 @@ function Book({ guide, name, whatsappUrl }: Payload) {
 function TrainingLibrary({ catalog }: { catalog: Catalog }) {
   const [recipients, setRecipients] = useState<{ retailers: Recipient[]; users: Recipient[] }>({ retailers: [], users: [] });
   const [kind, setKind] = useState("retailer"); const [recipientId, setRecipientId] = useState(""); const [guide, setGuide] = useState("retailer");
-  const [link, setLink] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState("");
+  const [link, setLink] = useState(""); const [error, setError] = useFeedbackState("error"); const [busy, setBusy] = useState(false); const [notice, setNotice] = useFeedbackState("success");
   useEffect(() => { if (!catalog.canShare) return; let active = true; void request<typeof recipients>("/guides/recipients").then(r => { if (active) setRecipients(r); }).catch(e => { if (active) setError(message(e)); }); return () => { active = false; }; }, [catalog.canShare]);
   const list = kind === "retailer" ? recipients.retailers : recipients.users;
   const recipient = list.find(r => String(r.id) === recipientId);

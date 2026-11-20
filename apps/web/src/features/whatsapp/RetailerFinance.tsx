@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import {useCallback,useEffect,useRef,useState} from 'react';
 import type {FormEvent} from 'react';
 import axios from 'axios';
@@ -29,7 +30,7 @@ function CollectionCard({item,staff,busy,act,canSchedule}:{item:Collection;staff
  <label>Sales owner<select name="ownerId" defaultValue={item.owner_id} required>{staff.filter(u=>u.role==='Sales'||u.roles?.includes('Sales')).map(u=><option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}</select></label><label>Assigned collector<select name="collector" defaultValue={item.collector_username||''}><option value="">Sales will assign</option>{staff.filter(u=>[u.role,...(u.roles||[])].some(r=>['Collection Agent','Delivery','Out Delivery'].includes(r))).map(u=><option key={u.id} value={u.username}>{u.full_name} ({u.role})</option>)}</select></label><label>Next follow-up date<input name="dueAt" type="datetime-local" defaultValue={localDate(item.due_at)} required/></label><label>Next action / collection note<textarea name="note" defaultValue={item.note} required/></label><button className="primary-button" disabled={busy}>Save follow-up</button></form>:null}<p>Closure follows verified settlement. Collect only the outstanding delivered bill.</p></article>;
 }
 export function RetailerFinance({sessionToken,roles,admin=false}:{sessionToken:string;roles:string[];admin?:boolean}){
- const [data,setData]=useState<Data|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const inFlight=useRef(false);
+ const [data,setData]=useState<Data|null>(null);const [error,setError]=useFeedbackState("error");const [busy,setBusy]=useState(false);const inFlight=useRef(false);
  const errorText=(e:unknown)=>axios.isAxiosError(e)?String(e.response?.data?.message||e.message):e instanceof Error?e.message:'Unable to load retailer finances.';
  const refresh=useCallback(async()=>{const {data}=await api.get<Data>('/whatsapp/finance',{headers:{authorization:`Bearer ${sessionToken}`}});setData(data);},[sessionToken]);
  useEffect(()=>{let active=true;void api.get<Data>('/whatsapp/finance',{headers:{authorization:`Bearer ${sessionToken}`}}).then(r=>{if(active)setData(r.data);}).catch(e=>{if(active)setError(errorText(e));});return()=>{active=false;};},[sessionToken]);

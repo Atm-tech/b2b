@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import {useCallback,useEffect,useRef,useState} from 'react';
 import axios from 'axios';
 import type {AppSnapshot,AppUser} from '@aapoorti-b2b/domain';
@@ -10,7 +11,7 @@ type Upload=(id:string,stage:string,lineId:string|null,file:File)=>Promise<void>
 export type Case={photos:Photo[];canReceive:boolean;handover_at?:string;warehouse_received_at?:string;receipt_json?:Receipt;id:string;task_id:string;order_id:string;retailer_name:string;seller_name:string;agent_username:string;status:string;revision:number;report_json:Report;original_json:Array<{id:string;product_sku:string;product_name:string;quantity:number}>;bill_adjusted_at?:string;adjusted_total?:number;paid_amount:number;amount_due?:number;credit_amount:number;proposed_bill:{total:number;lines:Array<{id:string;quantity:number}>};decision_note:string;retry_at?:string;canEdit:boolean;canDecide:boolean;failed_notifications:number;events:Array<{id:number;action:string;actor:string;note:string;created_at:string}>};
 type Act=(id:string,action:string,body:Record<string,unknown>)=>Promise<void>;
 function EvidencePreview({item,photo,sessionToken}:{item:Case;photo:Photo;sessionToken:string}){
- const [url,setUrl]=useState('');const [error,setError]=useState('');
+ const [url,setUrl]=useState('');const [error,setError]=useFeedbackState("error");
  useEffect(()=>{const controller=new AbortController();let objectUrl='';void api.get(`/delivery-exceptions/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.id)}`,{headers:{authorization:`Bearer ${sessionToken}`},responseType:'blob',signal:controller.signal}).then(({data})=>{if(!controller.signal.aborted){objectUrl=URL.createObjectURL(data);setUrl(objectUrl);}}).catch(()=>{if(!controller.signal.aborted)setError('Unable to load photo.');});return()=>{controller.abort();if(objectUrl)URL.revokeObjectURL(objectUrl);};},[item.id,photo.id,sessionToken]);
  return <figure>{url?<a href={url} target="_blank" rel="noreferrer"><img src={url} alt={`${photo.stage}: ${item.original_json.find(l=>l.id===photo.lineId)?.product_name||'Visit / handover'}`} style={{maxWidth:'100%',maxHeight:240}}/></a>:<p>{error||'Loading photo...'}</p>}<figcaption>{photo.stage} / {item.original_json.find(l=>l.id===photo.lineId)?.product_name||'Visit / handover'} / {photo.createdBy} / {formatDateTimeIst(photo.createdAt)}</figcaption></figure>;
 }
@@ -71,7 +72,7 @@ function ExceptionCard({item,busy,act,upload,sessionToken}:{item:Case;busy:boole
  </article>;
 }
 export function DeliveryExceptionRegister({snapshot,sessionToken,currentUser,onChanged}:{snapshot:AppSnapshot;sessionToken:string;currentUser:AppUser;onChanged?:()=>void}){
- const [items,setItems]=useState<Case[]>([]);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [loading,setLoading]=useState(true);const [selected,setSelected]=useState('');const [search,setSearch]=useState('');const seq=useRef(0);const busyRef=useRef(false);
+ const [items,setItems]=useState<Case[]>([]);const [error,setError]=useFeedbackState("error");const [busy,setBusy]=useState(false);const [loading,setLoading]=useState(true);const [selected,setSelected]=useState('');const [search,setSearch]=useState('');const seq=useRef(0);const busyRef=useRef(false);
  const errorText=(e:unknown)=>axios.isAxiosError(e)?String(e.response?.data?.message||e.message):e instanceof Error?e.message:'Unable to update report.';
  const refresh=useCallback(async()=>{if(busyRef.current)return;const n=++seq.current;try{const {data}=await api.get<{cases:Case[]}>('/delivery-exceptions',{headers:{authorization:`Bearer ${sessionToken}`}});if(n===seq.current){setItems(data.cases);setError('');}}catch(e){if(n===seq.current)setError(errorText(e));}finally{if(n===seq.current)setLoading(false);}},[sessionToken]);
  useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),3000);return()=>{clearInterval(timer);seq.current++;};},[refresh]);

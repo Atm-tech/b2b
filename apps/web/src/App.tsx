@@ -1,3 +1,4 @@
+import { useFeedbackState } from "./app/feedback";
 import {RetailerFinance} from './features/whatsapp/RetailerFinance';
 import { PackingRegister } from "./features/whatsapp/PackingRegister";
 import { DeliveryExceptionRegister } from "./features/operations/DeliveryExceptionRegister";
@@ -167,8 +168,8 @@ function App() {
   const [activeView, setActiveView] = useState<ViewKey>("Overview");
   const [bootstrapping, setBootstrapping] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useFeedbackState("success");
+  const [error, setError] = useFeedbackState("error");
   const [simpleMode, setSimpleMode] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -688,7 +689,7 @@ function App() {
       window.localStorage.setItem(ACTIVE_VIEW_KEY, nextView);
       window.localStorage.removeItem(DELIVERY_MANAGER_WAREHOUSE_KEY);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Login failed.");
+      setError(axios.isAxiosError(submitError) ? String(submitError.response?.data?.message || submitError.message || "Login failed.") : "Login failed.");
     } finally {
       setLoading(false);
     }
@@ -881,7 +882,6 @@ function App() {
               </div>
               <label>Username<input value={login.username} onChange={(e) => setLogin((c) => ({ ...c, username: e.target.value }))} /></label>
               <label>Password<input type="password" value={login.password} onChange={(e) => setLogin((c) => ({ ...c, password: e.target.value }))} /></label>
-              {error ? <p className="message error">{error}</p> : null}
               <button className="primary-button" type="submit" disabled={loading}>{loading ? "Signing in..." : "Login"}</button>
             </form>
           </section>
@@ -1511,7 +1511,6 @@ function App() {
         </div>
       </section> : null}
 
-      {message || error ? <div className="app-feedback" role="presentation"><section className={`app-feedback-card ${error ? "error" : "success"}`} role={error ? "alert" : "status"} aria-live="assertive"><div><span>{error ? "Action needs attention" : "Done"}</span><strong>{error || message}</strong></div><button type="button" aria-label="Dismiss message" onClick={() => { setMessage(""); setError(""); }}>×</button></section></div> : null}
 
       <section className={effectiveSimpleMode ? "workspace-shell simple-workspace" : `workspace-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
         {!effectiveSimpleMode && !isWhatsAppWorkspaceUser ? <aside className={`sidebar panel${sidebarCollapsed ? " is-collapsed" : ""}`}>

@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import type { AppSnapshot } from '@aapoorti-b2b/domain';
@@ -39,7 +40,7 @@ function PackingCard({item,permissions,busy,act}:{item:Review;permissions:Regist
   </article>;
 }
 export function PackingRegister({snapshot,sessionToken}:{snapshot:AppSnapshot;sessionToken:string}) {
-  const [register,setRegister]=useState<Register>({cases:[],canWarehouse:false,canSales:false,canOverride:false});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [loading,setLoading]=useState(true);const [cart,setCart]=useState('');const [filter,setFilter]=useState('');const sequence=useRef(0);const busyRef=useRef(false);
+  const [register,setRegister]=useState<Register>({cases:[],canWarehouse:false,canSales:false,canOverride:false});const [busy,setBusy]=useState(false);const [error,setError]=useFeedbackState("error");const [loading,setLoading]=useState(true);const [cart,setCart]=useState('');const [filter,setFilter]=useState('');const sequence=useRef(0);const busyRef=useRef(false);
   const message=(error:unknown)=>axios.isAxiosError(error)?String(error.response?.data?.message||error.message):error instanceof Error?error.message:'The action could not be completed.';
   const refresh=useCallback(async()=>{if(busyRef.current)return;const current=++sequence.current;try{const {data}=await api.get<Register>('/whatsapp/packing-reviews',{headers:{authorization:`Bearer ${sessionToken}`}});if(current===sequence.current){setRegister(data);setError('');}}catch(error){if(current===sequence.current)setError(message(error));}finally{if(current===sequence.current)setLoading(false);}},[sessionToken]);
   useEffect(()=>{void refresh();const timer=window.setInterval(()=>void refresh(),30_000);return()=>{window.clearInterval(timer);sequence.current++;};},[refresh]);

@@ -637,7 +637,7 @@ export function PurchaseCartEditor({
               </div>
               {draft?.lines.map((line, index) => {
                 return (
-                  <div className="compact-order-editor-row" key={line.clientKey || line.id || `${line.productSku}-${index}`}>
+                  <div className="compact-order-editor-row" data-product-sku={line.productSku} key={line.clientKey || line.id || `${line.productSku}-${index}`}>
                     <div className="compact-order-editor-actions">
                       <button className="ghost-button compact-icon-button" type="button" onClick={addDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button>
                       <button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button>
@@ -645,8 +645,8 @@ export function PurchaseCartEditor({
                     <div className="compact-order-editor-product">
                       {!line.id ? <OrderProductSelect products={snapshot.products.map((product) => ({ sku: product.sku, label: productDisplayLabel(product) || product.sku }))} value={line.productSku} onChange={(productSku) => updateDraftLine(line.clientKey, { productSku })} disabled={!editState.editable} /> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}
                     </div>
-                    <input type="number" step="any" min="0" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.clientKey, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
-                    <input type="number" step="any" min="0" value={line.rate} onChange={(e) => updateDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} />
+                    <input type="number" step="any" min="0" aria-label="Quantity" value={line.quantityOrdered} onChange={(e) => updateDraftLine(line.clientKey, { quantityOrdered: e.target.value })} disabled={!editState.editable} />
+                    <input type="number" step="any" min="0" aria-label="Rate" value={line.rate} onChange={(e) => updateDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} />
                   </div>
                 );
               })}

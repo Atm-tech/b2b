@@ -1,3 +1,4 @@
+import { notify } from "../../app/feedback";
 import type {
 AppSnapshot,
 AppUser,
@@ -862,7 +863,7 @@ export function WarehouseOperationsViewV2({
             const receivedQuantity = Number(draft.receivedQuantity || 0);
             const needsCashProof = line.deliveryMode === "Dealer Delivery" && line.paymentMode === "Cash" && line.cashTiming === "At Delivery";
             if (needsCashProof && !draft.cashProofName) {
-              window.alert("Upload cash proof for vendor-delivery cash orders.");
+              notify("Upload cash proof for vendor-delivery cash orders.", "error");
               return;
             }
             if (needsCashProof && draft.cashProofName) {

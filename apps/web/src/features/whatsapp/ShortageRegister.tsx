@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import type { AppSnapshot } from "@aapoorti-b2b/domain";
@@ -65,7 +66,7 @@ function ShortageCard({ item, register, snapshot, busy, onAction }: { item: Shor
 export function ShortageRegister({ snapshot, sessionToken }: { snapshot: AppSnapshot; sessionToken: string }) {
   const [register, setRegister] = useState<Register>(empty);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useFeedbackState("error");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("");
   const sequence = useRef(0);

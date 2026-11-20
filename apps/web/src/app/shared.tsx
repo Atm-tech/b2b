@@ -1,3 +1,4 @@
+import { installApiFeedback, notify, useFeedbackState } from "./feedback";
 import type {
 AppSnapshot,
 AppUser,
@@ -45,6 +46,7 @@ export const COMPANY_GST_NUMBER = "23AAECA1547R1ZH";
 export const api = axios.create({
   baseURL: API_BASE
 });
+installApiFeedback(api);
 
 export type GstRateInput = "NA" | "0" | "5" | "12" | "18" | "40";
 export type TaxModeInput = "NA" | "Exclusive" | "Inclusive";
@@ -1054,7 +1056,7 @@ export async function shareInvoicePdfFile(fileName: string, blob: Blob, title: s
   }
   downloadBlobFile(fileName, blob);
   if (typeof window !== "undefined") {
-    window.alert("Direct WhatsApp PDF share is not supported on this browser. The PDF has been downloaded to your device; attach that file in WhatsApp.");
+    notify("The PDF has been downloaded. Attach it in WhatsApp to share.", "info");
   }
 }
 
@@ -2848,7 +2850,7 @@ export function QrScanOverlay({
   onScan: (target: OrderQrTarget) => void;
 }) {
   const [manualValue, setManualValue] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useFeedbackState("error");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [scannerMode, setScannerMode] = useState<"camera" | "manual">("camera");

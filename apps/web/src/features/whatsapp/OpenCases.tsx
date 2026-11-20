@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import {useCallback,useEffect,useState} from 'react';
 import axios from 'axios';
 import {api,formatDateTimeIst} from '../../app/shared';
@@ -5,7 +6,7 @@ import {Panel} from '../../components/ui';
 type Case={case_key:string;kind:string;reference:string;status:string;assigned_owner_id:number;owner_name:string;deadline:string;action_required:string;overdue:boolean;created_at:string};
 type Data={items:Case[];staff:{id:number;full_name:string}[]};
 export function OpenCases({sessionToken}:{sessionToken:string}){
- const [data,setData]=useState<Data>({items:[],staff:[]});const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [filter,setFilter]=useState('');
+ const [data,setData]=useState<Data>({items:[],staff:[]});const [error,setError]=useFeedbackState("error");const [busy,setBusy]=useState(false);const [filter,setFilter]=useState('');
  const fail=(e:unknown)=>setError(axios.isAxiosError(e)?String(e.response?.data?.message||e.message):String(e));
  const refresh=useCallback(async()=>{const r=await api.get<Data>('/whatsapp/open-cases',{headers:{authorization:`Bearer ${sessionToken}`}});setData(r.data);},[sessionToken]);
  useEffect(()=>{void refresh().catch(fail);},[refresh]);

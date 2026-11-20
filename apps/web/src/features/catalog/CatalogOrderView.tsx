@@ -1,3 +1,4 @@
+import { notify } from "../../app/feedback";
 import type {
 AppSnapshot,
 Counterparty,
@@ -108,7 +109,6 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
   const [flowStep, setFlowStep] = useState<"landing" | "existing" | "new" | "catalog">(persisted?.flowStep || (mode === "sales" ? "landing" : "catalog"));
   const [cartOpen, setCartOpen] = useState(Boolean(persisted?.cartOpen));
   const [cartStep, setCartStep] = useState<"cart" | "payment" | "summary">(persisted?.cartStep || "cart");
-  const [cartToast, setCartToast] = useState("");
   const [billTaxOverride, setBillTaxOverride] = useState<{ enabled: boolean; gstRate: GstRateInput; taxMode: TaxModeInput }>(persisted?.billTaxOverride || { enabled: false, gstRate: "0", taxMode: "Exclusive" });
   const [cartErrors, setCartErrors] = useState<Record<string, boolean>>(persisted?.cartErrors || {});
   const [cartLines, setCartLines] = useState<CartLine[]>(persisted?.cartLines || []);
@@ -757,7 +757,6 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
     setCartStep("cart");
     setCartErrors({});
     setCartLines([]);
-    setCartToast("");
     setRatePopup(null);
     setPartySuggestionOpen(false);
     setAdvancePayment({ enabled: false, amount: "", mode: "", cashTiming: "In Hand", referenceNumber: "", voucherNumber: "", utrNumber: "", proofName: "" });
@@ -773,10 +772,8 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
   }
 
   function showCartToast(message: string) {
-    setCartToast(message);
-    window.setTimeout(() => {
-      setCartToast((current) => current === message ? "" : current);
-    }, 2200);
+    const kind = /^(?:enter|select|upload|add product|a valid|could not|current location is not|voice search.*not|mrp cannot|cd\/tod.*(?:cannot|must))|required|failed/i.test(message) ? "error" : /saved|cleared|added/i.test(message) ? "success" : "info";
+    notify(message, kind);
   }
 
   function scrollToFieldError(container: HTMLElement | null, selector = ".field-error") {
@@ -1532,7 +1529,6 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
             </div>, document.body) : null}
             {cartOpen && cartLines.length > 0 && typeof document !== "undefined" ? createPortal(<div className="cart-overlay checkout-modal-overlay" onClick={() => setCartOpen(false)}>
               <div ref={checkoutSheetRef} className="cart-sheet checkout-modal-sheet" onClick={(e) => e.stopPropagation()}>
-                {cartToast ? <div className="cart-toast">{cartToast}</div> : null}
                 <div className="cart-head">
                   <div>
                     <span className="eyebrow">{cartStepTitle}</span>
@@ -1549,7 +1545,7 @@ export function CatalogOrderView(props: CatalogOrderViewProps) {
                 </div>
                 {cartStep === "cart" ? <>
                 <div className="stack-list">
-                  {cartProducts.map(({ line, product }) => <article className="list-card cart-product-line" key={line.productSku}>
+                  {cartProducts.map(({ line, product }) => <article className="list-card cart-product-line" data-product-sku={line.productSku} key={line.productSku}>
                     <div className="cart-product-overview">
                       <div className="payment-update-head">
                         <div><strong>{productDisplayLabel(product)}</strong><p>{product.division} / {product.section}</p></div>

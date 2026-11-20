@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { api, formatDateTimeIst } from "../../app/shared";
@@ -39,7 +40,7 @@ export function ConfirmationRegister({sessionToken}:{sessionToken:string}) {
   const [items,setItems]=useState<Confirmation[]>([]);
   const [busy,setBusy]=useState(false);
   const [loading,setLoading]=useState(true);
-  const [error,setError]=useState("");
+  const [error,setError]=useFeedbackState("error");
   const [filter,setFilter]=useState("");
   const sequence=useRef(0);
   const busyRef=useRef(false);

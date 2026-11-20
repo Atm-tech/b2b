@@ -1,3 +1,4 @@
+import { useFeedbackState } from "../../app/feedback";
 import type {
 AppSnapshot,
 AppUser,
@@ -783,7 +784,7 @@ export function AccountsPaymentsView({
       emailId: String(stored?.emailId || "").trim()
     };
   });
-  const [paymentMakerError, setPaymentMakerError] = useState("");
+  const [paymentMakerError, setPaymentMakerError] = useFeedbackState("error");
   const [paymentMakerSupplierFix, setPaymentMakerSupplierFix] = useState<null | { supplierId: string; supplierName: string; message: string }>(null);
   const [paymentMakerBusy, setPaymentMakerBusy] = useState(false);
   const [accountsEntryMode, setAccountsEntryMode] = useState<"quick" | "full">("quick");
@@ -856,7 +857,7 @@ function sanitizeExcelPayeeName(value: string) {
   const [deliveryAssignments, setDeliveryAssignments] = useState<Record<string, string>>({});
   const [expandedAccountsOrder, setExpandedAccountsOrder] = useState("");
   const [advanceSearch, setAdvanceSearch] = useState("");
-  const [advanceMakerError, setAdvanceMakerError] = useState("");
+  const [advanceMakerError, setAdvanceMakerError] = useFeedbackState("error");
   const [advanceMakerSupplierFix, setAdvanceMakerSupplierFix] = useState<null | { supplierId: string; supplierName: string; message: string }>(null);
   const [productDeskSearch, setProductDeskSearch] = useState("");
   const [quickPurchaseForm, setQuickPurchaseForm] = useState({
