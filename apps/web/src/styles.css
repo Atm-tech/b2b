@@ -6716,7 +6716,6 @@ button:disabled {
 .order-add-button { background: #16803c !important; color: #fff !important; border: 1px solid #16803c !important; }
 .order-add-button:hover:not(:disabled) { background: #116530 !important; }
 .order-is-cancelled { position: relative; border-color: #edaaaa; background: #fff7f7; }
-.order-is-cancelled::after { content: "CANCELLED"; position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%) rotate(-10deg); color: #bf2020; opacity: .12; font-size: clamp(30px, 5vw, 58px); font-weight: 900; pointer-events: none; }
 .order-is-cancelled .purchase-summary-toggle:disabled, .order-is-cancelled .report-accordion-toggle:disabled { opacity: 1; color: inherit; cursor: default; }
 .cancelled-order-label { display: inline-block; color: #b91c1c; background: #fee2e2; border: 1px solid #efabab; border-radius: 6px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
 .feedback-toast {
