@@ -904,6 +904,7 @@ export type InvoicePdfRow = {
 };
 
 export type InvoicePdfConfig = {
+  cancelled?: boolean;
   fileName: string;
   documentTitle: string;
   partyLabel: string;
@@ -1219,7 +1220,23 @@ export async function buildInvoicePdfBlob(config: InvoicePdfConfig) {
     }
   }
 
+  if (config.cancelled) {
+    for (let page = 1; page <= doc.getNumberOfPages(); page++) {
+      doc.setPage(page);
+      drawCancelledPdfWatermark(doc, margin, 80, contentWidth, 100);
+    }
+  }
   return doc.output("blob");
+}
+
+export function drawCancelledPdfWatermark(doc: import("jspdf").jsPDF, x: number, y: number, width: number, height: number) {
+  doc.saveGraphicsState();
+  doc.setGState(doc.GState({ opacity: 0.16 }));
+  doc.setTextColor(200, 25, 25);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(Math.min(48, width / 4, height * 1.2));
+  doc.text("CANCELLED", x + width / 2, y + height / 2, { align: "center", baseline: "middle" });
+  doc.restoreGraphicsState();
 }
 
 export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id: string; lines: PurchaseOrder[] }) {
@@ -1231,6 +1248,7 @@ export async function buildPurchaseInvoicePdf(snapshot: AppSnapshot, group: { id
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-purchase-tax-invoice.pdf`),
     documentTitle: "Purchase Tax Invoice",
+    cancelled: group.lines.every((line) => line.status === "Cancelled"),
     partyLabel: "Supplier",
     partyName: `${invoiceValue(first?.supplierName || supplier?.name)} | GST ${invoiceValue(supplier?.gstNumber)}`,
     warehouseName,
@@ -1282,6 +1300,7 @@ export async function buildSalesInvoicePdf(snapshot: AppSnapshot, group: { id: s
   return buildInvoicePdfBlob({
     fileName: safePdfFileName(`${group.id}-sales-tax-invoice.pdf`),
     documentTitle: "Sales Tax Invoice",
+    cancelled: group.lines.every((line) => line.status === "Cancelled"),
     partyLabel: "Customer",
     partyName: `${invoiceValue(first?.shopName || customer?.name)} | ${first?.billingType || "B2C"} | GST ${invoiceValue(customer?.gstNumber)}`,
     warehouseName,
@@ -1365,7 +1384,8 @@ export function purchaseInvoiceHtml(snapshot: AppSnapshot, group: { id: string; 
   `).join("");
   return `
     <main class="invoice-shell">
-      <section class="invoice-card">
+      <section class="invoice-card" style="position:relative">
+        ${group.lines.every((line) => line.status === "Cancelled") ? '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden"><span style="font-size:72px;font-weight:900;color:#c81919;opacity:.16;transform:rotate(-15deg)">CANCELLED</span></div>' : ""}
         <div class="invoice-head">
           <div class="invoice-head-main">
             <div class="invoice-brand">AAPOORTI B2B</div>
@@ -1443,7 +1463,8 @@ export function salesInvoiceHtml(snapshot: AppSnapshot, group: { id: string; lin
   `).join("");
   return `
     <main class="invoice-shell">
-      <section class="invoice-card">
+      <section class="invoice-card" style="position:relative">
+        ${group.lines.every((line) => line.status === "Cancelled") ? '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden"><span style="font-size:72px;font-weight:900;color:#c81919;opacity:.16;transform:rotate(-15deg)">CANCELLED</span></div>' : ""}
         <div class="invoice-head">
           <div class="invoice-head-main">
             <div class="invoice-brand">AAPOORTI B2B</div>
@@ -1610,6 +1631,7 @@ export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: Sa
         .filter((item) => item.side === "Sales" && item.linkedOrderId === group.id)
         .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
       const latestPayment = payments[0];
+      const cancelled = group.lines.every((line) => line.status === "Cancelled");
       return {
         id: group.id,
         createdAt: first.createdAt,
@@ -1617,10 +1639,12 @@ export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: Sa
         salesman: first.salesmanName || "N/A",
         orderMode: first.paymentMode || "N/A",
         cashTiming: first.cashTiming || "",
-        total: ledger?.goodsValue ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
+        cancelled,
+        originalTotal: salesOrderPublicTotal(group.lines, group.id),
+        total: cancelled ? 0 : ledger?.goodsValue ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
         paid: ledger?.paidAmount ?? 0,
-        pending: ledger?.pendingAmount ?? salesOrderPublicTotal(snapshot.salesOrders, group.id),
-        paymentStatus: salesPaymentStatus(snapshot, group.id),
+        pending: ledger?.pendingAmount ?? (cancelled ? 0 : salesOrderPublicTotal(snapshot.salesOrders, group.id)),
+        paymentStatus: cancelled ? "Cancelled" : salesPaymentStatus(snapshot, group.id),
         collector: latestPayment ? dailySalesCollectorLabel(latestPayment) : "Pending",
         collectorMode: latestPayment?.mode || first.paymentMode || "N/A",
         lines: group.lines.map((line) => `${line.productSku} x ${line.quantity}`).join(", ")
@@ -1642,8 +1666,8 @@ export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: Sa
   const timingTotals = (["At Delivery", "In Hand", "Later"] as CashTiming[])
     .map((timing) => ({
       timing,
-      count: visibleGroups.filter((group) => group.orderMode === "Cash" && group.cashTiming === timing).length,
-      value: visibleGroups.filter((group) => group.orderMode === "Cash" && group.cashTiming === timing).reduce((sum, group) => sum + group.total, 0)
+      count: visibleGroups.filter((group) => !group.cancelled && group.orderMode === "Cash" && group.cashTiming === timing).length,
+      value: visibleGroups.filter((group) => !group.cancelled && group.orderMode === "Cash" && group.cashTiming === timing).reduce((sum, group) => sum + group.total, 0)
     }))
     .filter((item) => item.count > 0 || item.value > 0);
   const totalBilled = visibleGroups.reduce((sum, item) => sum + item.total, 0);
@@ -1663,7 +1687,7 @@ export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: Sa
   doc.text("Daily Sales Report", margin + 4, y + 8);
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
-  doc.text(`Date: ${todayKey} | SO count: ${visibleGroups.length}`, margin + 4, y + 15);
+  doc.text(`Date: ${todayKey} | Active SOs: ${visibleGroups.filter((item) => !item.cancelled).length} | Cancelled: ${visibleGroups.filter((item) => item.cancelled).length}`, margin + 4, y + 15);
   doc.text("Per-SO sales, collections, pending, and mode-wise totals", margin + 4, y + 20);
   y += 30;
   const summaryCards = [
@@ -1725,24 +1749,34 @@ export async function buildDailySalesReportPdf(snapshot: AppSnapshot, orders: Sa
   doc.text("Sales Orders", margin, y);
   y += 7;
   for (const item of visibleGroups) {
-    ensureSpace(28);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    const titleLines: string[] = doc.splitTextToSize(`${item.id} | ${item.party}`, contentWidth - 8);
+    const titleExtra = (titleLines.length - 1) * 5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const lineText: string[] = doc.splitTextToSize(`Items: ${item.lines}`, contentWidth - 8);
+    const cardHeight = 30 + titleExtra + lineText.length * 4;
+    ensureSpace(cardHeight + 4);
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(margin, y, contentWidth, 24, 3, 3, "FD");
+    doc.roundedRect(margin, y, contentWidth, cardHeight, 3, 3, "FD");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text(`${item.id} | ${item.party}`, margin + 3, y + 6);
+    doc.text(titleLines, margin + 3, y + 6);
+    doc.setFontSize(9);
+    doc.text(item.cancelled
+      ? `Cancelled | Original order value ${formatMoney(item.originalTotal)} (excluded from sales totals)`
+      : `Total ${formatMoney(item.total)} | Paid ${formatMoney(item.paid)} | Pending ${formatMoney(item.pending)}`, margin + 3, y + 12 + titleExtra);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(71, 85, 105);
-    doc.text(`${formatShortDate(item.createdAt)} | Salesman: ${item.salesman} | Collector: ${item.collector}`, margin + 3, y + 11);
-    doc.text(`Mode: ${item.collectorMode} | Order mode: ${item.orderMode}${item.cashTiming ? ` / ${item.cashTiming}` : ""} | Status: ${item.paymentStatus}`, margin + 3, y + 16);
-    const lineText = doc.splitTextToSize(`Items: ${item.lines}`, contentWidth - 8);
-    doc.text(lineText, margin + 3, y + 21);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Total ${formatMoney(item.total)} | Paid ${formatMoney(item.paid)} | Pending ${formatMoney(item.pending)}`, pageWidth - margin - 3, y + 6, { align: "right" });
-    y += 28;
+    doc.text(`${formatShortDate(item.createdAt)} | Salesman: ${item.salesman} | Collector: ${item.collector}`, margin + 3, y + 18 + titleExtra);
+    doc.text(`Mode: ${item.collectorMode} | Order mode: ${item.orderMode}${item.cashTiming ? ` / ${item.cashTiming}` : ""} | Status: ${item.paymentStatus}`, margin + 3, y + 23 + titleExtra);
+    doc.text(lineText, margin + 3, y + 28 + titleExtra);
+    if (item.cancelled) drawCancelledPdfWatermark(doc, margin, y, contentWidth, cardHeight);
+    y += cardHeight + 4;
   }
   return doc.output("blob");
 }
@@ -1992,6 +2026,7 @@ export function purchasePaymentStatus(snapshot: AppSnapshot, orderId: string) {
 export function purchaseWorkflowStatus(snapshot: AppSnapshot, orderId: string) {
   const lines = snapshot.purchaseOrders.filter((order) => orderPublicId(order) === orderId);
   if (lines.length === 0) return "Pending";
+  if (lines.every((line) => line.status === "Cancelled")) return "Cancelled";
   return `${purchaseWarehouseStatus(lines)} / Payment ${purchasePaymentStatus(snapshot, orderId)}`;
 }
 
@@ -2380,6 +2415,36 @@ export function docketExportRows(snapshot: AppSnapshot, dockets: DeliveryDocket[
 export function downloadReportCsv(filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string) {
   const token = dateRangeFileToken(fromDate, toDate);
   downloadCsvFile(`${filePrefix}-${token}.csv`, headers, rows);
+}
+
+export async function buildStatusWorkbook(headers: string[], rows: Array<Array<string | number>>) {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+  const statusIndex = ["Order Status", "Fulfillment", "Workflow", "Status", "Payment Status", "Settlement"].map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const groups = new Map<string, Array<Array<string | number>>>();
+  for (const row of rows) {
+    const status = statusIndex < 0 ? "Records" : String(row[statusIndex] || "Unspecified");
+    groups.set(status, [...(groups.get(status) || []), row]);
+  }
+  if (!groups.size) groups.set("No records", []);
+  const used = new Set<string>();
+  for (const [status, records] of groups) {
+    const base = status.replace(/[\\/?*\[\]:]/g, "-").replace(/^'+|'+$/g, "").slice(0, 31) || "Status";
+    let sheetName = base;
+    for (let suffix = 2; used.has(sheetName.toLowerCase()); suffix++) sheetName = `${base.slice(0, 26)} (${suffix})`;
+    used.add(sheetName.toLowerCase());
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...records]);
+    sheet["!autofilter"] = { ref: sheet["!ref"] || "A1" };
+    sheet["!cols"] = headers.map((header) => ({ wch: Math.min(40, Math.max(14, header.length + 4)) }));
+    XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+  }
+  return workbook;
+}
+
+export async function downloadStatusWorkbook(filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string) {
+  const XLSX = await import("xlsx");
+  const workbook = await buildStatusWorkbook(headers, rows);
+  XLSX.writeFile(workbook, `${filePrefix}-${dateRangeFileToken(fromDate, toDate)}.xlsx`);
 }
 
 export async function downloadReportPdf(title: string, filePrefix: string, headers: string[], rows: Array<Array<string | number>>, fromDate: string, toDate: string, extraSubtitle: string[] = []) {

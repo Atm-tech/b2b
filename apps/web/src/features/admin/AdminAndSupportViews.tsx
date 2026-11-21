@@ -25,6 +25,7 @@ API_BASE,
 downloadCsvFile,
 downloadDailySalesReportPdf,
 downloadReportCsv,
+downloadStatusWorkbook,
 escapeHtml,
 formatCurrencyInr,
 formatDateIst,
@@ -343,16 +344,17 @@ export function AnalystPurchaseView({ snapshot, orders, onLoadDateRange }: { sna
       </div>
       <div className="payment-card-actions top-gap">
         <button className="primary-button" type="button" disabled={!fromDate || !toDate} onClick={() => onLoadDateRange?.({ fromDate, toDate })}>Load selected dates</button>
-        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("purchase-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadStatusWorkbook("purchase-report", headers, rows, fromDate || "all", toDate || "all")}>Download Excel (status sheets)</button>
         <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
       </div>
       <div className="report-accordion-list">
         {filteredGroups.length === 0 ? <div className="empty-card">No purchase orders matched the selected filters.</div> : filteredGroups.map((item) => {
-          const open = openId === item.id;
-          return <article className="list-card report-accordion-card" key={item.id}>
-            <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
+          const cancelled = item.status === "Cancelled";
+          const open = !cancelled && openId === item.id;
+          return <article className={`list-card report-accordion-card${cancelled ? " order-is-cancelled" : ""}`} key={item.id}>
+            <button className="report-accordion-toggle" type="button" disabled={cancelled} onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
               <div className="report-accordion-main">
-                <span className="small-label">{item.id}</span>
+                <span className="small-label">{item.id} {cancelled ? <span className="cancelled-order-label">CANCELLED</span> : null}</span>
                 <strong>{item.party}</strong>
                 <p>{formatShortDate(item.createdAt)} | {item.products.length} products</p>
               </div>
@@ -364,7 +366,7 @@ export function AnalystPurchaseView({ snapshot, orders, onLoadDateRange }: { sna
               <div className="report-accordion-side">
                 <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
                 <span className={`status-pill ${statusPillClass(item.pending <= 0 ? "Completed" : item.paid > 0 ? "Partial" : "Pending")}`}>{item.settlement}</span>
-                <span className="status-pill">{open ? "Close" : "Open"}</span>
+                {!cancelled ? <span className="status-pill">{open ? "Close" : "Open"}</span> : null}
               </div>
             </button>
             {open ? <div className="payment-meta-grid top-gap">
@@ -401,7 +403,7 @@ export function AnalystSalesView({ snapshot, orders, onLoadDateRange }: { snapsh
       const total = group.lines.reduce((sum, line) => sum + line.totalAmount, 0);
       const pending = ledger?.pendingAmount ?? total;
       const paid = ledger?.paidAmount ?? 0;
-      const status = snapshot ? `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}` : salesStatusLabel(first?.status || "Booked");
+      const status = group.lines.every((line) => line.status === "Cancelled") ? "Cancelled" : snapshot ? `${salesFulfillmentStatus(group.lines)} / Payment ${salesPaymentStatus(snapshot, group.id)}` : salesStatusLabel(first?.status || "Booked");
       return {
         id: group.id,
         party: first?.shopName || "Customer",
@@ -480,17 +482,18 @@ export function AnalystSalesView({ snapshot, orders, onLoadDateRange }: { snapsh
       </div>
       <div className="payment-card-actions">
         <button className="primary-button" type="button" disabled={!fromDate || !toDate} onClick={() => onLoadDateRange?.({ fromDate, toDate })}>Load selected dates</button>
-        <button className="ghost-button" type="button" onClick={() => downloadReportCsv("sales-report", headers, rows, fromDate || "all", toDate || "all")}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadStatusWorkbook("sales-report", headers, rows, fromDate || "all", toDate || "all")}>Download Excel (status sheets)</button>
         <button className="ghost-button" type="button" onClick={() => { setPartySearch(""); setSettlementFilter("All"); setWorkflowFilter("All"); setFromDate(""); setToDate(""); }}>Reset filters</button>
         {snapshot ? <button className="ghost-button" type="button" onClick={() => downloadDailySalesReportPdf(snapshot, orders)}>Daily PDF</button> : null}
       </div>
       <div className="report-accordion-list">
         {filteredGroups.length === 0 ? <div className="empty-card">No sales orders matched the selected filters.</div> : filteredGroups.map((item) => {
-          const open = openId === item.id;
-          return <article className="list-card report-accordion-card" key={item.id}>
-            <button className="report-accordion-toggle" type="button" onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
+          const cancelled = item.status === "Cancelled";
+          const open = !cancelled && openId === item.id;
+          return <article className={`list-card report-accordion-card${cancelled ? " order-is-cancelled" : ""}`} key={item.id}>
+            <button className="report-accordion-toggle" type="button" disabled={cancelled} onClick={() => setOpenId((current) => current === item.id ? "" : item.id)}>
               <div className="report-accordion-main">
-                <span className="small-label">{item.id}</span>
+                <span className="small-label">{item.id} {cancelled ? <span className="cancelled-order-label">CANCELLED</span> : null}</span>
                 <strong>{item.party}</strong>
                 <p>{formatShortDate(item.createdAt)} | {item.products.length} products</p>
               </div>
@@ -502,7 +505,7 @@ export function AnalystSalesView({ snapshot, orders, onLoadDateRange }: { snapsh
               <div className="report-accordion-side">
                 <span className={`status-pill ${statusPillClass(item.status)}`}>{item.status}</span>
                 <span className={`status-pill ${statusPillClass(item.pending <= 0 ? "Completed" : item.paid > 0 ? "Partial" : "Pending")}`}>{item.settlement}</span>
-                <span className="status-pill">{open ? "Close" : "Open"}</span>
+                {!cancelled ? <span className="status-pill">{open ? "Close" : "Open"}</span> : null}
               </div>
             </button>
             {open ? <div className="payment-meta-grid top-gap">

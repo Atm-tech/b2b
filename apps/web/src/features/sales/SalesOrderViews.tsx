@@ -15,7 +15,7 @@ calculateTaxPreview,
 collectionAssignment,
 collectionVisibleToUser,
 dateKeyInRange,
-downloadReportCsv,
+downloadStatusWorkbook,
 downloadReportPdf,
 downloadSalesInvoicePdf,
 findSalesOrderByPublicId,
@@ -206,7 +206,7 @@ export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, o
         <label className="wide-field">Search SO / customer<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="SO number or customer name" /></label>
       </div>
       <div className="payment-card-actions">
-        <button className="ghost-button" type="button" onClick={() => downloadReportCsv(salesExportPrefix, salesExportHeaders, salesExportRows, activeRange.fromDate, activeRange.toDate)}>Download CSV</button>
+        <button className="ghost-button" type="button" onClick={() => downloadStatusWorkbook(salesExportPrefix, salesExportHeaders, salesExportRows, activeRange.fromDate, activeRange.toDate)}>Download Excel (status sheets)</button>
         <button className="ghost-button" type="button" onClick={() => downloadReportPdf(salesExportTitle, salesExportPrefix, salesExportHeaders, salesExportRows, activeRange.fromDate, activeRange.toDate, [viewMode === "orders" ? `Orders: ${filteredGroups.length}` : `Collections: ${filteredCollectionGroups.length}`])}>Download PDF</button>
       </div>
       </section>
@@ -223,27 +223,28 @@ export function SalesOrderSummary({ snapshot, currentUser, orders, onUpdateSo, o
           {filteredGroups.map((group) => {
             const first = group.lines[0];
             const editState = salesOrderEditState(snapshot, group.id, currentUser);
-            const expanded = openGroupId === group.id;
+            const cancelled = group.lines.every((line) => line.status === "Cancelled");
+            const expanded = !cancelled && openGroupId === group.id;
             return (
-              <article className="list-card purchase-summary-card" key={group.id}>
-                <button className="purchase-summary-toggle" type="button" aria-expanded={expanded} onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
+              <article className={`list-card purchase-summary-card${cancelled ? " order-is-cancelled" : ""}`} key={group.id}>
+                <button className="purchase-summary-toggle" type="button" disabled={cancelled} aria-expanded={expanded} onClick={() => setOpenGroupId((current) => current === group.id ? "" : group.id)}>
                   <div className="payment-update-head">
                     <div>
                       <strong>{first?.shopName || "Customer"}{group.lines.length > 1 ? ` +${group.lines.length - 1}` : ""}</strong>
-                      <p>{group.id}</p>
+                      <p>{group.id} {cancelled ? <span className="cancelled-order-label">CANCELLED</span> : null}</p>
                     </div>
-                    <span className="order-detail-action">{expanded ? "Hide details" : "View details"}<b aria-hidden="true">{expanded ? "↑" : "↓"}</b></span>
+                    {!cancelled ? <span className="order-detail-action">{expanded ? "Hide details" : "View details"}<b aria-hidden="true">{expanded ? "↑" : "↓"}</b></span> : null}
                   </div>
                   <div className="order-card-vitals">
                     <div><span>Order value</span><strong>INR {group.lines.reduce((sum, line) => sum + line.totalAmount + line.deliveryCharge, 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</strong></div>
                     <div><span>Items</span><strong>{group.lines.length}</strong></div>
                     <div><span>Created</span><strong>{new Date(groupNewestCreatedAt(group.lines)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</strong></div>
                   </div>
-                  <div className="purchase-status-chips top-gap">
+                  {cancelled ? <span className="cancelled-order-label">Cancelled order</span> : <div className="purchase-status-chips top-gap">
                     <span className="status-pill status-pending"><LabelWithBadge label="SO" count={1} /></span>
                     <span className={`status-pill ${statusPillClass(salesDeliveryStatus(snapshot, group.id))}`}>{salesDeliveryStatus(snapshot, group.id)}</span>
                     <span className={`status-pill ${statusPillClass(`Payment ${salesPaymentStatus(snapshot, group.id)}`)}`}>{salesPaymentStatus(snapshot, group.id)}</span>
-                  </div>
+                  </div>}
                 </button>
                 {expanded ? <div className="payment-meta-grid top-gap">
                   <div><span className="small-label">Customer</span><strong>{first?.shopName || "Customer"}</strong></div>
@@ -673,8 +674,8 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
               onDirtyChange(false);
               onNewOrder();
             }}>Back</button>
-            <button className="ghost-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
-            <button className="ghost-button" type="button" onClick={() => void cancelSalesGroup()} disabled={!editState.editable}>Cancel SO</button>
+            <button className="order-add-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0}>Add product</button>
+            <button className="order-cancel-button" type="button" onClick={() => void cancelSalesGroup()} disabled={!editState.editable}>Cancel SO</button>
           </div>
           <div className="wide-field compact-order-editor">{draft?.lines.length ? <>
             <div className="compact-order-editor-head">
@@ -684,7 +685,7 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
               <span>Rate</span>
               <span>Net rate</span>
             </div>
-            {draft.lines.map((line, index) => <div className="compact-order-editor-row" data-product-sku={line.productSku} key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="ghost-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <OrderProductSelect products={snapshot.products.map((product) => ({ sku: product.sku, label: productDisplayLabel(product) || product.sku }))} value={line.productSku} onChange={(productSku) => updateSalesDraftLine(line.clientKey, { productSku })} disabled={!editState.editable} /> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}</div><input type="number" step="any" min="0" aria-label="Quantity" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" aria-label="Rate" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" max={line.rate || undefined} value={line.cdTodRate} onChange={(e) => updateSalesDraftLine(line.clientKey, { cdTodRate: e.target.value })} disabled={!editState.editable} aria-label="Net rate after CD and TOD" /></div>)}
+            {draft.lines.map((line, index) => <div className="compact-order-editor-row" data-product-sku={line.productSku} key={line.clientKey || line.id || `${line.productSku}-${index}`}><div className="compact-order-editor-actions"><button className="order-add-button compact-icon-button" type="button" onClick={addSalesDraftLine} disabled={!editState.editable || snapshot.products.length === 0} aria-label="Add product">+</button><button className="ghost-button compact-icon-button" type="button" onClick={() => { onDirtyChange(true); setDraft((current) => current ? { ...current, lines: current.lines.filter((item) => item !== line) } : current); }} disabled={!editState.editable || draft.lines.length <= 1} aria-label="Remove product">-</button></div><div className="compact-order-editor-product">{!line.id ? <OrderProductSelect products={snapshot.products.map((product) => ({ sku: product.sku, label: productDisplayLabel(product) || product.sku }))} value={line.productSku} onChange={(productSku) => updateSalesDraftLine(line.clientKey, { productSku })} disabled={!editState.editable} /> : <strong>{productNameBySku(snapshot.products, line.productSku)}</strong>}</div><input type="number" step="any" min="0" aria-label="Quantity" value={line.quantity} onChange={(e) => updateSalesDraftLine(line.clientKey, { quantity: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" aria-label="Rate" value={line.rate} onChange={(e) => updateSalesDraftLine(line.clientKey, { rate: e.target.value })} disabled={!editState.editable} /><input type="number" step="any" min="0" max={line.rate || undefined} value={line.cdTodRate} onChange={(e) => updateSalesDraftLine(line.clientKey, { cdTodRate: e.target.value })} disabled={!editState.editable} aria-label="Net rate after CD and TOD" /></div>)}
           </> : <div className="empty-card">No sales order lines available.</div>}</div>
           <div className="payment-card-actions wide-field"><button className="primary-button" type="submit" disabled={!editState.editable}>Update sales order</button><button className="ghost-button" type="button" onClick={() => {
             if (!confirmDiscardChanges()) return;
