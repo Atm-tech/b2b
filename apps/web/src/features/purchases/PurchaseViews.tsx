@@ -573,7 +573,7 @@ export function PurchaseCartEditor({
     <Panel title="Update Purchase Order" eyebrow="Product amendment only">
       {editableGroups.length === 0 ? <div className="empty-card">No purchase carts available for edit.</div> : <>
         <form
-          className="form-grid"
+          className="form-grid order-editor-form"
           onSubmit={async (event) => {
             event.preventDefault();
             if (!selectedGroup || !draft || !editState.editable) return;
@@ -620,7 +620,7 @@ export function PurchaseCartEditor({
               <span className="status-pill">{purchaseWorkflowStatus(snapshot, selectedGroup.id)}</span>
             </div>
             {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
-            <div className="payment-card-actions wide-field">
+            <div className="payment-card-actions wide-field order-editor-toolbar">
               <button className="ghost-button" type="button" onClick={() => {
                 if (!confirmDiscardChanges()) return;
                 onDirtyChange(false);

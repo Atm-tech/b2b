@@ -6715,6 +6715,51 @@ button:disabled {
 .order-cancel-button:hover:not(:disabled) { filter: brightness(1.06); }
 .payment-card-actions:has(> .order-cancel-button) { display: flex; align-items: center; flex-wrap: wrap; width: 100%; gap: 12px; }
 .payment-card-actions > .order-cancel-button { margin-left: auto; }
+.form-grid.order-editor-form {
+  grid-auto-rows: max-content;
+  align-items: start;
+  row-gap: 20px;
+  min-width: 0;
+}
+.order-editor-form > .message-chip-grid {
+  align-items: flex-start;
+  min-width: 0;
+  gap: 8px;
+}
+.order-editor-form > .message-chip-grid .status-pill {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.order-editor-form > .order-editor-toolbar {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 62px;
+  height: auto;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 0 12px;
+}
+.order-editor-form > .order-editor-toolbar > button {
+  position: relative;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 100%;
+  min-height: 42px;
+  height: auto;
+  margin-block: 0;
+  padding: 10px 16px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.order-editor-toolbar > .order-cancel-button { margin-left: auto; }
+.order-editor-form > .compact-order-editor { min-width: 0; margin-top: 0; }
 .payment-card-actions:has(> .order-cancel-button) > button,
 .order-add-button.compact-icon-button {
   border-radius: 999px;

@@ -605,7 +605,7 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
 
   return (
     <Panel title="Update Sales Order" eyebrow="Product amendment only">
-      {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid" onSubmit={async (event) => {
+      {editableGroups.length === 0 ? <div className="empty-card">No sales orders available for edit.</div> : <form className="form-grid order-editor-form" onSubmit={async (event) => {
         event.preventDefault();
         if (!selectedGroup || !draft || !editState.editable) return;
         const quantities = new Map<string, { sku: string; warehouse: string; current: number; next: number }>();
@@ -668,7 +668,7 @@ export function SalesOrderEditor({ snapshot, currentUser, initialOrderId, onNewO
             <span className="status-pill">{salesFulfillmentStatus(selectedGroup.lines)} / Payment {salesPaymentStatus(snapshot, selectedGroup.id)}</span>
           </div>
           {!editState.editable ? <p className="message error wide-field">{editState.reason}</p> : null}
-          <div className="payment-card-actions wide-field">
+          <div className="payment-card-actions wide-field order-editor-toolbar">
             <button className="ghost-button" type="button" onClick={() => {
               if (!confirmDiscardChanges()) return;
               onDirtyChange(false);
