@@ -6713,6 +6713,22 @@ button:disabled {
 
 .order-cancel-button { background: #c62828 !important; color: #fff !important; border: 1px solid #c62828 !important; }
 .order-cancel-button:hover:not(:disabled) { background: #a51f1f !important; }
+.payment-card-actions:has(> .order-cancel-button) { display: flex; align-items: center; flex-wrap: wrap; width: 100%; gap: 12px; }
+.payment-card-actions > .order-cancel-button { margin-left: auto; }
+.payment-card-actions:has(> .order-cancel-button) > button,
+.order-add-button.compact-icon-button {
+  border-radius: 999px;
+  font-weight: 750;
+  min-height: 42px;
+  box-shadow: inset 0 1px 0 #ffffff55, 0 4px 0 #173b4c30, 0 7px 12px #173b4c18;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.order-cancel-button { box-shadow: inset 0 1px 0 #ffffff55, 0 4px 0 #8c1c1c, 0 7px 12px #8c1c1c24 !important; }
+.order-add-button { border-radius: 999px; box-shadow: inset 0 1px 0 #ffffff55, 0 4px 0 #0d5427, 0 7px 12px #0d542724 !important; }
+.payment-card-actions:has(> .order-cancel-button) > button:active:not(:disabled),
+.order-add-button:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 1px 0 #ffffff33, 0 1px 0 #173b4c40 !important; }
+.payment-card-actions:has(> .order-cancel-button) > button:disabled,
+.order-add-button:disabled { box-shadow: none !important; }
 .order-add-button { background: #16803c !important; color: #fff !important; border: 1px solid #16803c !important; }
 .order-add-button:hover:not(:disabled) { background: #116530 !important; }
 .order-is-cancelled { position: relative; border-color: #edaaaa; background: #fff7f7; }
